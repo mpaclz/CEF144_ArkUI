@@ -1,0 +1,1829 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chromium 剪切板完整测试</title>
+
+  <style>
+    :root {
+      font-family: system-ui, sans-serif;
+      color: #202124;
+      background: #f5f7fa;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    section {
+      margin: 24px 0;
+      padding: 20px;
+      background: white;
+      border: 1px solid #dadce0;
+      border-radius: 10px;
+    }
+
+    h1 {
+      margin-top: 0;
+    }
+
+    h2 {
+      margin-top: 0;
+      color: #174ea6;
+    }
+
+    h3 {
+      margin: 0 0 10px;
+    }
+
+    h4 {
+      margin-bottom: 8px;
+    }
+
+    .case {
+      margin: 16px 0;
+      padding: 16px;
+      border: 1px solid #e0e3e7;
+      border-radius: 8px;
+      background: #fcfcfd;
+    }
+
+    .case.functional {
+      border-left: 5px solid #1a73e8;
+    }
+
+    .case.boundary {
+      border-left: 5px solid #f29900;
+      background: #fffaf2;
+    }
+
+    .case-title {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .badge {
+      padding: 3px 8px;
+      border-radius: 999px;
+      color: white;
+      font-size: 12px;
+    }
+
+    .badge.functional {
+      background: #1a73e8;
+    }
+
+    .badge.boundary {
+      color: #202124;
+      background: #fbbc04;
+    }
+
+    textarea,
+    input,
+    select {
+      width: 100%;
+      padding: 9px;
+      font: inherit;
+      border: 1px solid #bdc1c6;
+      border-radius: 6px;
+    }
+
+    textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+
+    button {
+      margin: 6px 6px 6px 0;
+      padding: 8px 14px;
+      font: inherit;
+      cursor: pointer;
+      border: 1px solid #747775;
+      border-radius: 6px;
+      background: white;
+    }
+
+    button:hover {
+      background: #f1f3f4;
+    }
+
+    button.primary {
+      color: white;
+      border-color: #1a73e8;
+      background: #1a73e8;
+    }
+
+    button.warning {
+      border-color: #f29900;
+      background: #fff3cd;
+    }
+
+    .output {
+      min-height: 34px;
+      margin-top: 10px;
+      padding: 10px;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+      border-radius: 6px;
+      background: #f1f3f4;
+    }
+
+    .success {
+      color: #137333;
+    }
+
+    .error {
+      color: #b3261e;
+    }
+
+    .info {
+      color: #174ea6;
+    }
+
+    .muted {
+      color: #5f6368;
+      font-size: 14px;
+    }
+
+    .editable {
+      min-height: 100px;
+      padding: 10px;
+      border: 1px solid #bdc1c6;
+      border-radius: 6px;
+      background: white;
+    }
+
+    .drop-zone {
+      padding: 32px;
+      text-align: center;
+      border: 2px dashed #9aa0a6;
+      border-radius: 8px;
+      background: #fafafa;
+    }
+
+    .drop-zone.dragover {
+      border-color: #1a73e8;
+      background: #e8f0fe;
+    }
+
+    canvas {
+      max-width: 100%;
+      border: 1px solid #dadce0;
+    }
+
+    img.preview {
+      max-width: 320px;
+      max-height: 240px;
+      border: 1px solid #dadce0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid #e1e5e9;
+    }
+
+    #log {
+      max-height: 260px;
+      overflow: auto;
+      font-family: monospace;
+      font-size: 13px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Chromium 剪切板 API 完整测试</h1>
+
+  <p class="muted">
+    推荐通过 HTTPS 或 localhost 访问。剪切板读取通常要求用户手势，并受浏览器权限、
+    操作系统和来源应用影响。
+  </p>
+
+  <!-- ========================================================= -->
+  <!-- 0. 环境 -->
+  <!-- ========================================================= -->
+
+  <section>
+    <h2>0. 环境与能力检测</h2>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>0.1 浏览器能力检测</h3>
+      </div>
+
+      <table>
+        <tbody id="capabilityTable"></tbody>
+      </table>
+
+      <button class="primary" id="checkPermission">
+        检查权限
+      </button>
+
+      <div class="output" id="permissionOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>0.2 非安全上下文检测</h3>
+      </div>
+
+      <button id="checkSecureContext">
+        检查当前页面是否为安全上下文
+      </button>
+
+      <div class="output" id="secureContextOutput"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================= -->
+  <!-- 1. 纯文本 -->
+  <!-- ========================================================= -->
+
+  <section>
+    <h2>1. 文本剪切板</h2>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>1.1 写入和读取普通文本</h3>
+      </div>
+
+      <textarea id="textInput">
+普通文本
+第二行
+中文、English、😀
+      </textarea>
+
+      <button class="primary" id="writeText">
+        写入文本
+      </button>
+
+      <button class="primary" id="readText">
+        读取文本
+      </button>
+
+      <div class="output" id="textOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>1.2 空文本</h3>
+      </div>
+
+      <button id="writeEmptyText">
+        写入空字符串
+      </button>
+
+      <button id="readEmptyText">
+        读取并判断是否为空
+      </button>
+
+      <div class="output" id="emptyTextOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>1.3 特殊字符和 Unicode</h3>
+      </div>
+
+      <button id="writeSpecialText">
+        写入特殊文本
+      </button>
+
+      <button id="readSpecialText">
+        读取特殊文本
+      </button>
+
+      <div class="output" id="specialTextOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>1.4 大文本</h3>
+      </div>
+
+      <select id="largeTextSize">
+        <option value="100000">100 KB</option>
+        <option value="1048576">1 MB</option>
+        <option value="5242880">5 MB</option>
+        <option value="10485760">10 MB</option>
+      </select>
+
+      <button id="writeLargeText">
+        写入大文本
+      </button>
+
+      <div class="output" id="largeTextOutput"></div>
+    </div>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>1.5 input / textarea 控件</h3>
+      </div>
+
+      <input id="inputControl" value="input 控件内容" />
+
+      <textarea id="textareaControl">textarea 控件内容</textarea>
+
+      <button id="copyInput">
+        复制 input
+      </button>
+
+      <button id="pasteInput">
+        粘贴到 input
+      </button>
+
+      <button id="copyTextarea">
+        复制 textarea
+      </button>
+
+      <button id="pasteTextarea">
+        粘贴到 textarea
+      </button>
+
+      <div class="output" id="textControlOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>1.6 非用户手势调用</h3>
+      </div>
+
+      <button id="asyncWriteText">
+        延迟 2 秒后写入文本
+      </button>
+
+      <button id="asyncReadText">
+        延迟 2 秒后读取文本
+      </button>
+
+      <div class="output" id="gestureOutput"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================= -->
+  <!-- 2. HTML -->
+  <!-- ========================================================= -->
+
+  <section>
+    <h2>2. HTML 富文本</h2>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>2.1 写入 text/plain + text/html</h3>
+      </div>
+
+      <div id="richEditor" class="editable" contenteditable="true">
+        <p>
+          <strong>加粗</strong>、
+          <em>斜体</em>、
+          <u>下划线</u>、
+          <a href="https://www.chromium.org/">Chromium 链接</a>
+        </p>
+        <ul>
+          <li>列表 A</li>
+          <li>列表 B</li>
+        </ul>
+      </div>
+
+      <button class="primary" id="writeHtml">
+        写入富文本
+      </button>
+
+      <div class="output" id="htmlWriteOutput"></div>
+    </div>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>2.2 读取 text/html</h3>
+      </div>
+
+      <button class="primary" id="readHtml">
+        读取富文本
+      </button>
+
+      <h4>原始 HTML</h4>
+      <pre class="output" id="rawHtmlOutput"></pre>
+
+      <h4>纯文本</h4>
+      <pre class="output" id="htmlTextOutput"></pre>
+
+      <h4>清洗后的渲染结果</h4>
+      <div class="output" id="safeHtmlOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>2.3 恶意 HTML</h3>
+      </div>
+
+      <button id="writeUnsafeHtml">
+        写入包含脚本的 HTML
+      </button>
+
+      <button id="readUnsafeHtml">
+        读取并清洗 HTML
+      </button>
+
+      <div class="output" id="unsafeHtmlOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>2.4 空 HTML</h3>
+      </div>
+
+      <button id="writeEmptyHtml">
+        写入空 HTML
+      </button>
+
+      <button id="readEmptyHtml">
+        读取空 HTML
+      </button>
+
+      <div class="output" id="emptyHtmlOutput"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================= -->
+  <!-- 3. 图片 -->
+  <!-- ========================================================= -->
+
+  <section>
+    <h2>3. 图片剪切板</h2>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>3.1 写入 PNG 图片</h3>
+      </div>
+
+      <canvas id="canvas" width="500" height="220"></canvas>
+
+      <br />
+
+      <button class="primary" id="writePng">
+        写入 PNG
+      </button>
+
+      <div class="output" id="pngWriteOutput"></div>
+    </div>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>3.2 读取图片</h3>
+      </div>
+
+      <button class="primary" id="readImage">
+        读取剪切板图片
+      </button>
+
+      <div id="imagePreview"></div>
+      <div class="output" id="imageReadOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>3.3 无图片时读取</h3>
+      </div>
+
+      <p class="muted">
+        先复制普通文本，再点击下面按钮。
+      </p>
+
+      <button id="readImageWithoutImage">
+        尝试读取图片
+      </button>
+
+      <div class="output" id="noImageOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>3.4 图片尺寸边界</h3>
+      </div>
+
+      <button id="drawSmallImage">
+        生成 1×1 图片
+      </button>
+
+      <button id="drawLargeImage">
+        生成 4000×4000 图片
+      </button>
+
+      <div class="output" id="imageSizeOutput"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================= -->
+  <!-- 4. ClipboardItem -->
+  <!-- ========================================================= -->
+
+  <section>
+    <h2>4. ClipboardItem 与 MIME 类型</h2>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>4.1 检查剪切板 MIME 类型</h3>
+      </div>
+
+      <button class="primary" id="inspectTypes">
+        检查 ClipboardItem 类型
+      </button>
+
+      <div class="output" id="typesOutput"></div>
+    </div>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>4.2 写入 Chromium Web 自定义 MIME</h3>
+      </div>
+
+      <button class="primary" id="writeWebMime">
+        写入 web application/json
+      </button>
+
+      <button id="readWebMime">
+        读取 web application/json
+      </button>
+
+      <div class="output" id="webMimeOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>4.3 写入不支持的 application/json</h3>
+      </div>
+
+      <button id="writeUnsupportedMime">
+        尝试写入 application/json
+      </button>
+
+      <div class="output" id="unsupportedMimeOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>4.4 读取不存在的 MIME 类型</h3>
+      </div>
+
+      <button id="readMissingMime">
+        尝试读取 application/x-not-exist
+      </button>
+
+      <div class="output" id="missingMimeOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>4.5 并发写入</h3>
+      </div>
+
+      <button id="concurrentWrite">
+        同时发起 5 次写入
+      </button>
+
+      <div class="output" id="concurrentOutput"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================= -->
+  <!-- 5. 文件与拖放 -->
+  <!-- ========================================================= -->
+
+  <section>
+    <h2>5. 文件与拖放</h2>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>5.1 文件选择控件</h3>
+      </div>
+
+      <input id="fileInput" type="file" multiple />
+
+      <div class="output" id="fileInputOutput"></div>
+    </div>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>5.2 拖放文件</h3>
+      </div>
+
+      <div id="dropZone" class="drop-zone">
+        将文件拖到这里
+      </div>
+
+      <div class="output" id="dropOutput"></div>
+    </div>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>5.3 读取剪切板中的图片或 Blob</h3>
+      </div>
+
+      <button id="readClipboardBlobs">
+        读取剪切板 Blob
+      </button>
+
+      <div class="output" id="clipboardBlobOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>5.4 空拖放</h3>
+      </div>
+
+      <div id="emptyDropZone" class="drop-zone">
+        在这里执行无文件拖放
+      </div>
+
+      <div class="output" id="emptyDropOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>5.5 剪切板中没有文件</h3>
+      </div>
+
+      <button id="readClipboardAsFiles">
+        尝试读取剪切板文件
+      </button>
+
+      <div class="output" id="clipboardFileOutput"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================= -->
+  <!-- 6. 原生剪切板事件 -->
+  <!-- ========================================================= -->
+
+  <section>
+    <h2>6. copy / cut / paste 事件</h2>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>6.1 监听剪切板事件</h3>
+      </div>
+
+      <input
+        id="eventInput"
+        value="请在此输入内容，然后按 Ctrl+C、Ctrl+X 或 Ctrl+V"
+      />
+
+      <div class="output" id="eventOutput"></div>
+    </div>
+
+    <div class="case functional">
+      <div class="case-title">
+        <span class="badge functional">功能</span>
+        <h3>6.2 通过 ClipboardEvent 写入数据</h3>
+      </div>
+
+      <input
+        id="customEventInput"
+        value="通过 copy 事件写入的文本"
+      />
+
+      <div class="output" id="customEventOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>6.3 取消 paste 默认行为</h3>
+      </div>
+
+      <input
+        id="preventPasteInput"
+        value="粘贴行为将被取消"
+      />
+
+      <button id="togglePreventPaste">
+        开启/关闭阻止粘贴
+      </button>
+
+      <div class="output" id="preventPasteOutput"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================= -->
+  <!-- 7. 页面状态和异常 -->
+  <!-- ========================================================= -->
+
+  <section>
+    <h2>7. 页面状态与异常</h2>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>7.1 页面失焦</h3>
+      </div>
+
+      <button id="checkFocus">
+        检查页面焦点
+      </button>
+
+      <div class="output" id="focusOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>7.2 iframe / Permissions Policy</h3>
+      </div>
+
+      <iframe
+        id="testFrame"
+        title="Clipboard iframe"
+        style="width: 100%; height: 100px; border: 1px solid #bdc1c6;"
+      ></iframe>
+
+      <div class="output" id="iframeOutput"></div>
+    </div>
+
+    <div class="case boundary">
+      <div class="case-title">
+        <span class="badge boundary">边界</span>
+        <h3>7.3 页面隐藏时调用</h3>
+      </div>
+
+      <button id="checkVisibility">
+        检查页面可见性
+      </button>
+
+      <div class="output" id="visibilityOutput"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================= -->
+  <!-- 日志 -->
+  <!-- ========================================================= -->
+
+  <section>
+    <h2>操作日志</h2>
+
+    <button id="clearLog">
+      清空日志
+    </button>
+
+    <div class="output" id="log"></div>
+  </section>
+
+  <script>
+    "use strict";
+
+    const $ = id => document.getElementById(id);
+
+    function log(message, type = "info") {
+      const line = document.createElement("div");
+      line.className = type;
+      line.textContent =
+        `[${new Date().toLocaleTimeString()}] ${message}`;
+      $("log").prepend(line);
+    }
+
+    function output(id, message, type = "") {
+      const el = $(id);
+      el.textContent = message;
+      el.className = `output ${type}`;
+    }
+
+    function ok(id, message) {
+      output(id, message, "success");
+      log(message, "success");
+    }
+
+    function fail(id, error) {
+      const message = error?.message || String(error);
+      output(id, message, "error");
+      log(message, "error");
+    }
+
+    async function test(id, fn) {
+      try {
+        await fn();
+      } catch (error) {
+        fail(id, error);
+      }
+    }
+
+    function requireClipboard(name = "剪切板 API") {
+      if (!window.isSecureContext) {
+        throw new Error(`${name}要求安全上下文，请使用 HTTPS 或 localhost`);
+      }
+
+      if (!navigator.clipboard) {
+        throw new Error("当前浏览器不支持 navigator.clipboard");
+      }
+    }
+
+    function requireClipboardItem() {
+      requireClipboard();
+      if (!window.ClipboardItem) {
+        throw new Error("当前浏览器不支持 ClipboardItem");
+      }
+    }
+
+    async function wait(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function formatBytes(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 ** 2) {
+        return `${(bytes / 1024).toFixed(2)} KB`;
+      }
+      return `${(bytes / 1024 ** 2).toFixed(2)} MB`;
+    }
+
+    function describeFiles(files) {
+      if (!files || !files.length) {
+        return "没有文件";
+      }
+
+      return [...files].map((file, index) => [
+        `文件 ${index + 1}`,
+        `名称：${file.name}`,
+        `类型：${file.type || "未知"}`,
+        `大小：${formatBytes(file.size)}`,
+        `最后修改：${new Date(file.lastModified).toLocaleString()}`
+      ].join("\n")).join("\n\n");
+    }
+
+    // =========================================================
+    // 0. 能力检测
+    // =========================================================
+
+    const capabilities = [
+      ["安全上下文", window.isSecureContext],
+      ["navigator.clipboard", !!navigator.clipboard],
+      ["clipboard.readText", !!navigator.clipboard?.readText],
+      ["clipboard.writeText", !!navigator.clipboard?.writeText],
+      ["clipboard.read", !!navigator.clipboard?.read],
+      ["clipboard.write", !!navigator.clipboard?.write],
+      ["ClipboardItem", !!window.ClipboardItem],
+      ["ClipboardItem.supports", !!window.ClipboardItem?.supports],
+      ["DataTransfer", !!window.DataTransfer],
+      ["File API", !!window.File],
+      ["FileReader API", !!window.FileReader],
+      ["Canvas.toBlob", !!HTMLCanvasElement.prototype.toBlob]
+    ];
+
+    $("capabilityTable").innerHTML = capabilities.map(([name, value]) => `
+      <tr>
+        <th>${name}</th>
+        <td class="${value ? "success" : "error"}">
+          ${value ? "支持" : "不支持"}
+        </td>
+      </tr>
+    `).join("");
+
+    $("checkPermission").onclick = () => test(
+      "permissionOutput",
+      async () => {
+        if (!navigator.permissions) {
+          output("permissionOutput", "Permissions API 不可用");
+          return;
+        }
+
+        const result = [];
+
+        for (const name of [
+          "clipboard-read",
+          "clipboard-write"
+        ]) {
+          try {
+            const status = await navigator.permissions.query({ name });
+            result.push(`${name}: ${status.state}`);
+          } catch (error) {
+            result.push(`${name}: 无法查询`);
+          }
+        }
+
+        output("permissionOutput", result.join("\n"));
+        log("权限检查完成");
+      }
+    );
+
+    $("checkSecureContext").onclick = () => {
+      if (window.isSecureContext) {
+        ok("secureContextOutput", "当前页面是安全上下文");
+      } else {
+        fail(
+          "secureContextOutput",
+          new Error("当前页面不是安全上下文")
+        );
+      }
+    };
+
+    // =========================================================
+    // 1. 文本
+    // =========================================================
+
+    $("writeText").onclick = () => test(
+      "textOutput",
+      async () => {
+        requireClipboard();
+        await navigator.clipboard.writeText($("textInput").value);
+        ok("textOutput", "文本写入成功");
+      }
+    );
+
+    $("readText").onclick = () => test(
+      "textOutput",
+      async () => {
+        requireClipboard();
+        const value = await navigator.clipboard.readText();
+        output(
+          "textOutput",
+          value ? `读取成功：\n${value}` : "读取成功，但内容为空"
+        );
+        log("文本读取完成");
+      }
+    );
+
+    $("writeEmptyText").onclick = () => test(
+      "emptyTextOutput",
+      async () => {
+        requireClipboard();
+        await navigator.clipboard.writeText("");
+        ok("emptyTextOutput", "空字符串写入成功");
+      }
+    );
+
+    $("readEmptyText").onclick = () => test(
+      "emptyTextOutput",
+      async () => {
+        requireClipboard();
+        const value = await navigator.clipboard.readText();
+
+        output(
+          "emptyTextOutput",
+          value.length === 0
+            ? "剪切板文本为空"
+            : `剪切板非空，长度：${value.length}`
+        );
+
+        log("空文本判断完成");
+      }
+    );
+
+    $("writeSpecialText").onclick = () => test(
+      "specialTextOutput",
+      async () => {
+        requireClipboard();
+
+        const text =
+          "NUL:\\0\n" +
+          "CRLF:\\r\\n\n" +
+          "Unicode：中文、العربية、हिन्दी\n" +
+          "Emoji：😀 👨‍👩‍👧‍👦 🏳️‍🌈\n" +
+          "组合字符：é";
+
+        await navigator.clipboard.writeText(text);
+        ok("specialTextOutput", "特殊文本写入成功");
+      }
+    );
+
+    $("readSpecialText").onclick = () => test(
+      "specialTextOutput",
+      async () => {
+        requireClipboard();
+        const value = await navigator.clipboard.readText();
+
+        output(
+          "specialTextOutput",
+          `长度：${value.length}\n内容：\n${value}`
+        );
+
+        log("特殊文本读取完成");
+      }
+    );
+
+    $("writeLargeText").onclick = () => test(
+      "largeTextOutput",
+      async () => {
+        requireClipboard();
+
+        const size = Number($("largeTextSize").value);
+        const text = "A".repeat(size);
+
+        const start = performance.now();
+        await navigator.clipboard.writeText(text);
+        const elapsed = performance.now() - start;
+
+        ok(
+          "largeTextOutput",
+          `写入成功\n大小：${formatBytes(size)}\n耗时：${elapsed.toFixed(2)} ms`
+        );
+      }
+    );
+
+    $("copyInput").onclick = () => test(
+      "textControlOutput",
+      async () => {
+        requireClipboard();
+        await navigator.clipboard.writeText($("inputControl").value);
+        ok("textControlOutput", "input 内容已复制");
+      }
+    );
+
+    $("pasteInput").onclick = () => test(
+      "textControlOutput",
+      async () => {
+        requireClipboard();
+        $("inputControl").value =
+          await navigator.clipboard.readText();
+        ok("textControlOutput", "内容已粘贴到 input");
+      }
+    );
+
+    $("copyTextarea").onclick = () => test(
+      "textControlOutput",
+      async () => {
+        requireClipboard();
+        await navigator.clipboard.writeText($("textareaControl").value);
+        ok("textControlOutput", "textarea 内容已复制");
+      }
+    );
+
+    $("pasteTextarea").onclick = () => test(
+      "textControlOutput",
+      async () => {
+        requireClipboard();
+        $("textareaControl").value =
+          await navigator.clipboard.readText();
+        ok("textControlOutput", "内容已粘贴到 textarea");
+      }
+    );
+
+    $("asyncWriteText").onclick = () => {
+      output("gestureOutput", "2 秒后执行写入……");
+
+      setTimeout(() => {
+        test("gestureOutput", async () => {
+          requireClipboard();
+          await navigator.clipboard.writeText("延迟写入文本");
+          ok("gestureOutput", "延迟写入成功");
+        });
+      }, 2000);
+    };
+
+    $("asyncReadText").onclick = () => {
+      output("gestureOutput", "2 秒后执行读取……");
+
+      setTimeout(() => {
+        test("gestureOutput", async () => {
+          requireClipboard();
+          const value = await navigator.clipboard.readText();
+          output("gestureOutput", `延迟读取结果：${value}`);
+        });
+      }, 2000);
+    };
+
+    // =========================================================
+    // 2. HTML
+    // =========================================================
+
+    $("writeHtml").onclick = () => test(
+      "htmlWriteOutput",
+      async () => {
+        requireClipboardItem();
+
+        const html = $("richEditor").innerHTML;
+        const text = $("richEditor").innerText;
+
+        const item = new ClipboardItem({
+          "text/plain": new Blob([text], {
+            type: "text/plain"
+          }),
+          "text/html": new Blob([html], {
+            type: "text/html"
+          })
+        });
+
+        await navigator.clipboard.write([item]);
+        ok("htmlWriteOutput", "text/plain 和 text/html 写入成功");
+      }
+    );
+
+    function sanitizeHtml(html) {
+      const template = document.createElement("template");
+      template.innerHTML = html;
+
+      template.content
+        .querySelectorAll("script, iframe, object, embed, style")
+        .forEach(node => node.remove());
+
+      template.content.querySelectorAll("*").forEach(node => {
+        [...node.attributes].forEach(attr => {
+          const name = attr.name.toLowerCase();
+          const value = attr.value.trim().toLowerCase();
+
+          if (
+            name.startsWith("on") ||
+            (name === "href" &&
+              (value.startsWith("javascript:") ||
+               value.startsWith("data:"))) ||
+            (name === "src" &&
+              (value.startsWith("javascript:") ||
+               value.startsWith("data:")))
+          ) {
+            node.removeAttribute(attr.name);
+          }
+        });
+      });
+
+      return template.innerHTML;
+    }
+
+    $("readHtml").onclick = () => test(
+      "rawHtmlOutput",
+      async () => {
+        requireClipboard();
+
+        const items = await navigator.clipboard.read();
+
+        let html = "";
+        let text = "";
+
+        for (const item of items) {
+          if (item.types.includes("text/html")) {
+            html = await (await item.getType("text/html")).text();
+          }
+
+          if (item.types.includes("text/plain")) {
+            text = await (await item.getType("text/plain")).text();
+          }
+        }
+
+        $("rawHtmlOutput").textContent =
+          html || "未读取到 text/html";
+
+        $("htmlTextOutput").textContent =
+          text || "未读取到 text/plain";
+
+        $("safeHtmlOutput").innerHTML =
+          html ? sanitizeHtml(html) : "没有 HTML 可渲染";
+
+        log("HTML 读取完成");
+      }
+    );
+
+    $("writeUnsafeHtml").onclick = () => test(
+      "unsafeHtmlOutput",
+      async () => {
+        requireClipboardItem();
+
+        const html = `
+          <p>正常内容</p>
+          <script>alert("XSS")<\/script>
+          <img src="x" onerror="alert('XSS')">
+          <a href="javascript:alert('XSS')">危险链接</a>
+        `;
+
+        const item = new ClipboardItem({
+          "text/html": new Blob([html], {
+            type: "text/html"
+          }),
+          "text/plain": new Blob(["正常内容"], {
+            type: "text/plain"
+          })
+        });
+
+        await navigator.clipboard.write([item]);
+        ok("unsafeHtmlOutput", "恶意 HTML 已写入，请使用清洗逻辑读取");
+      }
+    );
+
+    $("readUnsafeHtml").onclick = () => test(
+      "unsafeHtmlOutput",
+      async () => {
+        requireClipboard();
+
+        const items = await navigator.clipboard.read();
+
+        for (const item of items) {
+          if (item.types.includes("text/html")) {
+            const html = await (
+              await item.getType("text/html")
+            ).text();
+
+            const safe = sanitizeHtml(html);
+
+            $("unsafeHtmlOutput").innerHTML =
+              `清洗前：\n${html}\n\n清洗后：\n${safe}`;
+
+            log("恶意 HTML 已清洗");
+            return;
+          }
+        }
+
+        throw new Error("没有读取到 HTML");
+      }
+    );
+
+    $("writeEmptyHtml").onclick = () => test(
+      "emptyHtmlOutput",
+      async () => {
+        requireClipboardItem();
+
+        const item = new ClipboardItem({
+          "text/html": new Blob([""], {
+            type: "text/html"
+          }),
+          "text/plain": new Blob([""], {
+            type: "text/plain"
+          })
+        });
+
+        await navigator.clipboard.write([item]);
+        ok("emptyHtmlOutput", "空 HTML 写入成功");
+      }
+    );
+
+    $("readEmptyHtml").onclick = () => test(
+      "emptyHtmlOutput",
+      async () => {
+        requireClipboard();
+
+        const items = await navigator.clipboard.read();
+
+        for (const item of items) {
+          if (item.types.includes("text/html")) {
+            const html = await (
+              await item.getType("text/html")
+            ).text();
+
+            output(
+              "emptyHtmlOutput",
+              html.length === 0
+                ? "HTML 为空"
+                : `HTML 长度：${html.length}`
+            );
+
+            return;
+          }
+        }
+
+        throw new Error("未读取到 text/html");
+      }
+    );
+
+    // =========================================================
+    // 3. 图片
+    // =========================================================
+
+    const canvas = $("canvas");
+    const ctx = canvas.getContext("2d");
+
+    function drawDemoImage(width = 500, height = 220) {
+      canvas.width = width;
+      canvas.height = height;
+
+      const gradient = ctx.createLinearGradient(
+        0,
+        0,
+        width,
+        height
+      );
+
+      gradient.addColorStop(0, "#1a73e8");
+      gradient.addColorStop(1, "#9334e6");
+
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = "white";
+      ctx.font = `${Math.max(16, width / 18)}px sans-serif`;
+      ctx.fillText("Clipboard Image", width / 6, height / 2);
+    }
+
+    drawDemoImage();
+
+    $("writePng").onclick = () => test(
+      "pngWriteOutput",
+      async () => {
+        requireClipboardItem();
+
+        const blob = await new Promise(resolve =>
+          canvas.toBlob(resolve, "image/png")
+        );
+
+        if (!blob) {
+          throw new Error("无法生成 PNG Blob");
+        }
+
+        const item = new ClipboardItem({
+          "image/png": blob
+        });
+
+        await navigator.clipboard.write([item]);
+
+        ok(
+          "pngWriteOutput",
+          `PNG 写入成功，大小：${formatBytes(blob.size)}`
+        );
+      }
+    );
+
+    async function readImageFromClipboard(outputId) {
+      requireClipboard();
+
+      const items = await navigator.clipboard.read();
+      const imageTypes = [
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp"
+      ];
+
+      for (const item of items) {
+        const type = item.types.find(
+          value => imageTypes.includes(value)
+        );
+
+        if (!type) continue;
+
+        const blob = await item.getType(type);
+        const url = URL.createObjectURL(blob);
+
+        $("imagePreview").replaceChildren();
+
+        const image = document.createElement("img");
+        image.className = "preview";
+        image.src = url;
+        image.alt = "剪切板图片";
+
+        $("imagePreview").appendChild(image);
+
+        ok(
+          outputId,
+          `读取成功：${type}\n大小：${formatBytes(blob.size)}`
+        );
+
+        return;
+      }
+
+      throw new Error("剪切板中没有可读取的图片");
+    }
+
+    $("readImage").onclick = () =>
+      test("imageReadOutput", () =>
+        readImageFromClipboard("imageReadOutput")
+      );
+
+    $("readImageWithoutImage").onclick = () =>
+      test("noImageOutput", () =>
+        readImageFromClipboard("noImageOutput")
+      );
+
+    $("drawSmallImage").onclick = () => {
+      drawDemoImage(1, 1);
+      ok("imageSizeOutput", "已生成 1×1 图片");
+    };
+
+    $("drawLargeImage").onclick = () => test(
+      "imageSizeOutput",
+      async () => {
+        drawDemoImage(4000, 4000);
+
+        const blob = await new Promise(resolve =>
+          canvas.toBlob(resolve, "image/png")
+        );
+
+        ok(
+          "imageSizeOutput",
+          `已生成 4000×4000 图片\n大小：${formatBytes(blob.size)}`
+        );
+      }
+    );
+
+    // =========================================================
+    // 4. ClipboardItem
+    // =========================================================
+
+    $("inspectTypes").onclick = () => test(
+      "typesOutput",
+      async () => {
+        requireClipboard();
+
+        const items = await navigator.clipboard.read();
+
+        if (!items.length) {
+          output("typesOutput", "剪切板为空");
+          return;
+        }
+
+        const result = items.map((item, index) =>
+          `ClipboardItem ${index + 1}\n` +
+          item.types.map(type => `  ${type}`).join("\n")
+        ).join("\n\n");
+
+        output("typesOutput", result);
+        log("MIME 类型检查完成");
+      }
+    );
+
+    $("writeWebMime").onclick = () => test(
+      "webMimeOutput",
+      async () => {
+        requireClipboardItem();
+
+        const json = JSON.stringify({
+          source: "clipboard-demo",
+          value: 123,
+          time: new Date().toISOString()
+        }, null, 2);
+
+        const item = new ClipboardItem({
+          "text/plain": new Blob([json], {
+            type: "text/plain"
+          }),
+          "web application/json": new Blob([json], {
+            type: "web application/json"
+          })
+        });
+
+        await navigator.clipboard.write([item]);
+
+        ok(
+          "webMimeOutput",
+          "web application/json 写入成功"
+        );
+      }
+    );
+
+    $("readWebMime").onclick = () => test(
+      "webMimeOutput",
+      async () => {
+        requireClipboard();
+
+        const items = await navigator.clipboard.read();
+
+        for (const item of items) {
+          if (item.types.includes("web application/json")) {
+            const blob = await item.getType(
+              "web application/json"
+            );
+
+            output(
+              "webMimeOutput",
+              await blob.text()
+            );
+
+            log("Web 自定义 MIME 读取完成");
+            return;
+          }
+        }
+
+        throw new Error(
+          "未找到 web application/json，可能已被其他应用覆盖"
+        );
+      }
+    );
+
+    $("writeUnsupportedMime").onclick = () => test(
+      "unsupportedMimeOutput",
+      async () => {
+        requireClipboardItem();
+
+        const item = new ClipboardItem({
+          "application/json": new Blob(
+            ['{"test":true}'],
+            { type: "application/json" }
+          )
+        });
+
+        await navigator.clipboard.write([item]);
+
+        ok(
+          "unsupportedMimeOutput",
+          "浏览器接受了 application/json"
+        );
+      }
+    );
+
+    $("readMissingMime").onclick = () => test(
+      "missingMimeOutput",
+      async () => {
+        requireClipboard();
+
+        const items = await navigator.clipboard.read();
+
+        for (const item of items) {
+          if (item.types.includes("application/x-not-exist")) {
+            await item.getType("application/x-not-exist");
+            return;
+          }
+        }
+
+        throw new Error("不存在该 MIME 类型");
+      }
+    );
+
+    $("concurrentWrite").onclick = () => test(
+      "concurrentOutput",
+      async () => {
+        requireClipboard();
+
+        const tasks = Array.from({ length: 5 }, (_, index) =>
+          navigator.clipboard.writeText(`并发写入 ${index + 1}`)
+        );
+
+        const result = await Promise.allSettled(tasks);
+
+        output(
+          "concurrentOutput",
+          result.map((item, index) =>
+            `第 ${index + 1} 次：${item.status}`
+          ).join("\n")
+        );
+
+        log("并发写入测试完成");
+      }
+    );
+
+    // =========================================================
+    // 5. 文件和拖放
+    // =========================================================
+
+    $("fileInput").onchange = event => {
+      const files = event.target.files;
+      output("fileInputOutput", describeFiles(files));
+      log(`选择文件数量：${files.length}`);
+    };
+
+    function setupDropZone(zone, outputId) {
+      ["dragenter", "dragover"].forEach(type => {
+        zone.addEventListener(type, event => {
+          event.preventDefault();
+          zone.classList.add("dragover");
+        });
+      });
+
+      ["dragleave", "drop"].forEach(type => {
+        zone.addEventListener(type, event => {
+          event.preventDefault();
+          zone.classList.remove("dragover");
+        });
+      });
+
+      zone.addEventListener("drop", event => {
+        const files = event.dataTransfer?.files;
+
+        if (!files || files.length === 0) {
+          output(outputId, "未拖放文件");
+          log("空拖放");
+          return;
+        }
+
+        output(outputId, describeFiles(files));
+        log(`拖放文件数量：${files.length}`);
+      });
+    }
+
+    setupDropZone($("dropZone"), "dropOutput");
+    setupDropZone($("emptyDropZone"), "emptyDropOutput");
+
+    $("readClipboardBlobs").onclick = () => test(
+      "clipboardBlobOutput",
+      async () => {
+        requireClipboard();
+
+        const items = await navigator.clipboard.read();
+        const result = [];
+
+        for (const [index, item] of items.entries()) {
+          result.push(`ClipboardItem ${index + 1}`);
+
+          for (const type of item.types) {
+            const blob = await item.getType(type);
+
+            result.push(
+              `${type}: ${formatBytes(blob.size)}`
+            );
+          }
+        }
+
+        output(
+          "clipboardBlobOutput",
+          result.join("\n") || "剪切板为空"
+        );
+      }
+    );
+
+    $("readClipboardAsFiles").onclick = () => test(
+      "clipboardFileOutput",
+      async () => {
+        requireClipboard();
+
+        const items = await navigator.clipboard.read();
+        const files = [];
+
+        for (const item of items) {
+          for (const type of item.types) {
+            if (
+              type.startsWith("image/") ||
+              type.startsWith("application/")
+            ) {
+              try {
+                const blob = await item.getType(type);
+
+                files.push(new File(
+                  [blob],
+                  `clipboard-${files.length + 1}`,
+                  { type }
+                ));
+              } catch {
+                // 忽略无法获取 Blob 的类型
+              }
+            }
+          }
+        }
+
+        if (!files.length) {
+          throw new Error(
+            "剪切板中没有可转换为 File 的图片或 application/* 数据"
+          );
+        }
+
+        output(
+          "clipboardFileOutput",
+          describeFiles(files)
+        );
+      }
+    );
+
+    // =========================================================
+    // 6. 剪切板事件
+    // =========================================================
+
+    const eventInput = $("eventInput");
+
+    ["copy", "cut", "paste"].forEach(type => {
+      eventInput.addEventListener(type, event => {
+        const types = event.clipboardData
+          ? [...event.clipboardData.types]
+          : [];
+
+        output(
+          "eventOutput",
+          `${type} 事件触发\n` +
+          `类型：${types.join(", ") || "无"}`
+        );
+
+        log(`${type} 事件触发`);
+      });
+    });
+
+    $("customEventInput").addEventListener("copy", event => {
+      if (!event.clipboardData) return;
+
+      event.preventDefault();
+
+      event.clipboardData.setData(
+        "text/plain",
+        $("customEventInput").value
+      );
+
+      event.clipboardData.setData(
+        "text/html",
+        `<strong>${$("customEventInput").value}</strong>`
+      );
+
+      ok(
+        "customEventOutput",
+        "copy 事件已通过 clipboardData 写入文本和 HTML"
+      );
+    });
+
+    let preventPaste = false;
+
+    $("togglePreventPaste").onclick = () => {
+      preventPaste = !preventPaste;
+
+      output(
+        "preventPasteOutput",
+        `阻止粘贴：${preventPaste ? "开启" : "关闭"}`
+      );
+    };
+
+    $("preventPasteInput").addEventListener("paste", event => {
+      if (!preventPaste) return;
+
+      event.preventDefault();
+
+      ok(
+        "preventPasteOutput",
+        "paste 事件已取消，默认粘贴行为未执行"
+      );
+    });
+
+    // =========================================================
+    // 7. 页面状态
+    // =========================================================
+
+    $("checkFocus").onclick = () => {
+      output(
+        "focusOutput",
+        `document.hasFocus(): ${document.hasFocus()}\n` +
+        `activeElement: ${document.activeElement?.tagName || "无"}`
+      );
+    };
+
+    $("checkVisibility").onclick = () => {
+      output(
+        "visibilityOutput",
+        `visibilityState: ${document.visibilityState}\n` +
+        `hidden: ${document.hidden}`
+      );
+    };
+
+    document.addEventListener("visibilitychange", () => {
+      log(`页面可见性变化：${document.visibilityState}`);
+    });
+
+    const frameHtml = `
+    <!doctype html>
+    <html>
+    <body>
+        <button id="read">iframe 读取剪切板</button>
+        <pre id="result"></pre>
+
+        <script>
+        document.querySelector("#read").onclick = async function () {
+            try {
+            const value = await navigator.clipboard.readText();
+
+            document.querySelector("#result").textContent =
+                "读取成功：" + value;
+            } catch (error) {
+            document.querySelector("#result").textContent =
+                error.name + ": " + error.message;
+            }
+        };
+        <\/script>
+    </body>
+    </html>
+    `;
+
+
+    $("testFrame").srcdoc = frameHtml;
+
+    $("clearLog").onclick = () => {
+      $("log").replaceChildren();
+    };
+
+    log("测试页面初始化完成");
+  </script>
+</body>
+</html>

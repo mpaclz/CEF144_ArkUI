@@ -1,0 +1,59 @@
+{
+  "app": {
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "compatibleSdkVersion": "5.0.5(17)",
+        "compatibleSdkVersionStage": "release",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "nativeLib": {
+            "collectAllLibs": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\z00943796\\.ohos\\config\\default_ArkUI-CEF144_94XP99MRCojyv0RNHFxiwMo7LLDcE_xzo5r5UBz-dxM=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001911EEAB28CF9224258FF2B43851583B645730E3F73E4D4C9EF27315A1DC687554A3A2AE3B0A",
+          "profile": "C:\\Users\\z00943796\\.ohos\\config\\default_ArkUI-CEF144_94XP99MRCojyv0RNHFxiwMo7LLDcE_xzo5r5UBz-dxM=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\z00943796\\.ohos\\config\\default_ArkUI-CEF144_94XP99MRCojyv0RNHFxiwMo7LLDcE_xzo5r5UBz-dxM=.p12",
+          "storePassword": "0000001934F8D9B8771934462CE52951D5C15B802F12BA9691F3578A8B2068C4F481DF4A965509760F"
+        }
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "web_engine",
+      "srcPath": "./web_engine"
+    },
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

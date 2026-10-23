@@ -1,0 +1,193 @@
+{
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "srcEntry": "./ets/Application/MyAbilityStage.ets",
+    "description": "$string:module_desc",
+    "mainElement": "ArkuiCefAbility",
+    "deviceTypes": [
+      "2in1"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "pages": "$profile:main_pages",
+    "abilities": [
+      {
+        "name": "ArkuiCefAbility",
+        "srcEntry": "./ets/ArkuiCefAbility/ArkuiCefAbility.ets",
+        "description": "$string:Arkui_cefAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:Arkui_cefAbility_label",
+        "startWindowIcon": "$media:startIcon",
+        "startWindowBackground": "$color:start_window_background",
+        "launchType": "specified",
+        "exported": true,
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "action.system.home"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "EntryAbilityPopup",
+        "srcEntry": "./ets/CefEntryAbility/EntryAbilityPopup.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:startIcon",
+        "launchType": "specified",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true,
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "action.system.home"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "CefPopupAbility",
+        "srcEntry": "./ets/CefEntryAbility/CefPopupAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:startIcon",
+        "launchType": "specified",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true,
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "action.system.home"
+            ]
+          }
+        ]
+      }
+    ],
+    "requestPermissions": [
+//      {
+//        "name": "ohos.permission.SYSTEM_FLOAT_WINDOW",
+//        "reason": "{}",
+//        "usedScene": {
+//          "abilities": [
+//            "ArkuiCefAbility"
+//          ],
+//          "when": "always"
+//        }
+//      },
+      {
+        "name": "ohos.permission.FILE_ACCESS_PERSIST"
+      },
+      {
+        "name": "ohos.permission.PRINT"
+      },
+      {
+        "name": "ohos.permission.PREPARE_APP_TERMINATE"
+      },
+      {
+        "name": "ohos.permission.STORE_PERSISTENT_DATA"
+      },
+      {
+        "name": "ohos.permission.INTERNET"
+      },
+      {
+        "name": "ohos.permission.READ_PASTEBOARD",
+        "reason": "{}",
+        "usedScene": {
+          "abilities": [
+            "ArkuiCefAbility"
+          ],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.CAMERA",
+        "reason": "{}",
+        "usedScene": {
+          "abilities": [
+            "ArkuiCefAbility"
+          ],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.MICROPHONE",
+        "reason": "{}",
+        "usedScene": {
+          "abilities": [
+            "ArkuiCefAbility"
+          ],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.CUSTOM_SCREEN_CAPTURE",
+        "reason": "{}",
+        "usedScene": {
+          "abilities": [
+            "ArkuiCefAbility"
+          ],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.ACCELEROMETER",
+      },
+      {
+        "name": "ohos.permission.GYROSCOPE",
+      },
+      {
+        "name": "ohos.permission.APPROXIMATELY_LOCATION",
+        "reason": "{}",
+        "usedScene": {
+          "abilities": [
+            "ArkuiCefAbility"
+          ],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.LOCATION",
+        "reason": "{}",
+        "usedScene": {
+          "abilities": [
+            "ArkuiCefAbility"
+          ],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.GET_WIFI_INFO",
+        "reason": "{}",
+        "usedScene": {
+          "abilities": [
+            "ArkuiCefAbility"
+          ],
+          "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.ACCESS_BLUETOOTH",
+        "reason": "{}",
+        "usedScene": {
+          "abilities": [
+            "ArkuiCefAbility"
+          ],
+          "when": "always"
+        }
+      },
+    ]
+  }
+}

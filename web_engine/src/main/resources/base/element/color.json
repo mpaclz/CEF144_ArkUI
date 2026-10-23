@@ -1,0 +1,12 @@
+{
+    "color": [
+      {
+        "name": "print_tip_button",
+        "value": "#ff0a34a2"
+      },
+      {
+        "name": "start_window_background",
+        "value": "#FFFFFF"
+      }
+    ]
+  }

@@ -1,0 +1,9 @@
+{
+  "src": [
+    "pages/BrowserTabsPage",
+    "pages/IndexPopup",
+    "pages/SubWindow",
+    "pages/NodeHandleWindow",
+    "pages/NodeHandleSubWindow"
+  ]
+}

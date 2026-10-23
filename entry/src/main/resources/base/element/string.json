@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "Arkui_cefAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "Arkui_cefAbility_label",
+      "value": "label"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "EntryAbility_desc"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "EntryAbility_label"
+    }
+  ]
+}

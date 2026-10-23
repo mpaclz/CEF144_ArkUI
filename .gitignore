@@ -1,0 +1,16 @@
+/node_modules
+/oh_modules
+/local.properties
+/.idea
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+/dep_tools/temp/
+/dep_tools/signature_release/sign_tool/haps/
+/dep_tools/signature_release/sign_tool/results_debug/
+/dep_tools/signature_release/sign_tool/results_release/

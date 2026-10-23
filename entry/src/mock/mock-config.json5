@@ -1,0 +1,5 @@
+{
+  "libarkui_cef.so": {
+    "source": "src/mock/Libarkui_cef.mock.ets"
+  }
+}

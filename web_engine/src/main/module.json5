@@ -1,0 +1,162 @@
+{
+  "module": {
+    "name": "web_engine",
+    "type": "har",
+    "deviceTypes": [
+      "tablet",
+      "2in1"
+    ],
+    "abilities": [
+      {
+        "name": "WebAbility",
+        "srcEntry": "./ets/ability/WebAbility.ets",
+        "description": "$string:WebAbility_desc",
+        "icon": "$media:Chromium_Embedded_Framework_Logo",
+        "label": "$string:WebAbility_label",
+        "startWindowIcon": "$media:Chromium_Embedded_Framework_Logo",
+        "launchType": "specified",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true,
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "action.system.home"
+            ]
+          }
+        ]
+      }
+    ],
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.INTERNET"
+      },
+      {
+        "name": "ohos.permission.GET_NETWORK_INFO"
+      },
+      {
+        "name": "ohos.permission.LOCATION",
+        "reason": "$string:reason",
+        "usedScene": {
+          "abilities": [
+            "WebAbility"
+          ],
+          "when":"always"
+        }
+      },
+      {
+        "name": "ohos.permission.APPROXIMATELY_LOCATION",
+        "reason": "$string:reason",
+        "usedScene": {
+          "abilities": [
+            "WebAbility"
+          ],
+          "when":"always"
+        }
+      },
+      {
+        "name": "ohos.permission.LOCATION_IN_BACKGROUND",
+        "reason": "$string:reason",
+        "usedScene": {
+          "abilities": [
+            "WebAbility"
+          ],
+          "when":"always"
+        }
+      },
+      {
+        "name": "ohos.permission.ACCESS_CERT_MANAGER",
+        "reason": "$string:reason",
+        "usedScene": {
+          "abilities": [
+            "WebAbility"
+          ],
+          "when":"always"
+        }
+      },
+      {
+        "name": "ohos.permission.RUNNING_LOCK",
+        "reason": "$string:reason",
+        "usedScene": {
+          "abilities": [
+            "WebAbility"
+          ],
+          "when":"always"
+        }
+      },
+      {
+        "name": "ohos.permission.PRINT",
+        "reason": "$string:reason_print",
+        "usedScene": {
+          "abilities": [
+            "WebAbility"
+          ],
+          "when":"always"
+        }
+      },
+      {
+        "name": "ohos.permission.MICROPHONE",
+        "reason": "$string:reason_microphone",
+        "usedScene": {
+          "abilities": [
+            "WebAbility"
+          ],
+          "when":"always"
+        }
+      },
+      {
+        "name": "ohos.permission.CAMERA",
+        "reason": "$string:reason_camera",
+        "usedScene": {
+          "abilities": [
+            "WebAbility"
+          ],
+          "when":"always"
+        }
+      },
+      {
+        "name": "ohos.permission.PREPARE_APP_TERMINATE",
+      },
+      {
+        "name": "ohos.permission.ACCESS_BIOMETRIC",
+      },
+//      {
+//        "name": "ohos.permission.SYSTEM_FLOAT_WINDOW",
+//      },
+      {
+        "name": "ohos.permission.ACCESS_BLUETOOTH",
+        "reason": "$string:access_bluetooth",
+        "usedScene": {
+          "abilities": [
+            "WebAbility"
+          ],
+          "when":"always"
+        }
+      },
+      {
+        "name": "ohos.permission.READ_PASTEBOARD",
+        "reason": "$string:access_pasteboard",
+      },
+      {
+        "name": "ohos.permission.FILE_ACCESS_PERSIST"
+      },
+      {
+        "name": "ohos.permission.CUSTOM_SCREEN_CAPTURE",
+        "reason": "$string:screenshot"
+      },
+      {
+        "name": "ohos.permission.ACCELEROMETER"
+      },
+      {
+        "name": "ohos.permission.GYROSCOPE"
+      }
+    ],
+    "definePermissions": [
+      {
+        "name": "ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY"
+      }
+    ]
+  }
+}
