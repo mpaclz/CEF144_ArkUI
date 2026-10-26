@@ -7,6 +7,8 @@
 #include "include/cef_focus_handler.h"
 #include "include/cef_keyboard_handler.h"
 #include "include/cef_permission_handler.h"
+#include "include/cef_render_handler.h"
+#include "ArkUICefRenderHandler.h"
 #include <functional>
 
 namespace arkui_cef {
@@ -80,6 +82,20 @@ public:
     CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
     /** @brief 获取 FocusHandler 实例 */
     CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+    /** @brief 获取 RenderHandler 实例 (OSR 模式) */
+    CefRefPtr<CefRenderHandler> GetRenderHandler() override {
+        if (use_osr_ && renderHandler_) {
+            return renderHandler_.get();
+        }
+        return nullptr;
+    }
+
+    /** @brief 设置是否使用离屏渲染模式 */
+    void SetUseOsr(bool use_osr) { use_osr_ = use_osr; }
+    /** @brief 设置 RenderHandler 实例 */
+    void SetRenderHandler(CefRefPtr<ArkUICefRenderHandler> handler) { renderHandler_ = handler; }
+    /** @brief 获取 ArkUICefRenderHandler 实例 (OSR 模式) */
+    CefRefPtr<ArkUICefRenderHandler> GetArkUICefRenderHandler() { return renderHandler_; }
     
     /**
      * @brief 页面标题变更回调
@@ -287,6 +303,9 @@ private:
     LoadCallback loadCallback_;                            ///< 页面加载回调
     TitleCallback titleCallback_;                          ///< 标题变更回调
     FocusTakeCallback focusTakeCallback_;                  ///< 焦点离开回调
+
+    bool use_osr_ = false;                                 ///< 是否使用离屏渲染
+    CefRefPtr<ArkUICefRenderHandler> renderHandler_;       ///< OSR 渲染处理器
 };
 } // namespace arkui_cef
 #endif // ARKUI_CEF_CLIENT_H

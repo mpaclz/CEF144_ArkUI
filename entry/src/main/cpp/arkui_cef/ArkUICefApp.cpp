@@ -19,7 +19,7 @@ void ArkUICefApp::PopulateSettings(CefSettings* settings) {
     settings->no_sandbox = true;
     settings->multi_threaded_message_loop = false;
     settings->log_severity = LOGSEVERITY_INFO;
-    settings->windowless_rendering_enabled = false;
+    settings->windowless_rendering_enabled = true;
 }
 
 void ArkUICefApp::OnBeforeCommandLineProcessing(

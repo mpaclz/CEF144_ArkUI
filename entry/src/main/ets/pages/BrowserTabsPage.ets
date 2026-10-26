@@ -1,5 +1,6 @@
 import { BrowserView } from '../components/BrowserView'
 import { CefView } from '../components/CefView';
+import { OsrCefView } from '../components/OsrCefView';
 
 @Entry
 @Component
@@ -62,6 +63,13 @@ struct MultiTabPage {
           }
         }.tabBar(
           SubTabBarStyle.of('PDF')
+        )
+        TabContent() {
+          Column() {
+            OsrCefView({viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_test.html'})
+          }
+        }.tabBar(
+          SubTabBarStyle.of('OSR离屏渲染')
         )
       }
       .barBackgroundColor(Color.White)

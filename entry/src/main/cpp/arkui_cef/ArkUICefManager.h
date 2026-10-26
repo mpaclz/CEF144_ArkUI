@@ -15,6 +15,7 @@
 
 #include "ArkUICefBrowser.h"
 #include "ArkUICefClient.h"
+#include "ArkUICefRenderHandler.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
@@ -70,6 +71,26 @@ public:
                           int width, int height, std::function<void(int64_t)> onCreated,
                           std::function<void(const std::string&)> onTitleChange,
                           std::function<void(bool)> onFocusTake);
+
+    /**
+     * @brief 创建离屏渲染 (OSR) 浏览器实例
+     * @param url 初始加载 URL
+     * @param width 初始宽度（像素）
+     * @param height 初始高度（像素）
+     * @param onPaint 像素数据回调 (buffer 为 BGRA 格式)
+     * @param onCreated 浏览器创建完成回调
+     * @param onTitleChange 标题变更回调
+     * @param onFocusTake 焦点离开回调
+     * @return 浏览器 ID（>0 成功，-1 失败）
+     */
+    int64_t createOsrBrowser(const std::string& url, int width, int height,
+                             PaintCallback onPaint,
+                             std::function<void(int64_t)> onCreated,
+                             std::function<void(const std::string&)> onTitleChange,
+                             std::function<void(bool)> onFocusTake,
+                             ScrollOffsetCallback onScrollOffset = nullptr,
+                             VirtualKeyboardCallback onVirtualKeyboard = nullptr,
+                             TextSelectionCallback onTextSelection = nullptr);
     
     /**
      * @brief 销毁指定浏览器

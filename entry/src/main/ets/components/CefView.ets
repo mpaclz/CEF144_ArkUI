@@ -184,9 +184,9 @@ export struct CefView {
       url, width, height);
     this.cefCreating = true;
     return arkui_cef.createCefView(nodeContent, url, width, height,
-      (id) => { this.onCefCreated(id); },
-      (title) => { this.onCefTitleChanged(title); },
-      (next) => { this.onCefFocusTake(next); });
+      (id: number) => { this.onCefCreated(id); },
+      (title: string) => { this.onCefTitleChanged(title); },
+      (next: boolean) => { this.onCefFocusTake(next); });
   }
 
   onCefCreated(id: number): void {

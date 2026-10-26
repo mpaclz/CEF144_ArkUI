@@ -90,6 +90,42 @@ int64_t ArkUICefManager::createBrowser(Node* parentWindowHandle, const std::stri
     return id;
 }
 
+int64_t ArkUICefManager::createOsrBrowser(const std::string& url, int width, int height,
+                                          PaintCallback onPaint,
+                                          std::function<void(int64_t)> onCreated,
+                                          std::function<void(const std::string&)> onTitleChange,
+                                          std::function<void(bool)> onFocusTake,
+                                          ScrollOffsetCallback onScrollOffset,
+                                          VirtualKeyboardCallback onVirtualKeyboard,
+                                          TextSelectionCallback onTextSelection) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!initOk_) {
+        return -1;
+    }
+
+    int64_t id = allocateBrowserId();
+    CefRefPtr<ArkUICefBrowser> browser = new ArkUICefBrowser(id, width, height);
+    browser->SetUseOsr(true);
+    browser->SetCreateCallback(onCreated);
+    browser->SetTitleCallback(onTitleChange);
+    browser->SetFocusTakeCallback(onFocusTake);
+
+    CefRefPtr<ArkUICefRenderHandler> renderHandler = new ArkUICefRenderHandler(width, height);
+    renderHandler->SetPaintCallback(onPaint);
+    if (onScrollOffset) renderHandler->SetScrollOffsetCallback(onScrollOffset);
+    if (onVirtualKeyboard) renderHandler->SetVirtualKeyboardCallback(onVirtualKeyboard);
+    if (onTextSelection) renderHandler->SetTextSelectionCallback(onTextSelection);
+
+    CefRefPtr<ArkUICefClient> client = new ArkUICefClient(id, browser, this);
+    client->SetUseOsr(true);
+    client->SetRenderHandler(renderHandler);
+
+    // OSR 模式不需要父窗口，传 nullptr
+    CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::createBrowser, browser,
+                                                            client, (Node*)nullptr, url)));
+    return id;
+}
+
 void ArkUICefManager::destroyBrowser(int64_t id) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initOk_) {

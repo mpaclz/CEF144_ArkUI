@@ -1,5 +1,6 @@
 #include "arkui_cef/ArkUICefBrowser.h"
 #include "arkui_cef/ArkUICefClient.h"
+#include "arkui_cef/ArkUICefRenderHandler.h"
 #include "arkui_cef/NodeHandle.h"
 
 #include <hilog/log.h>
@@ -52,16 +53,28 @@ void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* pare
         client_->SetFocusTakeCallback(focusTakeCallback_);
     }
     
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser", 
-        "createBrowser: parentStack: %{public}p", parentNode->container);
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "createBrowser: parentStack: %{public}p, use_osr=%{public}d", parentNode ? parentNode->container : nullptr, use_osr_);
     CefWindowInfo windowInfo;
     windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
-    windowInfo.SetAsChild(
-        (CefWindowHandle)parentNode,
-        CefRect(0, 0, width_, height_));
+
+    if (use_osr_) {
+        windowInfo.SetAsWindowless(0);
+    } else {
+        windowInfo.SetAsChild(
+            (CefWindowHandle)parentNode,
+            CefRect(0, 0, width_, height_));
+    }
     
     CefBrowserSettings browserSettings;
-    
+    // Limit OSR frame rate to reduce main-thread load from PixelMap creation.
+    // Each frame requires a 10MB+ deep copy + ArrayBuffer allocation + createPixelMap on the
+    // ArkTS main thread. At 30fps this floods the event queue and causes APP_INPUT_BLOCK.
+    // 10fps is sufficient for interactive web content and prevents freeze.
+    if (use_osr_) {
+        browserSettings.windowless_frame_rate = 10;
+    }
+
     bool success = CefBrowserHost::CreateBrowser(
         windowInfo, client_, url, browserSettings, nullptr, nullptr);
     
@@ -141,15 +154,39 @@ void ArkUICefBrowser::resize(int width, int height) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
         "resize: id=%{public}ld, width=%{public}d, height=%{public}d",
         id_, width, height);
-    
+
     width_ = width;
     height_ = height;
-    
+
     if (!browser_) {
         return;
     }
-    
+
+    // Update the render handler size and notify CEF of the change
+    if (use_osr_ && client_) {
+        auto handler = client_->GetArkUICefRenderHandler();
+        if (handler) {
+            handler->SetSize(width, height);
+        }
+    }
+
     browser_->GetHost()->WasResized();
+}
+
+void ArkUICefBrowser::setOsrScale(float factor) {
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "setOsrScale: id=%{public}ld, factor=%{public}f", id_, factor);
+
+    if (use_osr_ && client_) {
+        auto handler = client_->GetArkUICefRenderHandler();
+        if (handler) {
+            handler->SetDeviceScaleFactor(factor);
+        }
+    }
+
+    if (browser_) {
+        browser_->GetHost()->NotifyScreenInfoChanged();
+    }
 }
 
 void ArkUICefBrowser::show() {
@@ -175,6 +212,94 @@ void ArkUICefBrowser::sendKeyEvent(const CefKeyEvent& event) {
         return;
     }
     browser_->GetHost()->SendKeyEvent(event);
+}
+
+void ArkUICefBrowser::sendMouseClickEvent(int x, int y, int button, bool mouseUp, int clickCount, uint32_t modifiers) {
+    if (!browser_) {
+        return;
+    }
+    CefMouseEvent event;
+    event.x = x;
+    event.y = y;
+    event.modifiers = modifiers;
+    browser_->GetHost()->SendMouseClickEvent(event,
+        static_cast<cef_mouse_button_type_t>(button), mouseUp, clickCount);
+}
+
+void ArkUICefBrowser::sendMouseMoveEvent(int x, int y, bool mouseLeave, uint32_t modifiers) {
+    if (!browser_) {
+        return;
+    }
+    CefMouseEvent event;
+    event.x = x;
+    event.y = y;
+    event.modifiers = modifiers;
+    browser_->GetHost()->SendMouseMoveEvent(event, mouseLeave);
+}
+
+void ArkUICefBrowser::sendMouseWheelEvent(int x, int y, int deltaX, int deltaY) {
+    if (!browser_) {
+        return;
+    }
+    CefMouseEvent event;
+    event.x = x;
+    event.y = y;
+    event.modifiers = 0;
+    browser_->GetHost()->SendMouseWheelEvent(event, deltaX, deltaY);
+}
+
+void ArkUICefBrowser::sendFocusEvent(bool focused) {
+    if (!browser_) {
+        return;
+    }
+    browser_->GetHost()->SetFocus(focused);
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "sendFocusEvent: id=%{public}ld, focused=%{public}d", id_, focused);
+}
+
+void ArkUICefBrowser::sendCaptureLostEvent() {
+    if (!browser_) {
+        return;
+    }
+    browser_->GetHost()->SendCaptureLostEvent();
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "sendCaptureLostEvent: id=%{public}ld", id_);
+}
+
+void ArkUICefBrowser::invalidate() {
+    if (!browser_) {
+        return;
+    }
+    browser_->GetHost()->Invalidate(PET_VIEW);
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "invalidate: id=%{public}ld", id_);
+}
+
+void ArkUICefBrowser::setWindowlessVisibility(bool visible) {
+    if (!browser_) {
+        return;
+    }
+    // SetWindowlessVisibility not available in CEF 114; use SetWindowlessFrameRate to control rendering
+    browser_->GetHost()->SetWindowlessFrameRate(visible ? 30 : 0);
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "setWindowlessVisibility: id=%{public}ld, visible=%{public}d (via frame rate)", id_, visible);
+}
+
+void ArkUICefBrowser::sendTouchEvent(int x, int y, int touchType, int pointerId) {
+    if (!browser_) {
+        return;
+    }
+    CefTouchEvent event;
+    event.id = pointerId;
+    event.x = x;
+    event.y = y;
+    event.radius_x = 0.0f;
+    event.radius_y = 0.0f;
+    event.rotation_angle = 0.0f;
+    event.pressure = 1.0f;
+    event.type = static_cast<cef_touch_event_type_t>(touchType);
+    event.modifiers = 0;
+    browser_->GetHost()->SendTouchEvent(event);
 }
 
 ArkUICefBrowser::Node* ArkUICefBrowser::getWindowHandle() const {

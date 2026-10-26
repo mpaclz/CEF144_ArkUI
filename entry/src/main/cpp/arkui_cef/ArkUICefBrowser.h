@@ -113,7 +113,68 @@ public:
      * @thread 应在 CEF UI 线程调用
      */
     void sendKeyEvent(const CefKeyEvent& event);
-    
+
+    /**
+     * @brief 向浏览器发送鼠标点击事件 (OSR 模式)
+     * @param x 鼠标 X 坐标（相对于视图左上角）
+     * @param y 鼠标 Y 坐标（相对于视图左上角）
+     * @param button 鼠标按钮 (0=左, 1=中, 2=右)
+     * @param mouseUp true=释放, false=按下
+     * @param clickCount 点击次数
+     * @thread 应在 CEF UI 线程调用
+     */
+    void sendMouseClickEvent(int x, int y, int button, bool mouseUp, int clickCount, uint32_t modifiers = 0);
+
+    /**
+     * @brief 向浏览器发送鼠标移动事件 (OSR 模式)
+     * @param x 鼠标 X 坐标
+     * @param y 鼠标 Y 坐标
+     * @param mouseLeave true=鼠标离开视图
+     * @thread 应在 CEF UI 线程调用
+     */
+    void sendMouseMoveEvent(int x, int y, bool mouseLeave, uint32_t modifiers = 0);
+
+    /**
+     * @brief 向浏览器发送鼠标滚轮事件 (OSR 模式)
+     * @param x 鼠标 X 坐标
+     * @param y 鼠标 Y 坐标
+     * @param deltaX 水平滚动量
+     * @param deltaY 垂直滚动量
+     * @thread 应在 CEF UI 线程调用
+     */
+    void sendMouseWheelEvent(int x, int y, int deltaX, int deltaY);
+
+    /**
+     * @brief 向浏览器发送焦点事件 (OSR 模式)
+     * @param focused true=获得焦点, false=失去焦点
+     */
+    void sendFocusEvent(bool focused);
+
+    /**
+     * @brief 通知浏览器捕获丢失 (OSR 模式)
+     */
+    void sendCaptureLostEvent();
+
+    /**
+     * @brief 手动触发重绘 (OSR 模式)
+     */
+    void invalidate();
+
+    /**
+     * @brief 设置OSR窗口可见性 (OSR 模式)
+     * @param visible true=可见, false=不可见
+     */
+    void setWindowlessVisibility(bool visible);
+
+    /**
+     * @brief 向浏览器发送触摸事件 (OSR 模式)
+     * @param x 触摸 X 坐标
+     * @param y 触摸 Y 坐标
+     * @param touchType 触摸类型 (0=down, 1=moved, 2=up, 3=cancel)
+     * @param pointerId 触摸点 ID
+     */
+    void sendTouchEvent(int x, int y, int touchType, int pointerId);
+
     /**
      * @brief 获取浏览器唯一 ID
      * @return 浏览器 ID
@@ -150,6 +211,18 @@ public:
      * @param callback 焦点离开回调，参数为是否向下一个组件移动
      */
     void SetFocusTakeCallback(FocusTakeCallback callback) { focusTakeCallback_ = std::move(callback); }
+
+    /** @brief 设置是否使用离屏渲染模式 */
+    void SetUseOsr(bool use_osr) { use_osr_ = use_osr; }
+    /** @brief 是否使用离屏渲染模式 */
+    bool IsOsr() const { return use_osr_; }
+
+    /**
+     * @brief 设置OSR设备缩放因子
+     * @param factor 设备缩放因子（如2.0表示Retina屏幕）
+     * @thread 应在 CEF UI 线程调用
+     */
+    void setOsrScale(float factor);
     
     /**
      * @brief 内部回调：浏览器创建完成
@@ -180,6 +253,8 @@ private:
     LoadCallback loadCallback_;     ///< 页面加载回调
     TitleCallback titleCallback_;   ///< 标题变更回调
     FocusTakeCallback focusTakeCallback_; ///< 焦点离开回调
+
+    bool use_osr_ = false;            ///< 是否使用离屏渲染模式
 };
 } // namespace arkui_cef
 #endif // ARKUI_CEF_BROWSER_H

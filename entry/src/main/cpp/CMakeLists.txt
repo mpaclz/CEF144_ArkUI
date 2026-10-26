@@ -60,6 +60,7 @@ add_library(arkui_cef_core SHARED
     arkui_cef/ArkUICefApp.cpp
     arkui_cef/ArkUICefClient.cpp
     arkui_cef/ArkUICefBrowser.cpp
+    arkui_cef/ArkUICefRenderHandler.cpp
     arkui_cef/NodeHandle.cpp
     arkui_cef/ArkUICefManager.cpp)
 target_include_directories(arkui_cef_core PUBLIC
