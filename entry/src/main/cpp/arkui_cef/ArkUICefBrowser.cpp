@@ -52,6 +52,9 @@ void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* pare
     if (focusTakeCallback_) {
         client_->SetFocusTakeCallback(focusTakeCallback_);
     }
+    if (cursorChangeCallback_) {
+        client_->SetCursorChangeCallback(cursorChangeCallback_);
+    }
     
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
         "createBrowser: parentStack: %{public}p, use_osr=%{public}d", parentNode ? parentNode->container : nullptr, use_osr_);
@@ -186,6 +189,15 @@ void ArkUICefBrowser::setOsrScale(float factor) {
 
     if (browser_) {
         browser_->GetHost()->NotifyScreenInfoChanged();
+    }
+}
+
+void ArkUICefBrowser::setComponentOffset(int x, int y) {
+    if (use_osr_ && client_) {
+        auto handler = client_->GetArkUICefRenderHandler();
+        if (handler) {
+            handler->SetComponentOffset(x, y);
+        }
     }
 }
 

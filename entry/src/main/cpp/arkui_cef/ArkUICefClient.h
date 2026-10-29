@@ -55,6 +55,7 @@ public:
     using TitleCallback = std::function<void(const std::string& title)>;
     /** @brief 焦点离开回调，参数为是否向下一个组件移动 */
     using FocusTakeCallback = std::function<void(bool next)>;
+    using CursorChangeCallback = std::function<void(int cursorType)>;
     
     /**
      * @brief 构造函数
@@ -272,6 +273,12 @@ public:
      * @thread CEF UI 线程
      */
     void OnTakeFocus(CefRefPtr<CefBrowser> browser, bool next) override;
+
+    // --- CefDisplayHandler: Cursor ---
+    bool OnCursorChange(CefRefPtr<CefBrowser> browser,
+                        CefCursorHandle cursor,
+                        cef_cursor_type_t type,
+                        const CefCursorInfo& custom_cursor_info) override;
     
     /**
      * @brief 设置页面加载状态回调
@@ -290,6 +297,8 @@ public:
      * @param callback 焦点离开回调，参数为是否向下一个组件移动
      */
     void SetFocusTakeCallback(FocusTakeCallback callback) { focusTakeCallback_ = std::move(callback); }
+
+    void SetCursorChangeCallback(CursorChangeCallback callback) { cursorChangeCallback_ = std::move(callback); }
     
     IMPLEMENT_REFCOUNTING(ArkUICefClient);
 
@@ -303,6 +312,7 @@ private:
     LoadCallback loadCallback_;                            ///< 页面加载回调
     TitleCallback titleCallback_;                          ///< 标题变更回调
     FocusTakeCallback focusTakeCallback_;                  ///< 焦点离开回调
+    CursorChangeCallback cursorChangeCallback_;            ///< 光标变更回调
 
     bool use_osr_ = false;                                 ///< 是否使用离屏渲染
     CefRefPtr<ArkUICefRenderHandler> renderHandler_;       ///< OSR 渲染处理器

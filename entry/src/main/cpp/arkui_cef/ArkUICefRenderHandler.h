@@ -12,6 +12,7 @@ using PaintCallback = std::function<void(const void* buffer, int width, int heig
 using ScrollOffsetCallback = std::function<void(double x, double y)>;
 using VirtualKeyboardCallback = std::function<void(bool show)>;
 using TextSelectionCallback = std::function<void(const std::string& selected_text)>;
+using CursorChangeCallback = std::function<void(int cursorType)>;
 
 class ArkUICefRenderHandler : public CefRenderHandler {
 public:
@@ -20,6 +21,10 @@ public:
 
     void GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override;
     bool GetScreenInfo(CefRefPtr<CefBrowser> browser, CefScreenInfo& screen_info) override;
+    bool GetRootScreenRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override;
+    bool GetScreenPoint(CefRefPtr<CefBrowser> browser,
+                        int viewX, int viewY,
+                        int& screenX, int& screenY) override;
     void OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
                  const RectList& dirtyRects, const void* buffer,
                  int width, int height) override;
@@ -40,6 +45,7 @@ public:
 
     void SetSize(int width, int height);
     void SetDeviceScaleFactor(float factor);
+    void SetComponentOffset(int x, int y);
     void SetPaintCallback(PaintCallback callback) { paintCallback_ = std::move(callback); }
     void SetScrollOffsetCallback(ScrollOffsetCallback cb) { scrollOffsetCallback_ = std::move(cb); }
     void SetVirtualKeyboardCallback(VirtualKeyboardCallback cb) { virtualKeyboardCallback_ = std::move(cb); }
@@ -56,6 +62,8 @@ private:
     int width_;
     int height_;
     float deviceScaleFactor_ = 1.0f;
+    int componentOffsetX_ = 0;
+    int componentOffsetY_ = 0;
     PaintCallback paintCallback_;
     std::mutex mutex_;
     bool popupVisible_ = false;

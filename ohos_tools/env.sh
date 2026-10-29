@@ -82,8 +82,6 @@ CEF_RES_DIRS=(
 CEF_LIBS=(
   libadapter.so
   libcef.so
-  libcefclient.so
-  libcefsimple.so
 )
 
 ELECTRON_BIN_FILES=(

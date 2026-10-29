@@ -42,6 +42,11 @@ find_library(
 )
 
 find_library(
+    native-display-manager-lib
+    native_display_manager
+)
+
+find_library(
     hilog-lib
     hilog_ndk.z
 )
@@ -82,6 +87,7 @@ target_link_libraries(arkui_cef_core PUBLIC
     libcef_dll_wrapper
     ${HAP_LIB_DIR}/libadapter.so
     ${native-window-lib}
+    ${native-display-manager-lib}
     ${native-drawing-lib}
     ${hilog-lib}
     ${libace-lib}

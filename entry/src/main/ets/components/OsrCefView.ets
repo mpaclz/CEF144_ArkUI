@@ -1,6 +1,7 @@
 import arkui_cef from 'libarkui_cef.so';
 import { image } from '@kit.ImageKit';
 import { hilog } from "@kit.PerformanceAnalysisKit";
+import { pointer } from '@kit.InputKit';
 
 const DOMAIN = 0xFF01;
 const MODULE = 'OsrCefView'
@@ -24,6 +25,7 @@ export struct OsrCefView {
   @State private scrollOffsetText: string = '';
   @State private selectedText: string = '';
   @State private keyboardVisible: boolean = false;
+  @State private cursorTypeText: string = 'default';
 
   @Prop viewUrl: string = '';
 
@@ -134,7 +136,7 @@ export struct OsrCefView {
       .onMouse((event: MouseEvent) => this.handleMouseEvent(event))
       .onAxisEvent((event: AxisEvent) => this.handleAxisEvent(event))
       .onKeyEvent((event: KeyEvent) => this.handleKeyEvent(event))
-      .onAreaChange((_oldValue, newValue) => {
+      .onAreaChange((_oldValue: Area, newValue: Area) => {
         let wpx = Math.round(this.getUIContext().vp2px(newValue.width as number));
         let hpx = Math.round(this.getUIContext().vp2px(newValue.height as number));
         hilog.info(DOMAIN, MODULE, "onAreaChange: wpx=%{public}d, hpx=%{public}d", wpx, hpx);
@@ -148,6 +150,10 @@ export struct OsrCefView {
             let dsf = this.getUIContext().vp2px(1);
             arkui_cef.cefOsrSetScale(this.browserId, dsf);
             arkui_cef.cefOsrResize(this.browserId, this.viewWidth, this.viewHeight);
+            // Pass component offset for GetScreenPoint (tooltip positioning)
+            arkui_cef.cefSetComponentOffset(this.browserId,
+              Math.round(newValue.globalPosition.x as number),
+              Math.round(newValue.globalPosition.y as number));
           }
         }
       })
@@ -176,6 +182,10 @@ export struct OsrCefView {
               .fontSize(9)
               .fontColor('#AA6666')
           }
+
+          Text(`Cursor: ${this.cursorTypeText}`)
+            .fontSize(9)
+            .fontColor('#66AA66')
         }
         .width('100%')
         .height(16)
@@ -268,7 +278,8 @@ export struct OsrCefView {
       (next: boolean) => { this.onOsrFocusTake(next); },
       (offset: string) => { this.onOsrScrollOffset(offset); },
       (show: boolean) => { this.onOsrVirtualKeyboard(show); },
-      (text: string) => { this.onOsrTextSelection(text); });
+      (text: string) => { this.onOsrTextSelection(text); },
+      (cursorType: number) => { this.onOsrCursorChange(cursorType); });
 
     hilog.info(DOMAIN, MODULE, "OSR CEF starts to create, id: %{public}d", id);
   }
@@ -284,6 +295,7 @@ export struct OsrCefView {
     let dsf = this.getUIContext().vp2px(1);
     arkui_cef.cefOsrSetScale(this.browserId, dsf);
     arkui_cef.cefOsrResize(this.browserId, this.viewWidth, this.viewHeight);
+    // Initial component offset will be set by onAreaChange callback
   }
 
   onOsrPaint(buffer: ArrayBuffer, width: number, height: number): void {
@@ -344,6 +356,68 @@ export struct OsrCefView {
     this.selectedText = text;
   }
 
+  onOsrCursorChange(cursorType: number): void {
+    // CEF cef_cursor_type_t enum (sequential from 0):
+    // CT_POINTER=0 CT_CROSS=1 CT_HAND=2 CT_IBEAM=3 CT_WAIT=4 CT_HELP=5
+    // CT_EASTRESIZE=6 CT_NORTHRESIZE=7 CT_NORTHEASTRESIZE=8 CT_NORTHWESTRESIZE=9
+    // CT_SOUTHRESIZE=10 CT_SOUTHEASTRESIZE=11 CT_SOUTHWESTRESIZE=12 CT_WESTRESIZE=13
+    // CT_NORTHSOUTHRESIZE=14 CT_EASTWESTRESIZE=15
+    // CT_NORTHEASTSOUTHWESTRESIZE=16 CT_NORTHWESTSOUTHEASTRESIZE=17
+    // CT_COLUMNRESIZE=18 CT_ROWRESIZE=19
+    // CT_MOVE=29 CT_VERTICALTEXT=30 CT_CELL=31 CT_CONTEXTMENU=32
+    // CT_COPY=36 CT_NONE=37 CT_NOTALLOWED=38 CT_ZOOMIN=39 CT_ZOOMOUT=40
+    // CT_GRAB=41 CT_GRABBING=42
+    let pStyle: pointer.PointerStyle = pointer.PointerStyle.DEFAULT;
+    let label: string = 'default';
+    switch (cursorType) {
+      case 0:  pStyle = pointer.PointerStyle.DEFAULT; label = 'pointer'; break;
+      case 1:  pStyle = pointer.PointerStyle.CROSS; label = 'cross'; break;
+      case 2:  pStyle = pointer.PointerStyle.HAND_POINTING; label = 'hand'; break;
+      case 3:  pStyle = pointer.PointerStyle.TEXT_CURSOR; label = 'text'; break;
+      case 4:  pStyle = pointer.PointerStyle.LOADING; label = 'wait'; break;
+      case 5:  pStyle = pointer.PointerStyle.HELP; label = 'help'; break;
+      case 6:  pStyle = pointer.PointerStyle.EAST; label = 'e-resize'; break;
+      case 7:  pStyle = pointer.PointerStyle.NORTH; label = 'n-resize'; break;
+      case 8:  pStyle = pointer.PointerStyle.NORTH_EAST_SOUTH_WEST; label = 'ne-resize'; break;
+      case 9:  pStyle = pointer.PointerStyle.NORTH_WEST_SOUTH_EAST; label = 'nw-resize'; break;
+      case 10: pStyle = pointer.PointerStyle.SOUTH; label = 's-resize'; break;
+      case 11: pStyle = pointer.PointerStyle.NORTH_WEST_SOUTH_EAST; label = 'se-resize'; break;
+      case 12: pStyle = pointer.PointerStyle.NORTH_EAST_SOUTH_WEST; label = 'sw-resize'; break;
+      case 13: pStyle = pointer.PointerStyle.WEST; label = 'w-resize'; break;
+      case 14: pStyle = pointer.PointerStyle.NORTH_SOUTH; label = 'ns-resize'; break;
+      case 15: pStyle = pointer.PointerStyle.WEST_EAST; label = 'ew-resize'; break;
+      case 16: pStyle = pointer.PointerStyle.NORTH_EAST_SOUTH_WEST; label = 'nesw-resize'; break;
+      case 17: pStyle = pointer.PointerStyle.NORTH_WEST_SOUTH_EAST; label = 'nwse-resize'; break;
+      case 18: pStyle = pointer.PointerStyle.WEST_EAST; label = 'col-resize'; break;
+      case 19: pStyle = pointer.PointerStyle.NORTH_SOUTH; label = 'row-resize'; break;
+      case 29: pStyle = pointer.PointerStyle.MOVE; label = 'move'; break;
+      case 30: pStyle = pointer.PointerStyle.HORIZONTAL_TEXT_CURSOR; label = 'vtext'; break;
+      case 31: pStyle = pointer.PointerStyle.CURSOR_CROSS; label = 'cell'; break;
+      case 32: pStyle = pointer.PointerStyle.HELP; label = 'context*'; break;
+      case 36: pStyle = pointer.PointerStyle.CURSOR_COPY; label = 'copy'; break;
+      case 37: pStyle = pointer.PointerStyle.DEFAULT; label = 'none*'; break;
+      case 38: pStyle = pointer.PointerStyle.CURSOR_FORBID; label = 'forbid'; break;
+      case 39: pStyle = pointer.PointerStyle.ZOOM_IN; label = 'zoomin'; break;
+      case 40: pStyle = pointer.PointerStyle.ZOOM_OUT; label = 'zoomout'; break;
+      case 41: pStyle = pointer.PointerStyle.HAND_OPEN; label = 'grab'; break;
+      case 42: pStyle = pointer.PointerStyle.HAND_GRABBING; label = 'grabbing'; break;
+      default: pStyle = pointer.PointerStyle.DEFAULT; label = 'type=' + cursorType; break;
+    }
+    this.cursorTypeText = label;
+    hilog.info(DOMAIN, MODULE, "OSR cursor change: type=%{public}d -> %{public}s", cursorType, label);
+
+    try {
+      let cursorController = this.getUIContext().getCursorController();
+      if (cursorType === 0) {
+        cursorController.restoreDefault();
+      } else {
+        cursorController.setCursor(pStyle);
+      }
+    } catch (e) {
+      hilog.error(DOMAIN, MODULE, "setCursor failed: %{public}s", (e as Error).message);
+    }
+  }
+
   // ==================== Touch Event (触摸屏) ====================
   handleTouchEvent(event: TouchEvent): void {
     if (!this.isCreated()) {
@@ -353,45 +427,72 @@ export struct OsrCefView {
     // Stop propagation so Tabs doesn't handle the event
     event.stopPropagation();
 
-    let touch = event.touches[0];
-    if (!touch) {
-      return;
-    }
-
-    // DSF is set to device scale factor, so CEF GetViewRect returns CSS pixels.
-    // ArkUI touch coordinates are in vp (CSS pixels), so no conversion needed.
-    let x = Math.round(touch.x);
-    let y = Math.round(touch.y);
-
     // CEF touch event types: TOUCHEVENT_RELEASED=0, TOUCHEVENT_PRESSED=1, TOUCHEVENT_MOVED=2, TOUCHEVENT_CANCELLED=3
     let touchType = 2; // default moved
     switch (event.type) {
       case TouchType.Down:
         touchType = 1; // pressed
-        hilog.info(DOMAIN, MODULE, "Touch Down: x=%{public}d, y=%{public}d", x, y);
-        // Send focus event on touch down
-        arkui_cef.cefSendFocusEvent(this.browserId, true);
-        // Send both touch event and mouse simulation for compatibility
-        arkui_cef.cefSendTouchEvent(this.browserId, x, y, touchType, touch.id);
-        arkui_cef.cefSendMouseMove(this.browserId, x, y, false);
-        // Set EVENTFLAG_LEFT_MOUSE_BUTTON (0x10) on touch-down mouse click simulation
-        arkui_cef.cefSendMouseClick(this.browserId, x, y, 0, false, 1, 0x10);
         break;
       case TouchType.Up:
         touchType = 0; // released
-        hilog.info(DOMAIN, MODULE, "Touch Up: x=%{public}d, y=%{public}d", x, y);
-        arkui_cef.cefSendTouchEvent(this.browserId, x, y, touchType, touch.id);
-        arkui_cef.cefSendMouseClick(this.browserId, x, y, 0, true, 1, 0);
         break;
       case TouchType.Move:
         touchType = 2; // moved
-        arkui_cef.cefSendTouchEvent(this.browserId, x, y, touchType, touch.id);
-        // During touch drag, set EVENTFLAG_LEFT_MOUSE_BUTTON so CEF tracks drag state
-        arkui_cef.cefSendMouseMove(this.browserId, x, y, false, 0x10);
         break;
       case TouchType.Cancel:
         touchType = 3; // cancelled
-        arkui_cef.cefSendTouchEvent(this.browserId, x, y, touchType, touch.id);
+        break;
+      default:
+        break;
+    }
+
+    // Forward touch events to CEF
+    // For Down/Up: only send the changed touch points (not all current touches)
+    // For Move/Cancel: send all current touches
+    let touchList: TouchObject[] = event.touches;
+    if (event.type === TouchType.Down || event.type === TouchType.Up) {
+      touchList = event.changedTouches;
+    }
+    for (let i = 0; i < touchList.length; i++) {
+      let touch = touchList[i];
+      let x = Math.round(touch.x);
+      let y = Math.round(touch.y);
+      arkui_cef.cefSendTouchEvent(this.browserId, x, y, touchType, touch.id);
+    }
+
+    // Mouse simulation: ONLY for single-touch (1 finger)
+    // Multi-touch (2+ fingers) must NOT send mouse events, otherwise CEF
+    // treats the input as mouse and ignores touch events entirely,
+    // preventing pinch-zoom and other multi-touch gestures from reaching the page.
+    if (event.touches.length > 1) {
+      if (event.type === TouchType.Down) {
+        hilog.info(DOMAIN, MODULE, "Multi-touch Down: %{public}d fingers, touch events only", event.touches.length);
+      }
+      return; // Skip mouse simulation for multi-touch
+    }
+
+    let touch0 = event.touches[0];
+    if (!touch0) {
+      return;
+    }
+    let x = Math.round(touch0.x);
+    let y = Math.round(touch0.y);
+
+    switch (event.type) {
+      case TouchType.Down:
+        hilog.info(DOMAIN, MODULE, "Touch Down: x=%{public}d, y=%{public}d", x, y);
+        arkui_cef.cefSendFocusEvent(this.browserId, true);
+        arkui_cef.cefSendMouseMove(this.browserId, x, y, false);
+        arkui_cef.cefSendMouseClick(this.browserId, x, y, 0, false, 1, 0x10);
+        break;
+      case TouchType.Up:
+        hilog.info(DOMAIN, MODULE, "Touch Up: x=%{public}d, y=%{public}d", x, y);
+        arkui_cef.cefSendMouseClick(this.browserId, x, y, 0, true, 1, 0);
+        break;
+      case TouchType.Move:
+        arkui_cef.cefSendMouseMove(this.browserId, x, y, false, 0x10);
+        break;
+      case TouchType.Cancel:
         arkui_cef.cefSendMouseMove(this.browserId, x, y, true);
         arkui_cef.cefSendCaptureLost(this.browserId);
         break;

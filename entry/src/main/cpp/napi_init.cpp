@@ -716,15 +716,15 @@ static napi_value NAPI_Global_hasCef(napi_env env, napi_callback_info info) {
 static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info info) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "createOsrCefView called");
 
-    size_t argc = 10;
-    napi_value args[10];
+    size_t argc = 11;
+    napi_value args[11];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
     if (argc < 7) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-            "createOsrCefView: expected 7-10 arguments, got %{public}zu", argc);
+            "createOsrCefView: expected 7-11 arguments, got %{public}zu", argc);
         napi_throw_error(env, nullptr,
-            "Expected 7-10 arguments: url, width, height, onPaint, onCreated, onTitleChange, onFocusTake [, onScrollOffset, onVirtualKeyboard, onTextSelection]");
+            "Expected 7-11 arguments: url, width, height, onPaint, onCreated, onTitleChange, onFocusTake [, onScrollOffset, onVirtualKeyboard, onTextSelection, onCursorChange]");
         return nullptr;
     }
 
@@ -753,10 +753,11 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
     auto jsTitleChangeCallback = makeJsThreadSafeCallback<std::string>(env, args[5], "OsrTitleChangeCallback");
     auto jsFocusTakeCallback = makeJsThreadSafeCallback<bool>(env, args[6], "OsrFocusTakeCallback");
 
-    // Optional callbacks (args 7, 8, 9)
+    // Optional callbacks (args 7, 8, 9, 10)
     std::function<void(double, double)> scrollOffsetCb;
     std::function<void(bool)> virtualKeyboardCb;
     std::function<void(const std::string&)> textSelectionCb;
+    std::function<void(int)> cursorChangeCb;
 
     if (argc >= 8) {
         auto jsScrollCallback = makeJsThreadSafeCallback<double>(env, args[7], "OsrScrollOffsetCallback");
@@ -813,6 +814,19 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
         }
     }
 
+    if (argc >= 11) {
+        napi_valuetype vt;
+        napi_typeof(env, args[10], &vt);
+        if (vt == napi_function) {
+            auto jsCursorCb = makeJsThreadSafeCallback<int32_t>(env, args[10], "OsrCursorChangeCallback");
+            if (jsCursorCb) {
+                cursorChangeCb = [jsCursorCb](int cursorType) {
+                    jsCursorCb->Call(static_cast<int32_t>(cursorType));
+                };
+            }
+        }
+    }
+
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
         "createOsrCefView: width=%{public}d, height=%{public}d", width, height);
 
@@ -836,7 +850,8 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
         },
         scrollOffsetCb,
         virtualKeyboardCb,
-        textSelectionCb);
+        textSelectionCb,
+        cursorChangeCb);
 
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
         "createOsrCefView: browserId=%{public}ld", browserId);
@@ -1022,6 +1037,33 @@ static napi_value NAPI_Global_cefOsrSetScale(napi_env env, napi_callback_info in
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
             base::BindOnce(&ArkUICefBrowser::setOsrScale, browser, static_cast<float>(scaleFactor))));
+    }
+    return nullptr;
+}
+
+static napi_value NAPI_Global_cefSetComponentOffset(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 3) {
+        napi_throw_error(env, nullptr, "Expected 3 arguments: browserId, offsetX, offsetY");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    int32_t offsetX = 0;
+    napi_get_value_int32(env, args[1], &offsetX);
+
+    int32_t offsetY = 0;
+    napi_get_value_int32(env, args[2], &offsetY);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::setComponentOffset, browser, offsetX, offsetY)));
     }
     return nullptr;
 }
@@ -1244,6 +1286,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"destroyOsrCefView", nullptr, NAPI_Global_destroyOsrCefView, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefOsrResize", nullptr, NAPI_Global_cefOsrResize, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefOsrSetScale", nullptr, NAPI_Global_cefOsrSetScale, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefSetComponentOffset", nullptr, NAPI_Global_cefSetComponentOffset, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSendMouseClick", nullptr, NAPI_Global_cefSendMouseClick, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSendMouseMove", nullptr, NAPI_Global_cefSendMouseMove, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSendMouseWheel", nullptr, NAPI_Global_cefSendMouseWheel, nullptr, nullptr, nullptr, napi_default, nullptr},

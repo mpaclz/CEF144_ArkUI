@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OSR 输入事件测试</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; background: #f5f5f5; padding: 12px; color: #333; }
+h1 { text-align: center; font-size: 18px; margin-bottom: 12px; }
+h2 { font-size: 14px; color: #444; margin: 12px 0 6px; border-bottom: 2px solid #ccc; padding-bottom: 3px; }
+.section { background: white; border-radius: 8px; padding: 12px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+.note { font-size: 11px; color: #888; margin-top: 4px; }
+a { color: #2196F3; text-decoration: none; font-size: 14px; }
+a:hover { text-decoration: underline; }
+input, textarea { width: 100%; padding: 8px; font-size: 14px; border: 2px solid #ddd; border-radius: 4px; margin-bottom: 6px; }
+button { padding: 8px 16px; font-size: 14px; border: none; border-radius: 4px; background: #4CAF50; color: white; cursor: pointer; margin: 2px; }
+button:hover { opacity: 0.85; }
+#log { font-size: 12px; color: #333; min-height: 24px; margin-top: 6px; }
+.cursor-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cursor-box {
+  border: 2px solid #e0e0e0; border-radius: 6px; padding: 8px 6px;
+  text-align: center; font-size: 11px; color: #555; min-height: 68px;
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  background: #fafafa; transition: background 0.15s;
+}
+.cursor-box:hover { background: #e3f2fd; border-color: #2196F3; }
+.cursor-box .cname { font-weight: bold; color: #333; font-size: 12px; }
+.cursor-box .cval { font-size: 10px; color: #999; margin-top: 1px; }
+.cursor-box .cexp { font-size: 10px; color: #666; margin-top: 3px; line-height: 1.3; }
+.cursor-box.unsup .cexp { color: #e91e63; }
+#multiTouchArea { background: #e8f5e9; border: 2px solid #4CAF50; border-radius: 8px; height: 120px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #555; touch-action: none; }
+#pinchZoomBox { width: 200px; height: 200px; background: linear-gradient(135deg, #667eea, #764ba2); border-radius: 8px; margin: 0 auto; display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; transform-origin: center; }
+#statusBar { position: fixed; bottom: 0; left: 0; right: 0; background: #333; color: #0f0; font-family: monospace; font-size: 10px; padding: 3px 8px; z-index: 999; }
+</style>
+</head>
+<body>
+
+<h1>OSR 输入事件测试页</h1>
+
+<!-- ========== Part 1: 光标变更测试 ========== -->
+<div class="section">
+<h2>1. 光标变更测试 Cursor Change（需外接鼠标）</h2>
+<p style="font-size:13px;margin-bottom:8px;">将鼠标悬停到每个方块上，观察光标变化。底部状态栏显示当前光标类型。粉色文字表示 OHOS 无对应光标样式。</p>
+
+<div class="cursor-grid">
+  <div class="cursor-box" style="cursor:default;">
+    <span class="cname">default</span><span class="cval">CT_POINTER=0</span>
+    <span class="cexp">期望：默认箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:crosshair;">
+    <span class="cname">crosshair</span><span class="cval">CT_CROSS=1</span>
+    <span class="cexp">期望：十字准线</span>
+  </div>
+  <div class="cursor-box" style="cursor:pointer;">
+    <span class="cname">pointer</span><span class="cval">CT_HAND=2</span>
+    <span class="cexp">期望：手型（食指指向）</span>
+  </div>
+  <div class="cursor-box" style="cursor:text;">
+    <span class="cname">text</span><span class="cval">CT_IBEAM=3</span>
+    <span class="cexp">期望：I 型文本光标</span>
+  </div>
+  <div class="cursor-box" style="cursor:wait;">
+    <span class="cname">wait</span><span class="cval">CT_WAIT=4</span>
+    <span class="cexp">期望：等待/沙漏</span>
+  </div>
+  <div class="cursor-box" style="cursor:help;">
+    <span class="cname">help</span><span class="cval">CT_HELP=5</span>
+    <span class="cexp">期望：箭头+问号</span>
+  </div>
+  <div class="cursor-box" style="cursor:n-resize;">
+    <span class="cname">n-resize</span><span class="cval">CT_NORTHRESIZE=7</span>
+    <span class="cexp">期望：↑ 双向竖箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:s-resize;">
+    <span class="cname">s-resize</span><span class="cval">CT_SOUTHRESIZE=10</span>
+    <span class="cexp">期望：↓ 双向竖箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:e-resize;">
+    <span class="cname">e-resize</span><span class="cval">CT_EASTRESIZE=6</span>
+    <span class="cexp">期望：→ 双向横箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:w-resize;">
+    <span class="cname">w-resize</span><span class="cval">CT_WESTRESIZE=13</span>
+    <span class="cexp">期望：← 双向横箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:ns-resize;">
+    <span class="cname">ns-resize</span><span class="cval">CT_NORTHSOUTHRESIZE=14</span>
+    <span class="cexp">期望：↕ 双向竖箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:ew-resize;">
+    <span class="cname">ew-resize</span><span class="cval">CT_EASTWESTRESIZE=15</span>
+    <span class="cexp">期望：↔ 双向横箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:ne-resize;">
+    <span class="cname">ne-resize</span><span class="cval">CT_NORTHEASTRESIZE=8</span>
+    <span class="cexp">期望：↗↙ 对角双箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:nw-resize;">
+    <span class="cname">nw-resize</span><span class="cval">CT_NORTHWESTRESIZE=9</span>
+    <span class="cexp">期望：↖↘ 对角双箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:se-resize;">
+    <span class="cname">se-resize</span><span class="cval">CT_SOUTHEASTRESIZE=11</span>
+    <span class="cexp">期望：↖↘ 对角双箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:sw-resize;">
+    <span class="cname">sw-resize</span><span class="cval">CT_SOUTHWESTRESIZE=12</span>
+    <span class="cexp">期望：↗↙ 对角双箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:col-resize;">
+    <span class="cname">col-resize</span><span class="cval">CT_COLUMNRESIZE=18</span>
+    <span class="cexp">期望：↔ 双向横箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:row-resize;">
+    <span class="cname">row-resize</span><span class="cval">CT_ROWRESIZE=19</span>
+    <span class="cexp">期望：↕ 双向竖箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:move;">
+    <span class="cname">move</span><span class="cval">CT_MOVE=29</span>
+    <span class="cexp">期望：↔↕ 四向十字箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:vertical-text;">
+    <span class="cname">vertical-text</span><span class="cval">CT_VERTICALTEXT=30</span>
+    <span class="cexp">期望：横向 I 型光标</span>
+  </div>
+  <div class="cursor-box" style="cursor:cell;">
+    <span class="cname">cell</span><span class="cval">CT_CELL=31</span>
+    <span class="cexp">期望：粗十字准线</span>
+  </div>
+  <div class="cursor-box" style="cursor:copy;">
+    <span class="cname">copy</span><span class="cval">CT_COPY=36</span>
+    <span class="cexp">期望：箭头+复制标记</span>
+  </div>
+  <div class="cursor-box unsup" style="cursor:none;">
+    <span class="cname">none</span><span class="cval">CT_NONE=37</span>
+    <span class="cexp">OHOS不支持隐藏<br>显示默认箭头</span>
+  </div>
+  <div class="cursor-box" style="cursor:not-allowed;">
+    <span class="cname">not-allowed</span><span class="cval">CT_NOTALLOWED=38</span>
+    <span class="cexp">期望：禁止圈（⊘）</span>
+  </div>
+  <div class="cursor-box" style="cursor:zoom-in;">
+    <span class="cname">zoom-in</span><span class="cval">CT_ZOOMIN=39</span>
+    <span class="cexp">期望：放大镜+号</span>
+  </div>
+  <div class="cursor-box" style="cursor:zoom-out;">
+    <span class="cname">zoom-out</span><span class="cval">CT_ZOOMOUT=40</span>
+    <span class="cexp">期望：放大镜-号</span>
+  </div>
+  <div class="cursor-box" style="cursor:grab;">
+    <span class="cname">grab</span><span class="cval">CT_GRAB=41</span>
+    <span class="cexp">期望：张开手型</span>
+  </div>
+  <div class="cursor-box" style="cursor:grabbing;">
+    <span class="cname">grabbing</span><span class="cval">CT_GRABBING=42</span>
+    <span class="cexp">期望：抓取手型</span>
+  </div>
+</div>
+
+<div style="margin-top:10px;">
+  <a href="javascript:void(0)" onclick="log('链接被点击')" style="display:inline-block;margin-right:12px;">链接 Link (pointer)</a>
+  <span style="cursor:text;border-bottom:1px solid #ccc;padding:2px 8px;">可选中文字 Selectable text (text)</span>
+</div>
+<div class="note" style="margin-top:6px;">验证：悬停每个方块时光标应变为此方块标注的期望样式。底部状态栏 "Cursor:" 字段同步显示。粉色标注项为 OHOS 系统无对应 PointerStyle，显示默认箭头。</div>
+</div>
+
+<!-- ========== Part 2: 多触摸点测试 ========== -->
+<div class="section">
+<h2>2. 多触摸点测试 Multi-Touch</h2>
+<p style="font-size:13px;margin-bottom:6px;">用两个手指同时触摸下方绿色区域，双指捏合或展开：</p>
+<div id="multiTouchArea">双指触摸此区域 Pinch with two fingers</div>
+<div id="pinchZoomBox" style="transform: scale(1);">双指捏合/展开缩放我 Pinch to zoom</div>
+<div id="log">等待触摸事件...</div>
+<div class="note" style="color:#e91e63;font-weight:bold;">期望现象：<br>
+1. 双指触摸后，"等待触摸事件..." 变为 "双指触摸开始 dist=XXX"<br>
+2. 双指展开 → 紫色方块变大，日志显示 "缩放: 1.5x" 等<br>
+3. 双指捏合 → 紫色方块变小，日志显示 "缩放: 0.8x" 等<br>
+4. 整个网页不应被缩放，只有紫色方块变化<br>
+如果日志不变且整个网页被缩放，说明触摸事件未到达页面。</div>
+</div>
+
+<!-- ========== Part 3: 点击测试 ========== -->
+<div class="section">
+<h2>3. 点击测试 Click Test</h2>
+<button onclick="log('绿色按钮被点击 ' + new Date().toLocaleTimeString())">点击我 Click</button>
+<button onclick="log('双击按钮 ' + new Date().toLocaleTimeString())" ondblclick="log('双击成功！Double click!')">双击我 Double Click</button>
+<div id="clickLog" style="margin-top:6px;font-size:12px;">等待点击...</div>
+<div class="note">验证：单击和双击都应响应。</div>
+</div>
+
+<!-- ========== Part 4: 文本输入测试 ========== -->
+<div class="section">
+<h2>4. 文本输入测试 Text Input</h2>
+<input type="text" id="textIn" placeholder="输入文字 Type text..." oninput="document.getElementById('inputLog').innerText='内容: '+this.value" />
+<textarea placeholder="多行输入 Textarea" rows="2"></textarea>
+<div id="inputLog" style="font-size:12px;">等待输入...</div>
+<div class="note">验证：键盘输入应正确显示。</div>
+</div>
+
+<!-- ========== Part 5: 滚动测试 ========== -->
+<div class="section">
+<h2>5. 滚动测试 Scroll</h2>
+<div style="height:120px;overflow-y:auto;border:2px solid #ddd;border-radius:4px;padding:8px;">
+<p>第1行 Line 1</p><p>第2行 Line 2</p><p>第3行 Line 3</p>
+<p>第4行 Line 4</p><p>第5行 Line 5</p><p>第6行 Line 6</p>
+<p>第7行 Line 7</p><p>第8行 Line 8</p><p>第9行 Line 9</p>
+<p>第10行 如果看到这行说明滚动正常 Line 10</p>
+</div>
+<div class="note">验证：触摸滑动和滚轮都能滚动此区域。</div>
+</div>
+
+<div id="statusBar">Status: Ready</div>
+
+<script>
+function log(msg) {
+  document.getElementById('log').innerText = msg;
+  document.getElementById('statusBar').innerText = 'Status: ' + msg;
+}
+document.querySelectorAll('button').forEach(function(btn) {
+  if (btn.textContent.indexOf('双击') >= 0) return;
+  btn.addEventListener('click', function() {
+    document.getElementById('clickLog').innerText = btn.textContent + ' clicked';
+  });
+});
+var box = document.getElementById('pinchZoomBox');
+var area = document.getElementById('multiTouchArea');
+var initialDist = 0;
+var currentScale = 1;
+area.addEventListener('touchstart', function(e) {
+  if (e.touches.length >= 2) {
+    e.preventDefault();
+    var dx = e.touches[0].clientX - e.touches[1].clientX;
+    var dy = e.touches[0].clientY - e.touches[1].clientY;
+    initialDist = Math.sqrt(dx*dx + dy*dy);
+    log('双指触摸开始 dist=' + Math.round(initialDist));
+  } else { log('单指触摸 touches=' + e.touches.length); }
+}, {passive: false});
+area.addEventListener('touchmove', function(e) {
+  if (e.touches.length >= 2 && initialDist > 0) {
+    e.preventDefault();
+    var dx = e.touches[0].clientX - e.touches[1].clientX;
+    var dy = e.touches[0].clientY - e.touches[1].clientY;
+    var dist = Math.sqrt(dx*dx + dy*dy);
+    currentScale = Math.max(0.5, Math.min(3, dist / initialDist));
+    box.style.transform = 'scale(' + currentScale.toFixed(2) + ')';
+    log('缩放: ' + currentScale.toFixed(2) + 'x');
+  }
+}, {passive: false});
+area.addEventListener('touchend', function(e) {
+  if (e.touches.length < 2) { log('触摸结束 剩余=' + e.touches.length); initialDist = 0; }
+}, {passive: false});
+</script>
+</body>
+</html>

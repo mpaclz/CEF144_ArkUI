@@ -90,7 +90,8 @@ public:
                              std::function<void(bool)> onFocusTake,
                              ScrollOffsetCallback onScrollOffset = nullptr,
                              VirtualKeyboardCallback onVirtualKeyboard = nullptr,
-                             TextSelectionCallback onTextSelection = nullptr);
+                             TextSelectionCallback onTextSelection = nullptr,
+                             CursorChangeCallback onCursorChange = nullptr);
     
     /**
      * @brief 销毁指定浏览器

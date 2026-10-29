@@ -21,6 +21,12 @@ void ArkUICefRenderHandler::SetDeviceScaleFactor(float factor) {
     deviceScaleFactor_ = factor;
 }
 
+void ArkUICefRenderHandler::SetComponentOffset(int x, int y) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    componentOffsetX_ = x;
+    componentOffsetY_ = y;
+}
+
 void ArkUICefRenderHandler::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) {
     std::lock_guard<std::mutex> lock(mutex_);
     // CEF expects the view rect in CSS pixels (logical pixels).
@@ -37,6 +43,21 @@ bool ArkUICefRenderHandler::GetScreenInfo(CefRefPtr<CefBrowser> browser, CefScre
     int cssH = static_cast<int>(height_ / deviceScaleFactor_);
     screen_info.rect = CefRect(0, 0, cssW, cssH);
     screen_info.available_rect = screen_info.rect;
+    return true;
+}
+
+bool ArkUICefRenderHandler::GetRootScreenRect(CefRefPtr<CefBrowser> browser, CefRect& rect) {
+    // Return false to use CEF default (uses GetViewRect as root rect in OSR mode).
+    // This is sufficient for OSR — full screen rect is not critical.
+    return false;
+}
+
+bool ArkUICefRenderHandler::GetScreenPoint(CefRefPtr<CefBrowser> browser,
+                                           int viewX, int viewY,
+                                           int& screenX, int& screenY) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    screenX = viewX + componentOffsetX_;
+    screenY = viewY + componentOffsetY_;
     return true;
 }
 

@@ -27,10 +27,12 @@ export const createOsrCefView: (url: string, width: number, height: number,
                                  onFocusTake: (next: boolean) => void,
                                  onScrollOffset?: (offset: string) => void,
                                  onVirtualKeyboard?: (show: boolean) => void,
-                                 onTextSelection?: (selectedText: string) => void) => number;
+                                 onTextSelection?: (selectedText: string) => void,
+                                 onCursorChange?: (cursorType: number) => void) => number;
 export const destroyOsrCefView: (browserId: number) => void;
 export const cefOsrResize: (browserId: number, width: number, height: number) => void;
 export const cefOsrSetScale: (browserId: number, scaleFactor: number) => void;
+export const cefSetComponentOffset: (browserId: number, offsetX: number, offsetY: number) => void;
 export const cefSendMouseClick: (browserId: number, x: number, y: number, button: number, mouseUp: boolean, clickCount?: number, modifiers?: number) => void;
 export const cefSendMouseMove: (browserId: number, x: number, y: number, mouseLeave: boolean, modifiers?: number) => void;
 export const cefSendMouseWheel: (browserId: number, x: number, y: number, deltaX: number, deltaY: number) => void;

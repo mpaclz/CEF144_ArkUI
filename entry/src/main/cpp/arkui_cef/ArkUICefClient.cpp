@@ -243,4 +243,18 @@ void ArkUICefClient::OnTakeFocus(CefRefPtr<CefBrowser> browser, bool next) {
         focusTakeCallback_(next);
     }
 }
+
+bool ArkUICefClient::OnCursorChange(CefRefPtr<CefBrowser> browser,
+                                    CefCursorHandle cursor,
+                                    cef_cursor_type_t type,
+                                    const CefCursorInfo& custom_cursor_info) {
+    CEF_REQUIRE_UI_THREAD();
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefClient",
+        "OnCursorChange: type=%{public}d", static_cast<int>(type));
+    if (cursorChangeCallback_) {
+        cursorChangeCallback_(static_cast<int>(type));
+        return true;
+    }
+    return false;
+}
 } // namespace arkui_cef

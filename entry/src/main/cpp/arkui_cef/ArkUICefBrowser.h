@@ -32,6 +32,7 @@ public:
     using TitleCallback = std::function<void(const std::string& title)>;
     using CreateCallback = std::function<void(int64_t)>;
     using FocusTakeCallback = std::function<void(bool next)>;
+    using CursorChangeCallback = std::function<void(int cursorType)>;
     using Node = EMBEDDED_WINDOW_ADAPTER::Node;
     
     /**
@@ -212,6 +213,8 @@ public:
      */
     void SetFocusTakeCallback(FocusTakeCallback callback) { focusTakeCallback_ = std::move(callback); }
 
+    void SetCursorChangeCallback(CursorChangeCallback callback) { cursorChangeCallback_ = std::move(callback); }
+
     /** @brief 设置是否使用离屏渲染模式 */
     void SetUseOsr(bool use_osr) { use_osr_ = use_osr; }
     /** @brief 是否使用离屏渲染模式 */
@@ -223,6 +226,8 @@ public:
      * @thread 应在 CEF UI 线程调用
      */
     void setOsrScale(float factor);
+
+    void setComponentOffset(int x, int y);
     
     /**
      * @brief 内部回调：浏览器创建完成
@@ -253,6 +258,7 @@ private:
     LoadCallback loadCallback_;     ///< 页面加载回调
     TitleCallback titleCallback_;   ///< 标题变更回调
     FocusTakeCallback focusTakeCallback_; ///< 焦点离开回调
+    CursorChangeCallback cursorChangeCallback_; ///< 光标变更回调
 
     bool use_osr_ = false;            ///< 是否使用离屏渲染模式
 };

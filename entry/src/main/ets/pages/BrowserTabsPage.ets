@@ -71,6 +71,13 @@ struct MultiTabPage {
         }.tabBar(
           SubTabBarStyle.of('OSR离屏渲染')
         )
+        TabContent() {
+          Column() {
+            OsrCefView({viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_input_test.html'})
+          }
+        }.tabBar(
+          SubTabBarStyle.of('OSR输入测试')
+        )
       }
       .barBackgroundColor(Color.White)
       .animationDuration(300)
