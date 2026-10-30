@@ -75,6 +75,7 @@ struct MultiTabPage {
           Column() {
             OsrCefView({viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_input_test.html'})
           }
+          .focusable(true)
         }.tabBar(
           SubTabBarStyle.of('OSR输入测试')
         )

@@ -42,11 +42,6 @@ find_library(
 )
 
 find_library(
-    native-display-manager-lib
-    native_display_manager
-)
-
-find_library(
     hilog-lib
     hilog_ndk.z
 )
@@ -59,6 +54,16 @@ find_library(
 find_library(
     libnapi-lib
     ace_napi.z
+)
+
+find_library(
+    window-manager-lib
+    native_window_manager
+)
+
+find_library(
+    input-lib
+    ohinput
 )
 
 add_library(arkui_cef_core SHARED
@@ -87,7 +92,6 @@ target_link_libraries(arkui_cef_core PUBLIC
     libcef_dll_wrapper
     ${HAP_LIB_DIR}/libadapter.so
     ${native-window-lib}
-    ${native-display-manager-lib}
     ${native-drawing-lib}
     ${hilog-lib}
     ${libace-lib}
@@ -108,6 +112,8 @@ target_compile_definitions(arkui_cef PUBLIC NDEBUG)
 target_link_libraries(arkui_cef PUBLIC
     arkui_cef_core
     libace_napi.z.so
+    ${window-manager-lib}
+    ${input-lib}
 )
 
 # cefsimple 共享库：OHOS 子进程入口

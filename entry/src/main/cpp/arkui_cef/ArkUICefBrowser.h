@@ -143,7 +143,7 @@ public:
      * @param deltaY 垂直滚动量
      * @thread 应在 CEF UI 线程调用
      */
-    void sendMouseWheelEvent(int x, int y, int deltaX, int deltaY);
+    void sendMouseWheelEvent(int x, int y, int deltaX, int deltaY, uint32_t modifiers = 0);
 
     /**
      * @brief 向浏览器发送焦点事件 (OSR 模式)
@@ -175,6 +175,10 @@ public:
      * @param pointerId 触摸点 ID
      */
     void sendTouchEvent(int x, int y, int touchType, int pointerId);
+
+    void imeSetComposition(const std::string& text);
+    void imeCommitText(const std::string& text);
+    void imeCancelComposition();
 
     /**
      * @brief 获取浏览器唯一 ID

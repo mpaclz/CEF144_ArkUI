@@ -7,6 +7,8 @@
 #include <string>
 #include <arkui/native_interface.h>
 #include <arkui/native_node_napi.h>
+#include "window_manager/oh_window_event_filter.h"
+#include "multimodalinput/oh_input_manager.h"
 
 #include "JsThreadSafeCallback.h"
 #include "napi/native_api.h"
@@ -27,40 +29,39 @@ using EMBEDDED_WINDOW_ADAPTER::Node;
 constexpr int32_t OH_KEYTYPE_DOWN = 0;
 constexpr int32_t OH_KEYTYPE_UP   = 1;
 
-// HarmonyOS KeyCode values (from @kit.InputKit)
-// Letters A-Z: 2017+0..25 -> KeyCode 2017..2042
-// Digits 0-9: 2000..2009
-// Common keys
-constexpr int32_t OH_KEYCODE_ENTER      = 2054;
-constexpr int32_t OH_KEYCODE_BACKSPACE  = 2055;
-constexpr int32_t OH_KEYCODE_DELETE     = 2056;
-constexpr int32_t OH_KEYCODE_SPACE      = 2062;
-constexpr int32_t OH_KEYCODE_TAB        = 2076;
-constexpr int32_t OH_KEYCODE_ESCAPE     = 2077;
-constexpr int32_t OH_KEYCODE_CTRL_LEFT  = 2072;
-constexpr int32_t OH_KEYCODE_SHIFT_LEFT = 2071;
-constexpr int32_t OH_KEYCODE_ALT_LEFT   = 2074;
-constexpr int32_t OH_KEYCODE_CAPS_LOCK  = 2078;
-constexpr int32_t OH_KEYCODE_PAGE_UP    = 2067;
-constexpr int32_t OH_KEYCODE_PAGE_DOWN  = 2068;
-constexpr int32_t OH_KEYCODE_HOME       = 2069;
-constexpr int32_t OH_KEYCODE_END        = 2070;
+// HarmonyOS KeyCode values (verified from oh_key_code.h in OHOS SDK)
+// Letters A-Z: KEYCODE_A=2017 .. KEYCODE_Z=2042
+// Digits 0-9: KEYCODE_0=2000 .. KEYCODE_9=2009
+constexpr int32_t OH_KEYCODE_DPAD_UP    = 2012;
+constexpr int32_t OH_KEYCODE_DPAD_DOWN  = 2013;
 constexpr int32_t OH_KEYCODE_DPAD_LEFT  = 2014;
-constexpr int32_t OH_KEYCODE_DPAD_UP    = 2016;
 constexpr int32_t OH_KEYCODE_DPAD_RIGHT = 2015;
-constexpr int32_t OH_KEYCODE_DPAD_DOWN  = 2017;
-constexpr int32_t OH_KEYCODE_F1  = 2084;
-constexpr int32_t OH_KEYCODE_F2  = 2085;
-constexpr int32_t OH_KEYCODE_F3  = 2086;
-constexpr int32_t OH_KEYCODE_F4  = 2087;
-constexpr int32_t OH_KEYCODE_F5  = 2088;
-constexpr int32_t OH_KEYCODE_F6  = 2089;
-constexpr int32_t OH_KEYCODE_F7  = 2090;
-constexpr int32_t OH_KEYCODE_F8  = 2091;
-constexpr int32_t OH_KEYCODE_F9  = 2092;
-constexpr int32_t OH_KEYCODE_F10 = 2093;
-constexpr int32_t OH_KEYCODE_F11 = 2094;
-constexpr int32_t OH_KEYCODE_F12 = 2095;
+constexpr int32_t OH_KEYCODE_TAB        = 2049;
+constexpr int32_t OH_KEYCODE_SPACE      = 2050;
+constexpr int32_t OH_KEYCODE_ENTER      = 2054;
+constexpr int32_t OH_KEYCODE_BACKSPACE  = 2055;  // KEYCODE_DEL
+constexpr int32_t OH_KEYCODE_FORWARD_DEL = 2071;
+constexpr int32_t OH_KEYCODE_ALT_LEFT   = 2045;
+constexpr int32_t OH_KEYCODE_SHIFT_LEFT = 2047;
+constexpr int32_t OH_KEYCODE_CTRL_LEFT  = 2072;
+constexpr int32_t OH_KEYCODE_ESCAPE     = 2070;
+constexpr int32_t OH_KEYCODE_CAPS_LOCK  = 2074;
+constexpr int32_t OH_KEYCODE_PAGE_UP    = 2068;
+constexpr int32_t OH_KEYCODE_PAGE_DOWN  = 2069;
+constexpr int32_t OH_KEYCODE_MOVE_HOME  = 2081;
+constexpr int32_t OH_KEYCODE_MOVE_END   = 2082;
+constexpr int32_t OH_KEYCODE_F1  = 2090;
+constexpr int32_t OH_KEYCODE_F2  = 2091;
+constexpr int32_t OH_KEYCODE_F3  = 2092;
+constexpr int32_t OH_KEYCODE_F4  = 2093;
+constexpr int32_t OH_KEYCODE_F5  = 2094;
+constexpr int32_t OH_KEYCODE_F6  = 2095;
+constexpr int32_t OH_KEYCODE_F7  = 2096;
+constexpr int32_t OH_KEYCODE_F8  = 2097;
+constexpr int32_t OH_KEYCODE_F9  = 2098;
+constexpr int32_t OH_KEYCODE_F10 = 2099;
+constexpr int32_t OH_KEYCODE_F11 = 2100;
+constexpr int32_t OH_KEYCODE_F12 = 2101;
 
 // Windows virtual key codes
 constexpr int32_t VK_BACK   = 0x08;
@@ -111,39 +112,38 @@ CefKeyEvent convertKeyEvent(int32_t keyCode, int32_t keyType, uint32_t modifiers
     // Character for KEYEVENT_CHAR (0 = no char event needed)
     char16_t character = 0;
 
-    // Letters A-Z: HarmonyOS KeyCode 2018..2043 (A=2018, B=2019, ..., Z=2043)
-    if (keyCode >= 2018 && keyCode <= 2043) {
-        winVk = 'A' + (keyCode - 2018);
-        // For CHAR events, use lowercase if no Shift modifier, uppercase if Shift
-        if (modifiers & 0x2) { // EVENTFLAG_SHIFT_DOWN = 0x2
-            character = static_cast<char16_t>('A' + (keyCode - 2018));
+    // Letters A-Z: KEYCODE_A=2017 .. KEYCODE_Z=2042
+    if (keyCode >= 2017 && keyCode <= 2042) {
+        winVk = 'A' + (keyCode - 2017);
+        if (modifiers & 0x2) {
+            character = static_cast<char16_t>('A' + (keyCode - 2017));
         } else {
-            character = static_cast<char16_t>('a' + (keyCode - 2018));
+            character = static_cast<char16_t>('a' + (keyCode - 2017));
         }
     } else if (keyCode >= 2000 && keyCode <= 2009) {
-        // Digits 0-9: 0=2000, 1=2001, ... 9=2009
+        // Digits 0-9: KEYCODE_0=2000 .. KEYCODE_9=2009
         winVk = '0' + (keyCode - 2000);
         character = static_cast<char16_t>('0' + (keyCode - 2000));
     } else {
         switch (keyCode) {
-            case OH_KEYCODE_ENTER:      winVk = VK_RETURN; character = u'\r'; break;
-            case OH_KEYCODE_BACKSPACE:  winVk = VK_BACK;   character = u'\b'; break;
-            case OH_KEYCODE_DELETE:     winVk = VK_DELETE; break;
-            case OH_KEYCODE_SPACE:      winVk = VK_SPACE;  character = u' '; break;
-            case OH_KEYCODE_TAB:        winVk = VK_TAB;    character = u'\t'; break;
-            case OH_KEYCODE_ESCAPE:     winVk = VK_ESCAPE; break;
-            case OH_KEYCODE_CTRL_LEFT:  winVk = VK_CONTROL;break;
-            case OH_KEYCODE_SHIFT_LEFT: winVk = VK_SHIFT;  break;
-            case OH_KEYCODE_ALT_LEFT:   winVk = VK_MENU;   break;
-            case OH_KEYCODE_CAPS_LOCK:  winVk = VK_CAPITAL;break;
-            case OH_KEYCODE_PAGE_UP:    winVk = VK_PRIOR;  break;
-            case OH_KEYCODE_PAGE_DOWN:  winVk = VK_NEXT;   break;
-            case OH_KEYCODE_HOME:       winVk = VK_HOME;   break;
-            case OH_KEYCODE_END:        winVk = VK_END;    break;
-            case OH_KEYCODE_DPAD_LEFT:  winVk = VK_LEFT;   break;
-            case OH_KEYCODE_DPAD_UP:    winVk = VK_UP;     break;
-            case OH_KEYCODE_DPAD_RIGHT: winVk = VK_RIGHT;  break;
-            case OH_KEYCODE_DPAD_DOWN:  winVk = VK_DOWN;   break;
+            case OH_KEYCODE_ENTER:       winVk = VK_RETURN; character = u'\r'; break;
+            case OH_KEYCODE_BACKSPACE:   winVk = VK_BACK;   character = u'\b'; break;
+            case OH_KEYCODE_FORWARD_DEL: winVk = VK_DELETE; break;
+            case OH_KEYCODE_SPACE:       winVk = VK_SPACE;  character = u' '; break;
+            case OH_KEYCODE_TAB:         winVk = VK_TAB;    character = u'\t'; break;
+            case OH_KEYCODE_ESCAPE:      winVk = VK_ESCAPE; break;
+            case OH_KEYCODE_CTRL_LEFT:   winVk = VK_CONTROL;break;
+            case OH_KEYCODE_SHIFT_LEFT:  winVk = VK_SHIFT;  break;
+            case OH_KEYCODE_ALT_LEFT:    winVk = VK_MENU;   break;
+            case OH_KEYCODE_CAPS_LOCK:   winVk = VK_CAPITAL;break;
+            case OH_KEYCODE_PAGE_UP:     winVk = VK_PRIOR;  break;
+            case OH_KEYCODE_PAGE_DOWN:   winVk = VK_NEXT;   break;
+            case OH_KEYCODE_MOVE_HOME:   winVk = VK_HOME;   break;
+            case OH_KEYCODE_MOVE_END:    winVk = VK_END;    break;
+            case OH_KEYCODE_DPAD_LEFT:   winVk = VK_LEFT;   break;
+            case OH_KEYCODE_DPAD_UP:     winVk = VK_UP;     break;
+            case OH_KEYCODE_DPAD_RIGHT:  winVk = VK_RIGHT;  break;
+            case OH_KEYCODE_DPAD_DOWN:   winVk = VK_DOWN;   break;
             case OH_KEYCODE_F1:  winVk = VK_F1;  break;
             case OH_KEYCODE_F2:  winVk = VK_F2;  break;
             case OH_KEYCODE_F3:  winVk = VK_F3;  break;
@@ -171,6 +171,84 @@ CefKeyEvent convertKeyEvent(int32_t keyCode, int32_t keyType, uint32_t modifiers
     event.unmodified_character = character;
     event.focus_on_editable_field = 1;
     return event;
+}
+
+// ==================== OSR Window Key Event Filter ====================
+// Intercepts physical keyboard events at the WINDOW level — BEFORE the IME.
+// This lets digits, symbols, and Ctrl shortcuts reach CEF even when
+// inputMethodController.attach() is active (needed for CJK IME).
+// Letters A-Z are let through to the IME for composition handling.
+// Only active when renderAreaActive is true (set from ArkTS when user
+// clicks the OSR render area, not the URL bar).
+
+struct OsrKeyFilterContext {
+    int64_t browserId;
+    std::atomic<bool> renderAreaActive{false};
+    std::atomic<bool> ctrlPressed{false};
+    std::atomic<bool> shiftPressed{false};
+    std::atomic<bool> altPressed{false};
+};
+
+static OsrKeyFilterContext* g_keyFilterCtx = nullptr;
+
+static bool OsrKeyFilterCallback(Input_KeyEvent* keyEvent) {
+    if (!keyEvent || !g_keyFilterCtx) return false;
+
+    // Only filter when OSR render area is active (not when URL bar has focus)
+    if (!g_keyFilterCtx->renderAreaActive.load()) {
+        return false;
+    }
+
+    int32_t keyCode = OH_Input_GetKeyEventKeyCode(keyEvent);
+    int32_t action = OH_Input_GetKeyEventAction(keyEvent);
+
+    // Load modifier state BEFORE updating — the current key event should
+    // carry the modifier state that existed BEFORE this key was pressed.
+    // E.g., Ctrl key-down event itself should NOT have CONTROL_DOWN modifier.
+    bool ctrl = g_keyFilterCtx->ctrlPressed.load();
+    bool shift = g_keyFilterCtx->shiftPressed.load();
+    bool alt = g_keyFilterCtx->altPressed.load();
+
+    // Update modifier tracking AFTER loading previous state
+    if (keyCode == 2072) { g_keyFilterCtx->ctrlPressed.store(action == KEY_ACTION_DOWN); }
+    else if (keyCode == 2047) { g_keyFilterCtx->shiftPressed.store(action == KEY_ACTION_DOWN); }
+    else if (keyCode == 2045) { g_keyFilterCtx->altPressed.store(action == KEY_ACTION_DOWN); }
+
+    // Letters A-Z without Ctrl/Alt: let IME handle (CJK composition + English text)
+    // KeyCode range: KEYCODE_A=2017 .. KEYCODE_Z=2042 (verified from oh_key_code.h)
+    if (keyCode >= 2017 && keyCode <= 2042 && !ctrl && !alt) {
+        return false;
+    }
+
+    // Everything else (digits, symbols, Ctrl shortcuts, Backspace, arrows, etc.):
+    // Filter (consume) and forward to CEF via key events
+    int32_t cefType = (action == KEY_ACTION_DOWN) ? 0 /*RAWKEYDOWN*/ : 1 /*KEYUP*/;
+    uint32_t cefMods = 0;
+    if (shift) cefMods |= 0x02;
+    if (ctrl)  cefMods |= 0x04;
+    if (alt)   cefMods |= 0x08;
+
+    bool isTextKey =
+        (keyCode >= 2000 && keyCode <= 2009) ||  // Digits 0-9
+        keyCode == 2050 ||                        // Space (KEYCODE_SPACE)
+        keyCode == 2054 ||                        // Enter (KEYCODE_ENTER)
+        keyCode == 2049;                          // Tab (KEYCODE_TAB)
+    bool sendChar = isTextKey && !ctrl && !alt && (action == KEY_ACTION_DOWN);
+
+    CefKeyEvent cefKeyEvent = convertKeyEvent(keyCode, cefType, cefMods);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(g_keyFilterCtx->browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::sendKeyEvent, browser, cefKeyEvent)));
+
+        if (sendChar) {
+            CefKeyEvent cefCharEvent = convertKeyEvent(keyCode, 2 /*CHAR*/, cefMods);
+            CefPostTask(TID_UI, CefCreateClosureTask(
+                base::BindOnce(&ArkUICefBrowser::sendKeyEvent, browser, cefCharEvent)));
+        }
+    }
+
+    return true; // Filter (consume) — IME doesn't see this key
 }
 
 struct CefCreatedCallbackContext {
@@ -985,13 +1063,13 @@ static napi_value NAPI_Global_cefSendMouseMove(napi_env env, napi_callback_info 
 }
 
 static napi_value NAPI_Global_cefSendMouseWheel(napi_env env, napi_callback_info info) {
-    size_t argc = 5;
-    napi_value args[5] = { nullptr };
+    size_t argc = 6;
+    napi_value args[6] = { nullptr };
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
     if (argc < 5) {
         napi_throw_error(env, nullptr,
-            "Expected 5 arguments: browserId, x, y, deltaX, deltaY");
+            "Expected 5-6 arguments: browserId, x, y, deltaX, deltaY [, modifiers]");
         return nullptr;
     }
 
@@ -1005,11 +1083,15 @@ static napi_value NAPI_Global_cefSendMouseWheel(napi_env env, napi_callback_info
     napi_get_value_int32(env, args[3], &deltaX);
     int32_t deltaY = 0;
     napi_get_value_int32(env, args[4], &deltaY);
+    uint32_t modifiers = 0;
+    if (argc >= 6) {
+        napi_get_value_uint32(env, args[5], &modifiers);
+    }
 
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::sendMouseWheelEvent, browser, x, y, deltaX, deltaY)));
+            base::BindOnce(&ArkUICefBrowser::sendMouseWheelEvent, browser, x, y, deltaX, deltaY, modifiers)));
     }
     return nullptr;
 }
@@ -1261,6 +1343,123 @@ static napi_value NAPI_Global_setPopupBrowserCreatedCallback(napi_env env, napi_
     return nullptr;
 }
 
+static napi_value NAPI_Global_registerOsrKeyFilter(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "Expected 2 arguments: windowId, browserId");
+        return nullptr;
+    }
+
+    int32_t windowId = 0;
+    napi_get_value_int32(env, args[0], &windowId);
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[1], &browserId);
+
+    if (g_keyFilterCtx) delete g_keyFilterCtx;
+    g_keyFilterCtx = new OsrKeyFilterContext{ browserId };
+
+    WindowManager_ErrorCode ret = OH_NativeWindowManager_RegisterKeyEventFilter(
+        windowId, OsrKeyFilterCallback);
+
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+        "registerOsrKeyFilter: windowId=%{public}d, browserId=%{public}ld, ret=%{public}d",
+        windowId, browserId, (int)ret);
+
+    return nullptr;
+}
+
+static napi_value NAPI_Global_setRenderAreaActive(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "Expected 1 argument: active (boolean)");
+        return nullptr;
+    }
+
+    bool active = false;
+    napi_get_value_bool(env, args[0], &active);
+
+    if (g_keyFilterCtx) {
+        g_keyFilterCtx->renderAreaActive.store(active);
+        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+            "setRenderAreaActive: %{public}s", active ? "true" : "false");
+    }
+
+    return nullptr;
+}
+
+static napi_value NAPI_Global_cefImeSetComposition(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "Expected 2 arguments: browserId, text");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    char text[4096] = {};
+    size_t textLen;
+    napi_get_value_string_utf8(env, args[1], text, sizeof(text), &textLen);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::imeSetComposition, browser, std::string(text))));
+    }
+    return nullptr;
+}
+
+static napi_value NAPI_Global_cefImeCommitText(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "Expected 2 arguments: browserId, text");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    char text[4096] = {};
+    size_t textLen;
+    napi_get_value_string_utf8(env, args[1], text, sizeof(text), &textLen);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::imeCommitText, browser, std::string(text))));
+    }
+    return nullptr;
+}
+
+static napi_value NAPI_Global_cefImeCancelComposition(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "Expected 1 argument: browserId");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::imeCancelComposition, browser)));
+    }
+    return nullptr;
+}
+
 EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "Init called");
@@ -1295,6 +1494,11 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"cefInvalidate", nullptr, NAPI_Global_cefInvalidate, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSetWindowlessVisibility", nullptr, NAPI_Global_cefSetWindowlessVisibility, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSendTouchEvent", nullptr, NAPI_Global_cefSendTouchEvent, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefImeSetComposition", nullptr, NAPI_Global_cefImeSetComposition, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefImeCommitText", nullptr, NAPI_Global_cefImeCommitText, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefImeCancelComposition", nullptr, NAPI_Global_cefImeCancelComposition, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"registerOsrKeyFilter", nullptr, NAPI_Global_registerOsrKeyFilter, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setRenderAreaActive", nullptr, NAPI_Global_setRenderAreaActive, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     

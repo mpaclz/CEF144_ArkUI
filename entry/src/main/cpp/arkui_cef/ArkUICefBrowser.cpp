@@ -249,14 +249,14 @@ void ArkUICefBrowser::sendMouseMoveEvent(int x, int y, bool mouseLeave, uint32_t
     browser_->GetHost()->SendMouseMoveEvent(event, mouseLeave);
 }
 
-void ArkUICefBrowser::sendMouseWheelEvent(int x, int y, int deltaX, int deltaY) {
+void ArkUICefBrowser::sendMouseWheelEvent(int x, int y, int deltaX, int deltaY, uint32_t modifiers) {
     if (!browser_) {
         return;
     }
     CefMouseEvent event;
     event.x = x;
     event.y = y;
-    event.modifiers = 0;
+    event.modifiers = modifiers;
     browser_->GetHost()->SendMouseWheelEvent(event, deltaX, deltaY);
 }
 
@@ -303,8 +303,8 @@ void ArkUICefBrowser::sendTouchEvent(int x, int y, int touchType, int pointerId)
     }
     CefTouchEvent event;
     event.id = pointerId;
-    event.x = x;
-    event.y = y;
+    event.x = static_cast<float>(x);
+    event.y = static_cast<float>(y);
     event.radius_x = 0.0f;
     event.radius_y = 0.0f;
     event.rotation_angle = 0.0f;
@@ -312,6 +312,38 @@ void ArkUICefBrowser::sendTouchEvent(int x, int y, int touchType, int pointerId)
     event.type = static_cast<cef_touch_event_type_t>(touchType);
     event.modifiers = 0;
     browser_->GetHost()->SendTouchEvent(event);
+}
+
+void ArkUICefBrowser::imeSetComposition(const std::string& text) {
+    if (!browser_) {
+        return;
+    }
+    CefCompositionUnderline underline;
+    underline.range = CefRange(0, static_cast<size_t>(text.length()));
+    underline.background_color = 0;
+    browser_->GetHost()->ImeSetComposition(text, {underline},
+                                           CefRange(UINT32_MAX, UINT32_MAX),
+                                           CefRange(UINT32_MAX, UINT32_MAX));
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "imeSetComposition: id=%{public}ld, len=%{public}zu", id_, text.length());
+}
+
+void ArkUICefBrowser::imeCommitText(const std::string& text) {
+    if (!browser_) {
+        return;
+    }
+    browser_->GetHost()->ImeCommitText(text, CefRange(UINT32_MAX, UINT32_MAX), 0);
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "imeCommitText: id=%{public}ld, len=%{public}zu", id_, text.length());
+}
+
+void ArkUICefBrowser::imeCancelComposition() {
+    if (!browser_) {
+        return;
+    }
+    browser_->GetHost()->ImeCancelComposition();
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "imeCancelComposition: id=%{public}ld", id_);
 }
 
 ArkUICefBrowser::Node* ArkUICefBrowser::getWindowHandle() const {

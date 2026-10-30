@@ -2,6 +2,10 @@ import arkui_cef from 'libarkui_cef.so';
 import { image } from '@kit.ImageKit';
 import { hilog } from "@kit.PerformanceAnalysisKit";
 import { pointer } from '@kit.InputKit';
+import { inputMethod } from '@kit.IMEKit';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { window } from "@kit.ArkUI";
+import { common } from '@kit.AbilityKit';
 
 const DOMAIN = 0xFF01;
 const MODULE = 'OsrCefView'
@@ -19,6 +23,31 @@ export struct OsrCefView {
   private mouseButtonPressed: boolean = false;
   private lastMouseX: number = 0;
   private lastMouseY: number = 0;
+  // Track if mouse button was pressed via single-touch simulation
+  private touchMouseSimulated: boolean = false;
+  // Pinch gesture tracking for touchpad zoom
+  private pinchLastScale: number = 1.0;
+  // Input Method Framework (IMF) controller for OSR text input
+  private inputMethodController: inputMethod.InputMethodController = inputMethod.getController();
+  private imeAttached: boolean = false;
+  private imeAttaching: boolean = false;
+  private imeSubscribed: boolean = false;
+  // When true, key events are forwarded to CEF (user clicked on render area).
+  // When false, key events go to the URL bar TextInput normally.
+  private renderAreaActive: boolean = false;
+  // Hidden TextInput used as IME panel trigger. When focused via
+  // FocusController.requestFocus('ime_proxy_input'), ArkUI's internal
+  // component focus mechanism shows the IME panel — this works reliably
+  // even after window focus loss/recovery, unlike showTextInput() which
+  // may hang. Text input itself flows through InputMethodController callbacks.
+  private imeProxyFocused: boolean = false;
+  // Set by WINDOW_INACTIVE — when true, next touch/mouse-down on render area
+  // forces CEF blur+focus to re-trigger OnVirtualKeyboardRequested.
+  private focusLostFlag: boolean = false;
+  // Set by WINDOW_ACTIVE when keyboard was visible before focus loss.
+  private pendingImeShow: boolean = false;
+  // Counter for IME changeSelection workaround (from IMFAdapter)
+  private imeCount: number = 0;
 
   @State private viewWidth: number = 800;
   @State private viewHeight: number = 600;
@@ -29,7 +58,7 @@ export struct OsrCefView {
 
   @Prop viewUrl: string = '';
 
-  aboutToAppear(): void {
+   aboutToAppear(): void {
     this.urlInput = this.viewUrl;
     if (this.browserId <= 0) {
       // Use physical pixels for CEF buffer size (OnPaint outputs physical pixels).
@@ -83,6 +112,9 @@ export struct OsrCefView {
           .enabled(this.isCreated())
           .onChange((val: string) => { this.urlInput = val; })
           .onSubmit(() => this.loadUrl(this.urlInput))
+          .onClick(() => {
+            this.setRenderAreaActive(false);
+          })
 
         Button('Go')
           .fontSize(12)
@@ -127,15 +159,55 @@ export struct OsrCefView {
           .justifyContent(FlexAlign.Center)
           .backgroundColor(Color.Black)
         }
+        // Hidden TextInput — IME panel trigger.
+        // When focused via FocusController.requestFocus('ime_proxy_input'),
+        // ArkUI shows the IME panel through its internal component focus
+        // mechanism. hitTestBehavior(None) ensures it never intercepts
+        // touch/mouse events — all input goes to the render area handlers.
+        TextInput({ text: '' })
+          .opacity(0)
+          .width(1)
+          .height(1)
+          .hitTestBehavior(HitTestMode.None)
+          .key('ime_proxy_input')
       }
       .width('100%')
       .flexGrow(1)
       .backgroundColor(Color.Black)
       .hitTestBehavior(HitTestMode.Block)
+      .focusable(true)
       .onTouch((event: TouchEvent) => this.handleTouchEvent(event))
       .onMouse((event: MouseEvent) => this.handleMouseEvent(event))
       .onAxisEvent((event: AxisEvent) => this.handleAxisEvent(event))
-      .onKeyEvent((event: KeyEvent) => this.handleKeyEvent(event))
+      .gesture(
+        PinchGesture({ fingers: 2, distance: 0.1 })
+          .onActionStart((event: GestureEvent) => {
+            // Skip touchscreen — its multi-touch is handled by onTouch → CEF touch events.
+            // Only handle non-touchscreen (touchpad/mouse) pinch for page zoom.
+            if (event.source === SourceType.TouchScreen) {
+              return;
+            }
+            this.pinchLastScale = event.scale;
+          })
+          .onActionUpdate((event: GestureEvent) => {
+            if (event.source === SourceType.TouchScreen) {
+              return;
+            }
+            let scaleDelta = event.scale - this.pinchLastScale;
+            if (Math.abs(scaleDelta) > 0.01) {
+              // Chromium: Ctrl + wheel deltaY > 0 = zoom in, < 0 = zoom out
+              // Fingers expand → scale > 1 → deltaY > 0 → zoom in
+              let deltaY = Math.round(scaleDelta * 300);
+              let x = Math.round(event.fingerList[0].localX);
+              let y = Math.round(event.fingerList[0].localY);
+              arkui_cef.cefSendMouseWheel(this.browserId, x, y, 0, deltaY, 0x04);
+              this.pinchLastScale = event.scale;
+            }
+          })
+          .onActionEnd(() => {
+            this.pinchLastScale = 1.0;
+          })
+      )
       .onAreaChange((_oldValue: Area, newValue: Area) => {
         let wpx = Math.round(this.getUIContext().vp2px(newValue.width as number));
         let hpx = Math.round(this.getUIContext().vp2px(newValue.height as number));
@@ -196,6 +268,7 @@ export struct OsrCefView {
     .width('100%')
     .height('100%')
     .backgroundColor(Color.Black)
+    .focusable(true)
   }
 
   getBrowserId(): number {
@@ -207,6 +280,9 @@ export struct OsrCefView {
   }
 
   destroy(): void {
+    this.blurProxyTextInput();
+    this.pendingImeShow = false;
+    this.detachInputMethod();
     if (this.isCreated()) {
       hilog.info(DOMAIN, MODULE, "Destroying OSR browser, id=%{public}d", this.browserId);
       arkui_cef.destroyOsrCefView(this.browserId);
@@ -295,7 +371,46 @@ export struct OsrCefView {
     let dsf = this.getUIContext().vp2px(1);
     arkui_cef.cefOsrSetScale(this.browserId, dsf);
     arkui_cef.cefOsrResize(this.browserId, this.viewWidth, this.viewHeight);
-    // Initial component offset will be set by onAreaChange callback
+    // Register window-level key event filter for non-text keys (digits, symbols, etc.)
+    this.registerKeyFilter();
+  }
+
+  private async registerKeyFilter(): Promise<void> {
+    try {
+      let context: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      let win: window.Window = await window.getLastWindow(context);
+      let windowId: number = win.getWindowProperties().id;
+      hilog.info(DOMAIN, MODULE, "registerKeyFilter: windowId=%{public}d, browserId=%{public}d",
+        windowId, this.browserId);
+      arkui_cef.registerOsrKeyFilter(windowId, this.browserId);
+
+      win.on('windowEvent', (event: window.WindowEventType) => {
+        hilog.info(DOMAIN, MODULE, "windowEvent: %{public}d", event);
+        if (event === window.WindowEventType.WINDOW_INACTIVE) {
+          // Window lost focus — system auto-detaches IMF and hides IME panel.
+          // Reset imeAttached so attachInputMethod() will re-attach on next
+          // onOsrVirtualKeyboard(true). Also notify CEF of blur.
+          this.focusLostFlag = true;
+          this.imeProxyFocused = false;
+          this.imeAttached = false;
+          if (this.isCreated() && this.renderAreaActive) {
+            arkui_cef.cefSendFocusEvent(this.browserId, false);
+          }
+        } else if (event === window.WindowEventType.WINDOW_ACTIVE) {
+          // Window regained focus. If keyboard was visible before focus loss,
+          // focus the proxy TextInput to re-trigger the IME panel through
+          // ArkUI's component focus mechanism. This is needed because
+          // inputMethodController.showTextInput() may not work after re-focus.
+          if (this.focusLostFlag && this.keyboardVisible) {
+            this.focusLostFlag = false;
+            this.focusProxyTextInput();
+            hilog.info(DOMAIN, MODULE, "WINDOW_ACTIVE: focused proxy TextInput for IME re-trigger");
+          }
+        }
+      });
+    } catch (e) {
+      hilog.error(DOMAIN, MODULE, "registerKeyFilter failed: %{public}s", (e as Error).message);
+    }
   }
 
   onOsrPaint(buffer: ArrayBuffer, width: number, height: number): void {
@@ -347,8 +462,12 @@ export struct OsrCefView {
   onOsrVirtualKeyboard(show: boolean): void {
     hilog.info(DOMAIN, MODULE, "OSR virtual keyboard: %{public}s", show ? "show" : "hide");
     this.keyboardVisible = show;
-    // TODO: integrate with HarmonyOS input method framework
-    // For now, just log. A full implementation would call @kit.InputMethodKit to show/hide
+    if (show) {
+      this.attachInputMethod();
+    } else {
+      this.blurProxyTextInput();
+      this.detachInputMethod();
+    }
   }
 
   onOsrTextSelection(text: string): void {
@@ -424,51 +543,47 @@ export struct OsrCefView {
       return;
     }
 
-    // Stop propagation so Tabs doesn't handle the event
     event.stopPropagation();
 
     // CEF touch event types: TOUCHEVENT_RELEASED=0, TOUCHEVENT_PRESSED=1, TOUCHEVENT_MOVED=2, TOUCHEVENT_CANCELLED=3
-    let touchType = 2; // default moved
+    let touchType = 2;
     switch (event.type) {
-      case TouchType.Down:
-        touchType = 1; // pressed
-        break;
-      case TouchType.Up:
-        touchType = 0; // released
-        break;
-      case TouchType.Move:
-        touchType = 2; // moved
-        break;
-      case TouchType.Cancel:
-        touchType = 3; // cancelled
-        break;
-      default:
-        break;
+      case TouchType.Down: touchType = 1; break;
+      case TouchType.Up: touchType = 0; break;
+      case TouchType.Move: touchType = 2; break;
+      case TouchType.Cancel: touchType = 3; break;
+      default: break;
     }
 
-    // Forward touch events to CEF
-    // For Down/Up: only send the changed touch points (not all current touches)
-    // For Move/Cancel: send all current touches
+    let isMultiTouch = event.touches.length > 1;
+
+    // When transitioning from single-touch to multi-touch:
+    // release the mouse button first, otherwise CEF stays in mouse-drag
+    // state and stops forwarding touch events to the page.
+    if (isMultiTouch && this.touchMouseSimulated && event.type === TouchType.Down) {
+      let t0 = event.touches[0];
+      arkui_cef.cefSendMouseClick(this.browserId,
+        Math.round(t0.x), Math.round(t0.y), 0, true, 1, 0);
+      this.touchMouseSimulated = false;
+    }
+
+    // Forward touch events to CEF (always, for all touch points)
+    // Down/Up: only send changed touches; Move/Cancel: send all touches
     let touchList: TouchObject[] = event.touches;
     if (event.type === TouchType.Down || event.type === TouchType.Up) {
       touchList = event.changedTouches;
     }
     for (let i = 0; i < touchList.length; i++) {
       let touch = touchList[i];
-      let x = Math.round(touch.x);
-      let y = Math.round(touch.y);
-      arkui_cef.cefSendTouchEvent(this.browserId, x, y, touchType, touch.id);
+      arkui_cef.cefSendTouchEvent(this.browserId,
+        Math.round(touch.x), Math.round(touch.y), touchType, touch.id);
     }
 
-    // Mouse simulation: ONLY for single-touch (1 finger)
-    // Multi-touch (2+ fingers) must NOT send mouse events, otherwise CEF
-    // treats the input as mouse and ignores touch events entirely,
-    // preventing pinch-zoom and other multi-touch gestures from reaching the page.
-    if (event.touches.length > 1) {
-      if (event.type === TouchType.Down) {
-        hilog.info(DOMAIN, MODULE, "Multi-touch Down: %{public}d fingers, touch events only", event.touches.length);
-      }
-      return; // Skip mouse simulation for multi-touch
+    // Mouse simulation: only for single-touch (1 finger).
+    // Multi-touch must not send mouse events — CEF would enter mouse-drag
+    // state and stop forwarding touch events to the page's JavaScript.
+    if (isMultiTouch) {
+      return;
     }
 
     let touch0 = event.touches[0];
@@ -480,14 +595,16 @@ export struct OsrCefView {
 
     switch (event.type) {
       case TouchType.Down:
-        hilog.info(DOMAIN, MODULE, "Touch Down: x=%{public}d, y=%{public}d", x, y);
+        this.setRenderAreaActive(true);
+        this.handleImeFocus();
         arkui_cef.cefSendFocusEvent(this.browserId, true);
         arkui_cef.cefSendMouseMove(this.browserId, x, y, false);
         arkui_cef.cefSendMouseClick(this.browserId, x, y, 0, false, 1, 0x10);
+        this.touchMouseSimulated = true;
         break;
       case TouchType.Up:
-        hilog.info(DOMAIN, MODULE, "Touch Up: x=%{public}d, y=%{public}d", x, y);
         arkui_cef.cefSendMouseClick(this.browserId, x, y, 0, true, 1, 0);
+        this.touchMouseSimulated = false;
         break;
       case TouchType.Move:
         arkui_cef.cefSendMouseMove(this.browserId, x, y, false, 0x10);
@@ -495,6 +612,7 @@ export struct OsrCefView {
       case TouchType.Cancel:
         arkui_cef.cefSendMouseMove(this.browserId, x, y, true);
         arkui_cef.cefSendCaptureLost(this.browserId);
+        this.touchMouseSimulated = false;
         break;
       default:
         break;
@@ -530,6 +648,8 @@ export struct OsrCefView {
     switch (event.action) {
       case MouseAction.Press:
         hilog.info(DOMAIN, MODULE, "Mouse Press: x=%{public}d, y=%{public}d, btn=%{public}d", x, y, cefButton);
+        this.setRenderAreaActive(true);
+        this.handleImeFocus();
         arkui_cef.cefSendFocusEvent(this.browserId, true);
         // Set EVENTFLAG_LEFT_MOUSE_BUTTON (0x10) on mouse down so CEF scrollbar
         // drag and text selection can start. CEF requires the button flag in
@@ -589,35 +709,185 @@ export struct OsrCefView {
 
     let x = Math.round(event.x);
     let y = Math.round(event.y);
+    let vAxis = event.getVerticalAxisValue();
+    let hAxis = event.getHorizontalAxisValue();
 
-    // ArkUI AxisEvent: positive verticalAxis = scroll up, negative = scroll down.
-    // CEF: positive deltaY = scroll DOWN. So negate.
-    let rawDeltaY = -event.getVerticalAxisValue() * OsrCefView.WHEEL_SCALE;
-    let rawDeltaX = -event.getHorizontalAxisValue() * OsrCefView.WHEEL_SCALE;
+    // Ctrl+wheel zoom: detect Ctrl modifier and send with EVENTFLAG_CONTROL_DOWN
+    let isCtrlPressed = false;
+    if (event.getModifierKeyState) {
+      try {
+        isCtrlPressed = event.getModifierKeyState(['Ctrl']);
+      } catch (e) {
+      }
+    }
+    let modifiers = isCtrlPressed ? 0x04 : 0;
 
-    // Accumulate small deltas to filter out inertia/momentum events
+    if (vAxis === 0 && hAxis === 0) {
+      return;
+    }
+
+    let rawDeltaY = -vAxis * OsrCefView.WHEEL_SCALE;
+    let rawDeltaX = -hAxis * OsrCefView.WHEEL_SCALE;
     this.accumulatedWheelY += rawDeltaY;
     this.accumulatedWheelX += rawDeltaX;
 
-    // Only send when accumulated delta exceeds threshold — this filters out
-    // the "small slide then big slide" two-stage behavior
     if (Math.abs(this.accumulatedWheelY) >= OsrCefView.WHEEL_ACCUM_THRESHOLD ||
         Math.abs(this.accumulatedWheelX) >= OsrCefView.WHEEL_ACCUM_THRESHOLD) {
       let deltaY = Math.round(this.accumulatedWheelY);
       let deltaX = Math.round(this.accumulatedWheelX);
-
-      // Reset accumulator after sending
       this.accumulatedWheelY = 0;
       this.accumulatedWheelX = 0;
-
-      hilog.info(DOMAIN, MODULE, "Axis: x=%{public}d, y=%{public}d, dX=%{public}d, dY=%{public}d",
-        x, y, deltaX, deltaY);
-      arkui_cef.cefSendMouseWheel(this.browserId, x, y, deltaX, deltaY);
+      arkui_cef.cefSendMouseWheel(this.browserId, x, y, deltaX, deltaY, modifiers);
     }
+  }
+
+  // ==================== Input Method Framework (IME) ====================
+
+  private handleImeFocus(): void {
+    // If IME panel needs to be re-shown after window re-focus, focus the
+    // proxy TextInput to trigger the IME panel through ArkUI's component
+    // focus mechanism. This is more reliable than showTextInput() after
+    // window re-focus.
+    if (this.pendingImeShow) {
+      this.pendingImeShow = false;
+      hilog.info(DOMAIN, MODULE, "Focusing proxy TextInput for IME panel");
+      this.focusProxyTextInput();
+      if (!this.imeAttached) {
+        this.attachInputMethod();
+      }
+    }
+  }
+
+  private setRenderAreaActive(active: boolean): void {
+    this.renderAreaActive = active;
+    arkui_cef.setRenderAreaActive(active);
+    if (!active) {
+      this.blurProxyTextInput();
+      this.pendingImeShow = false;
+      if (this.isCreated()) {
+        arkui_cef.cefSendFocusEvent(this.browserId, false);
+      }
+    }
+  }
+
+  private focusProxyTextInput(): void {
+    this.imeProxyFocused = true;
+    try {
+      this.getUIContext().getFocusController().requestFocus('ime_proxy_input');
+    } catch (e) {
+      hilog.error(DOMAIN, MODULE, "focusProxyTextInput failed: %{public}s", (e as Error).message);
+    }
+  }
+
+  private blurProxyTextInput(): void {
+    this.imeProxyFocused = false;
+  }
+
+  private subscribeImeEvents(): void {
+    // off() first to prevent duplicate callbacks — on() is cumulative
+    this.inputMethodController.off('insertText');
+    this.inputMethodController.off('setPreviewText');
+    this.inputMethodController.off('finishTextPreview');
+    this.inputMethodController.off('deleteLeft');
+    this.inputMethodController.off('sendFunctionKey');
+
+    this.inputMethodController.on('insertText', (text: string) => {
+      if (this.isCreated() && this.renderAreaActive) {
+        hilog.info(DOMAIN, MODULE, "IME insertText: '%{public}s'", text);
+        arkui_cef.cefImeCommitText(this.browserId, text);
+        this.inputMethodController.changeSelection("" + this.imeCount++, 0, 0);
+      }
+    });
+    this.inputMethodController.on('setPreviewText', (text: string) => {
+      if (this.isCreated() && this.renderAreaActive) {
+        hilog.info(DOMAIN, MODULE, "IME setPreviewText: '%{public}s'", text);
+        arkui_cef.cefImeSetComposition(this.browserId, text);
+      }
+    });
+    this.inputMethodController.on('finishTextPreview', () => {
+      if (this.isCreated() && this.renderAreaActive) {
+        hilog.info(DOMAIN, MODULE, "IME finishTextPreview");
+        arkui_cef.cefImeCancelComposition(this.browserId);
+      }
+    });
+    this.inputMethodController.on('deleteLeft', (length: number) => {
+      if (this.isCreated() && this.renderAreaActive) {
+        hilog.info(DOMAIN, MODULE, "IME deleteLeft: %{public}d", length);
+        for (let i = 0; i < length; i++) {
+          arkui_cef.cefSendKeyEvent(this.browserId, 2055, 0, 0);
+          arkui_cef.cefSendKeyEvent(this.browserId, 2055, 1, 0);
+        }
+      }
+    });
+    this.inputMethodController.on('sendFunctionKey', () => {
+      if (this.isCreated() && this.renderAreaActive) {
+        hilog.info(DOMAIN, MODULE, "IME sendFunctionKey (Enter)");
+        arkui_cef.cefSendKeyEvent(this.browserId, 2054, 0, 0);
+        arkui_cef.cefSendKeyEvent(this.browserId, 2054, 2, 0, 13);
+        arkui_cef.cefSendKeyEvent(this.browserId, 2054, 1, 0);
+      }
+    });
+  }
+
+  private attachInputMethod(): void {
+    if (this.imeAttached || this.imeAttaching) {
+      return;
+    }
+    this.imeAttaching = true;
+    let textConfig: inputMethod.TextConfig = {
+      inputAttribute: {
+        textInputType: inputMethod.TextInputType.TEXT,
+        enterKeyType: inputMethod.EnterKeyType.GO
+      }
+    };
+    // Try attach directly first. If the IMF is in a clean (detached) state,
+    // this succeeds without flicker. If it fails (partially attached state),
+    // fall back to detach→attach to ensure clean state.
+    this.inputMethodController.attach(true, textConfig).then(() => {
+      this.imeAttached = true;
+      this.imeAttaching = false;
+      hilog.info(DOMAIN, MODULE, "IME attached successfully");
+      this.subscribeImeEvents();
+    }).catch((err: BusinessError) => {
+      hilog.info(DOMAIN, MODULE, "IME direct attach failed (%{public}d), trying detach→attach", err.code);
+      this.inputMethodController.detach().then(() => {
+        return this.inputMethodController.attach(true, textConfig);
+      }).then(() => {
+        this.imeAttached = true;
+        this.imeAttaching = false;
+        hilog.info(DOMAIN, MODULE, "IME attached successfully (after detach)");
+        this.subscribeImeEvents();
+      }).catch((err2: BusinessError) => {
+        this.imeAttaching = false;
+        hilog.error(DOMAIN, MODULE, "IME attach chain failed: code=%{public}d msg=%{public}s",
+          err2.code, err2.message);
+        this.subscribeImeEvents();
+      });
+    });
+  }
+
+  private detachInputMethod(): void {
+    if (!this.imeAttached) {
+      return;
+    }
+    this.imeAttached = false;
+    this.inputMethodController.off('insertText');
+    this.inputMethodController.off('setPreviewText');
+    this.inputMethodController.off('finishTextPreview');
+    this.inputMethodController.off('deleteLeft');
+    this.inputMethodController.off('sendFunctionKey');
+    this.inputMethodController.detach().then(() => {
+      hilog.info(DOMAIN, MODULE, "IME detached successfully");
+    }).catch((err: BusinessError) => {
+      hilog.error(DOMAIN, MODULE, "IME detach failed: code=%{public}d msg=%{public}s",
+        err.code, err.message);
+    });
   }
 
   // ==================== Key Event (键盘) ====================
   handleKeyEvent(event: KeyEvent): void {
+    hilog.info(DOMAIN, MODULE, "handleKeyEvent ENTER: keyCode=%{public}d, type=%{public}d, keyText=%{public}s",
+      event.keyCode, event.type, event.keyText);
     if (!this.isCreated()) {
       return;
     }
