@@ -13,6 +13,7 @@ using ScrollOffsetCallback = std::function<void(double x, double y)>;
 using VirtualKeyboardCallback = std::function<void(bool show)>;
 using TextSelectionCallback = std::function<void(const std::string& selected_text)>;
 using CursorChangeCallback = std::function<void(int cursorType)>;
+using ImeCursorCallback = std::function<void(int left, int top, int width, int height)>;
 
 class ArkUICefRenderHandler : public CefRenderHandler {
 public:
@@ -50,6 +51,7 @@ public:
     void SetScrollOffsetCallback(ScrollOffsetCallback cb) { scrollOffsetCallback_ = std::move(cb); }
     void SetVirtualKeyboardCallback(VirtualKeyboardCallback cb) { virtualKeyboardCallback_ = std::move(cb); }
     void SetTextSelectionCallback(TextSelectionCallback cb) { textSelectionCallback_ = std::move(cb); }
+    void SetImeCursorCallback(ImeCursorCallback cb) { imeCursorCallback_ = std::move(cb); }
 
     void Invalidate();
     void SetPopupBuffer(const void* buffer, int width, int height);
@@ -77,6 +79,7 @@ private:
     ScrollOffsetCallback scrollOffsetCallback_;
     VirtualKeyboardCallback virtualKeyboardCallback_;
     TextSelectionCallback textSelectionCallback_;
+    ImeCursorCallback imeCursorCallback_;
 };
 
 } // namespace arkui_cef

@@ -91,7 +91,8 @@ public:
                              ScrollOffsetCallback onScrollOffset = nullptr,
                              VirtualKeyboardCallback onVirtualKeyboard = nullptr,
                              TextSelectionCallback onTextSelection = nullptr,
-                             CursorChangeCallback onCursorChange = nullptr);
+                             CursorChangeCallback onCursorChange = nullptr,
+                             ImeCursorCallback onImeCursor = nullptr);
     
     /**
      * @brief 销毁指定浏览器

@@ -2,8 +2,6 @@ import arkui_cef from 'libarkui_cef.so';
 import { image } from '@kit.ImageKit';
 import { hilog } from "@kit.PerformanceAnalysisKit";
 import { pointer } from '@kit.InputKit';
-import { inputMethod } from '@kit.IMEKit';
-import { BusinessError } from '@kit.BasicServicesKit';
 import { window } from "@kit.ArkUI";
 import { common } from '@kit.AbilityKit';
 
@@ -27,27 +25,52 @@ export struct OsrCefView {
   private touchMouseSimulated: boolean = false;
   // Pinch gesture tracking for touchpad zoom
   private pinchLastScale: number = 1.0;
-  // Input Method Framework (IMF) controller for OSR text input
-  private inputMethodController: inputMethod.InputMethodController = inputMethod.getController();
+  // Input Method Framework (IMF) — using C API via NAPI for cursor updates.
+  // ArkTS inputMethodController was replaced because its async updateCursor()
+  // triggered a second internal OnCursorUpdate that caused candidate window jumps.
+  //
+  // Design (reference QCefView):
+  // - keyboardVisible: set by CEF OnVirtualKeyboardRequested — tracks whether
+  //   the web page has a focused input field (like Qt's WA_InputMethodEnabled).
+  // - IMF attach/detach: driven by window focus and keyboardVisible together:
+  //   WINDOW_INACTIVE → detach (hide keyboard, preserve keyboardVisible)
+  //   WINDOW_ACTIVE → if keyboardVisible, attach (show keyboard)
+  //   OnVKR(true) → keyboardVisible=true, attach if window active
+  //   OnVKR(false) → keyboardVisible=false, detach
   private imeAttached: boolean = false;
   private imeAttaching: boolean = false;
-  private imeSubscribed: boolean = false;
   // When true, key events are forwarded to CEF (user clicked on render area).
   // When false, key events go to the URL bar TextInput normally.
   private renderAreaActive: boolean = false;
-  // Hidden TextInput used as IME panel trigger. When focused via
-  // FocusController.requestFocus('ime_proxy_input'), ArkUI's internal
-  // component focus mechanism shows the IME panel — this works reliably
-  // even after window focus loss/recovery, unlike showTextInput() which
-  // may hang. Text input itself flows through InputMethodController callbacks.
-  private imeProxyFocused: boolean = false;
-  // Set by WINDOW_INACTIVE — when true, next touch/mouse-down on render area
-  // forces CEF blur+focus to re-trigger OnVirtualKeyboardRequested.
+  // Set by WINDOW_INACTIVE — when true, WINDOW_ACTIVE should restore CEF focus.
   private focusLostFlag: boolean = false;
-  // Set by WINDOW_ACTIVE when keyboard was visible before focus loss.
-  private pendingImeShow: boolean = false;
-  // Counter for IME changeSelection workaround (from IMFAdapter)
-  private imeCount: number = 0;
+  // Component position within the window (from globalPosition, in vp/CSS px)
+  // and device scale factor — cached from onAreaChange for IME cursor computation.
+  private componentGlobalX: number = 0;
+  private componentGlobalY: number = 0;
+  private cachedDsf: number = 1.0;
+  // Cached window object — used to get windowRect (window's screen position)
+  // via the synchronous getWindowProperties() API.
+  private cachedWin: window.Window | null = null;
+  // Last caret position in window-relative px (from C++ onImeCompositionRangeChanged).
+  private lastCaretWinLeft: number = 0;
+  private lastCaretWinTop: number = 0;
+  private lastCaretWidth: number = 2;
+  private lastCaretHeight: number = 24;
+  // True after onOsrImeCursor has fired at least once.
+  private hasCaretBounds: boolean = false;
+  private lastWinRectLeft: number = 0;
+  private lastWinRectTop: number = 0;
+  // Last input position (touch or mouse down) in vp, relative to the render
+  // area component. Used to compute the initial IME cursor position when
+  // attaching the input method.
+  private lastInputX: number = 0;
+  private lastInputY: number = 0;
+  // Window ID — passed to IMF C API via TextConfig.windowId in GetTextConfigFunc.
+  private cachedWindowId: number = -1;
+  // True when IMF was detached due to component becoming invisible (tab switch).
+  // Used to re-attach when the component becomes visible again.
+  private imeDetachedByVisibility: boolean = false;
 
   @State private viewWidth: number = 800;
   @State private viewHeight: number = 600;
@@ -159,17 +182,6 @@ export struct OsrCefView {
           .justifyContent(FlexAlign.Center)
           .backgroundColor(Color.Black)
         }
-        // Hidden TextInput — IME panel trigger.
-        // When focused via FocusController.requestFocus('ime_proxy_input'),
-        // ArkUI shows the IME panel through its internal component focus
-        // mechanism. hitTestBehavior(None) ensures it never intercepts
-        // touch/mouse events — all input goes to the render area handlers.
-        TextInput({ text: '' })
-          .opacity(0)
-          .width(1)
-          .height(1)
-          .hitTestBehavior(HitTestMode.None)
-          .key('ime_proxy_input')
       }
       .width('100%')
       .flexGrow(1)
@@ -213,6 +225,11 @@ export struct OsrCefView {
         let hpx = Math.round(this.getUIContext().vp2px(newValue.height as number));
         hilog.info(DOMAIN, MODULE, "onAreaChange: wpx=%{public}d, hpx=%{public}d", wpx, hpx);
 
+        // Cache component position and DSF for IME cursor computation
+        this.componentGlobalX = newValue.globalPosition.x as number;
+        this.componentGlobalY = newValue.globalPosition.y as number;
+        this.cachedDsf = this.getUIContext().vp2px(1);
+
         if (wpx > 0 && hpx > 0) {
           this.viewWidth = wpx;
           this.viewHeight = hpx;
@@ -220,9 +237,12 @@ export struct OsrCefView {
           if (this.isCreated()) {
             // Set DSF to actual device scale factor for correct content sizing
             let dsf = this.getUIContext().vp2px(1);
+        this.cachedDsf = dsf;
             arkui_cef.cefOsrSetScale(this.browserId, dsf);
             arkui_cef.cefOsrResize(this.browserId, this.viewWidth, this.viewHeight);
-            // Pass component offset for GetScreenPoint (tooltip positioning)
+            // Pass component offset (window-relative, from globalPosition) for
+            // cursor coordinate conversion. ArkTS adds windowRect.left/top
+            // separately to get screen-absolute coordinates for IMF.
             arkui_cef.cefSetComponentOffset(this.browserId,
               Math.round(newValue.globalPosition.x as number),
               Math.round(newValue.globalPosition.y as number));
@@ -269,6 +289,22 @@ export struct OsrCefView {
     .height('100%')
     .backgroundColor(Color.Black)
     .focusable(true)
+    .onVisibleAreaChange([0.0, 0.01], (isVisible: boolean, currentRatio: number) => {
+      if (!isVisible && currentRatio === 0) {
+        if (this.imeAttached) {
+          hilog.info(DOMAIN, MODULE, "onVisibleAreaChange: invisible, detaching IME");
+          this.imeDetachedByVisibility = true;
+          this.detachInputMethod();
+        }
+      } else if (isVisible && this.imeDetachedByVisibility) {
+        hilog.info(DOMAIN, MODULE, "onVisibleAreaChange: visible again, kbVisible=%{public}s",
+          this.keyboardVisible ? "true" : "false");
+        this.imeDetachedByVisibility = false;
+        if (this.keyboardVisible) {
+          this.attachInputMethod();
+        }
+      }
+    })
   }
 
   getBrowserId(): number {
@@ -280,8 +316,6 @@ export struct OsrCefView {
   }
 
   destroy(): void {
-    this.blurProxyTextInput();
-    this.pendingImeShow = false;
     this.detachInputMethod();
     if (this.isCreated()) {
       hilog.info(DOMAIN, MODULE, "Destroying OSR browser, id=%{public}d", this.browserId);
@@ -355,7 +389,8 @@ export struct OsrCefView {
       (offset: string) => { this.onOsrScrollOffset(offset); },
       (show: boolean) => { this.onOsrVirtualKeyboard(show); },
       (text: string) => { this.onOsrTextSelection(text); },
-      (cursorType: number) => { this.onOsrCursorChange(cursorType); });
+      (cursorType: number) => { this.onOsrCursorChange(cursorType); },
+      (left: number, top: number, w: number, h: number) => { this.onOsrImeCursor(left, top, w, h); });
 
     hilog.info(DOMAIN, MODULE, "OSR CEF starts to create, id: %{public}d", id);
   }
@@ -369,6 +404,7 @@ export struct OsrCefView {
     // OnPaint buffer is still physical pixels (CSS * DSF).
     // Mouse/touch coordinates are sent in CSS pixels (vp) to match GetViewRect.
     let dsf = this.getUIContext().vp2px(1);
+    this.cachedDsf = dsf;
     arkui_cef.cefOsrSetScale(this.browserId, dsf);
     arkui_cef.cefOsrResize(this.browserId, this.viewWidth, this.viewHeight);
     // Register window-level key event filter for non-text keys (digits, symbols, etc.)
@@ -379,7 +415,9 @@ export struct OsrCefView {
     try {
       let context: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
       let win: window.Window = await window.getLastWindow(context);
+      this.cachedWin = win;
       let windowId: number = win.getWindowProperties().id;
+      this.cachedWindowId = windowId;
       hilog.info(DOMAIN, MODULE, "registerKeyFilter: windowId=%{public}d, browserId=%{public}d",
         windowId, this.browserId);
       arkui_cef.registerOsrKeyFilter(windowId, this.browserId);
@@ -387,25 +425,34 @@ export struct OsrCefView {
       win.on('windowEvent', (event: window.WindowEventType) => {
         hilog.info(DOMAIN, MODULE, "windowEvent: %{public}d", event);
         if (event === window.WindowEventType.WINDOW_INACTIVE) {
-          // Window lost focus — system auto-detaches IMF and hides IME panel.
-          // Reset imeAttached so attachInputMethod() will re-attach on next
-          // onOsrVirtualKeyboard(true). Also notify CEF of blur.
           this.focusLostFlag = true;
-          this.imeProxyFocused = false;
-          this.imeAttached = false;
+          this.detachInputMethod();
           if (this.isCreated() && this.renderAreaActive) {
             arkui_cef.cefSendFocusEvent(this.browserId, false);
           }
         } else if (event === window.WindowEventType.WINDOW_ACTIVE) {
-          // Window regained focus. If keyboard was visible before focus loss,
-          // focus the proxy TextInput to re-trigger the IME panel through
-          // ArkUI's component focus mechanism. This is needed because
-          // inputMethodController.showTextInput() may not work after re-focus.
-          if (this.focusLostFlag && this.keyboardVisible) {
+          if (this.focusLostFlag) {
             this.focusLostFlag = false;
-            this.focusProxyTextInput();
-            hilog.info(DOMAIN, MODULE, "WINDOW_ACTIVE: focused proxy TextInput for IME re-trigger");
+            hilog.info(DOMAIN, MODULE, "WINDOW_ACTIVE: restoring focus, kbVisible=%{public}s",
+              this.keyboardVisible ? "true" : "false");
+            if (this.isCreated() && this.renderAreaActive) {
+              arkui_cef.cefSendFocusEvent(this.browserId, true);
+            }
+            if (this.keyboardVisible) {
+              this.attachInputMethod();
+            }
           }
+        }
+      });
+
+      // Refresh IME cursor when window position or size changes (e.g.,
+      // floating window drag). Using C API (synchronous NotifyCursorUpdate),
+      // no async second OnCursorUpdate issue. API 12+.
+      win.on('windowRectChange', (data: window.RectChangeOptions) => {
+        if (this.imeAttached) {
+          hilog.info(DOMAIN, MODULE, "windowRectChange: left=%{public}d top=%{public}d reason=%{public}d",
+            data.rect.left, data.rect.top, data.reason);
+          this.refreshImeCursor();
         }
       });
     } catch (e) {
@@ -463,9 +510,10 @@ export struct OsrCefView {
     hilog.info(DOMAIN, MODULE, "OSR virtual keyboard: %{public}s", show ? "show" : "hide");
     this.keyboardVisible = show;
     if (show) {
-      this.attachInputMethod();
+      if (!this.imeAttached) {
+        this.attachInputMethod();
+      }
     } else {
-      this.blurProxyTextInput();
       this.detachInputMethod();
     }
   }
@@ -537,6 +585,48 @@ export struct OsrCefView {
     }
   }
 
+  onOsrImeCursor(left: number, top: number, width: number, height: number): void {
+    this.lastCaretWinLeft = left;
+    this.lastCaretWinTop = top;
+    this.lastCaretWidth = width;
+    this.lastCaretHeight = height;
+    this.hasCaretBounds = true;
+
+    // Screen-absolute px = window-relative px + windowRect.left/top.
+    // C API OH_InputMethodProxy_NotifyCursorUpdate expects screen-absolute.
+    let winRect = this.getWindowRect();
+    let screenLeft = left + winRect.left;
+    let screenTop = top + winRect.top;
+    hilog.info(DOMAIN, MODULE,
+      "onOsrImeCursor: winRel=%{public}d,%{public}d winRect=%{public}d,%{public}d screen=%{public}d,%{public}d",
+      left, top, winRect.left, winRect.top, screenLeft, screenTop);
+
+    if (!this.imeAttached) {
+      hilog.info(DOMAIN, MODULE, "onOsrImeCursor: skipped (IME not attached)");
+      return;
+    }
+
+    arkui_cef.cefImeCUpdateCursor(screenLeft, screenTop, width, height);
+  }
+
+  private getWindowRect(): window.Rect {
+    if (this.cachedWin) {
+      try {
+        return this.cachedWin.getWindowProperties().windowRect;
+      } catch (e) {
+        hilog.error(DOMAIN, MODULE, "getWindowRect failed: %{public}s", (e as Error).message);
+      }
+    }
+    let defaultRect: window.Rect = { left: 0, top: 0, width: 0, height: 0 };
+    return defaultRect;
+  }
+
+  private applyImeCursor(left: number, top: number, width: number, height: number): void {
+    let ok = arkui_cef.cefImeCUpdateCursor(left, top, width, height);
+    hilog.info(DOMAIN, MODULE, "applyImeCursor: left=%{public}d top=%{public}d ok=%{public}s",
+      left, top, ok ? "true" : "false");
+  }
+
   // ==================== Touch Event (触摸屏) ====================
   handleTouchEvent(event: TouchEvent): void {
     if (!this.isCreated()) {
@@ -595,6 +685,8 @@ export struct OsrCefView {
 
     switch (event.type) {
       case TouchType.Down:
+        this.lastInputX = touch0.x;
+        this.lastInputY = touch0.y;
         this.setRenderAreaActive(true);
         this.handleImeFocus();
         arkui_cef.cefSendFocusEvent(this.browserId, true);
@@ -648,6 +740,8 @@ export struct OsrCefView {
     switch (event.action) {
       case MouseAction.Press:
         hilog.info(DOMAIN, MODULE, "Mouse Press: x=%{public}d, y=%{public}d, btn=%{public}d", x, y, cefButton);
+        this.lastInputX = event.x;
+        this.lastInputY = event.y;
         this.setRenderAreaActive(true);
         this.handleImeFocus();
         arkui_cef.cefSendFocusEvent(this.browserId, true);
@@ -744,17 +838,10 @@ export struct OsrCefView {
   // ==================== Input Method Framework (IME) ====================
 
   private handleImeFocus(): void {
-    // If IME panel needs to be re-shown after window re-focus, focus the
-    // proxy TextInput to trigger the IME panel through ArkUI's component
-    // focus mechanism. This is more reliable than showTextInput() after
-    // window re-focus.
-    if (this.pendingImeShow) {
-      this.pendingImeShow = false;
-      hilog.info(DOMAIN, MODULE, "Focusing proxy TextInput for IME panel");
-      this.focusProxyTextInput();
-      if (!this.imeAttached) {
-        this.attachInputMethod();
-      }
+    // Only attach if CEF has a focused input field (keyboardVisible=true).
+    // If not, wait for CEF's OnVirtualKeyboardRequested to drive the attach.
+    if (!this.imeAttached && this.keyboardVisible) {
+      this.attachInputMethod();
     }
   }
 
@@ -762,71 +849,10 @@ export struct OsrCefView {
     this.renderAreaActive = active;
     arkui_cef.setRenderAreaActive(active);
     if (!active) {
-      this.blurProxyTextInput();
-      this.pendingImeShow = false;
       if (this.isCreated()) {
         arkui_cef.cefSendFocusEvent(this.browserId, false);
       }
     }
-  }
-
-  private focusProxyTextInput(): void {
-    this.imeProxyFocused = true;
-    try {
-      this.getUIContext().getFocusController().requestFocus('ime_proxy_input');
-    } catch (e) {
-      hilog.error(DOMAIN, MODULE, "focusProxyTextInput failed: %{public}s", (e as Error).message);
-    }
-  }
-
-  private blurProxyTextInput(): void {
-    this.imeProxyFocused = false;
-  }
-
-  private subscribeImeEvents(): void {
-    // off() first to prevent duplicate callbacks — on() is cumulative
-    this.inputMethodController.off('insertText');
-    this.inputMethodController.off('setPreviewText');
-    this.inputMethodController.off('finishTextPreview');
-    this.inputMethodController.off('deleteLeft');
-    this.inputMethodController.off('sendFunctionKey');
-
-    this.inputMethodController.on('insertText', (text: string) => {
-      if (this.isCreated() && this.renderAreaActive) {
-        hilog.info(DOMAIN, MODULE, "IME insertText: '%{public}s'", text);
-        arkui_cef.cefImeCommitText(this.browserId, text);
-        this.inputMethodController.changeSelection("" + this.imeCount++, 0, 0);
-      }
-    });
-    this.inputMethodController.on('setPreviewText', (text: string) => {
-      if (this.isCreated() && this.renderAreaActive) {
-        hilog.info(DOMAIN, MODULE, "IME setPreviewText: '%{public}s'", text);
-        arkui_cef.cefImeSetComposition(this.browserId, text);
-      }
-    });
-    this.inputMethodController.on('finishTextPreview', () => {
-      if (this.isCreated() && this.renderAreaActive) {
-        hilog.info(DOMAIN, MODULE, "IME finishTextPreview");
-        arkui_cef.cefImeCancelComposition(this.browserId);
-      }
-    });
-    this.inputMethodController.on('deleteLeft', (length: number) => {
-      if (this.isCreated() && this.renderAreaActive) {
-        hilog.info(DOMAIN, MODULE, "IME deleteLeft: %{public}d", length);
-        for (let i = 0; i < length; i++) {
-          arkui_cef.cefSendKeyEvent(this.browserId, 2055, 0, 0);
-          arkui_cef.cefSendKeyEvent(this.browserId, 2055, 1, 0);
-        }
-      }
-    });
-    this.inputMethodController.on('sendFunctionKey', () => {
-      if (this.isCreated() && this.renderAreaActive) {
-        hilog.info(DOMAIN, MODULE, "IME sendFunctionKey (Enter)");
-        arkui_cef.cefSendKeyEvent(this.browserId, 2054, 0, 0);
-        arkui_cef.cefSendKeyEvent(this.browserId, 2054, 2, 0, 13);
-        arkui_cef.cefSendKeyEvent(this.browserId, 2054, 1, 0);
-      }
-    });
   }
 
   private attachInputMethod(): void {
@@ -834,36 +860,81 @@ export struct OsrCefView {
       return;
     }
     this.imeAttaching = true;
-    let textConfig: inputMethod.TextConfig = {
-      inputAttribute: {
-        textInputType: inputMethod.TextInputType.TEXT,
-        enterKeyType: inputMethod.EnterKeyType.GO
+
+    // Compute initial cursor position (screen-absolute px).
+    let winRect = this.getWindowRect();
+    this.lastWinRectLeft = winRect.left;
+    this.lastWinRectTop = winRect.top;
+    let cursorLeft = Math.round((this.lastInputX + this.componentGlobalX) * this.cachedDsf) + winRect.left;
+    let cursorTop = Math.round((this.lastInputY + this.componentGlobalY) * this.cachedDsf) + winRect.top;
+    let cursorHeight = Math.round(20 * this.cachedDsf);
+    hilog.info(DOMAIN, MODULE,
+      "attachInputMethod: screen_px left=%{public}d top=%{public}d winRect=%{public}d,%{public}d",
+      cursorLeft, cursorTop, winRect.left, winRect.top);
+
+    let ok = arkui_cef.cefImeCAttach(
+      this.cachedWindowId,
+      cursorLeft, cursorTop, 2, cursorHeight,
+      (text: string) => {
+        if (this.isCreated() && this.renderAreaActive) {
+          hilog.info(DOMAIN, MODULE, "IME insertText: '%{public}s'", text);
+          arkui_cef.cefImeCommitText(this.browserId, text);
+        }
+      },
+      (length: number) => {
+        if (this.isCreated() && this.renderAreaActive) {
+          hilog.info(DOMAIN, MODULE, "IME deleteLeft: %{public}d", length);
+          for (let i = 0; i < length; i++) {
+            arkui_cef.cefSendKeyEvent(this.browserId, 2055, 0, 0);
+            arkui_cef.cefSendKeyEvent(this.browserId, 2055, 1, 0);
+          }
+        }
+      },
+      () => {
+        if (this.isCreated() && this.renderAreaActive) {
+          hilog.info(DOMAIN, MODULE, "IME sendEnterKey");
+          arkui_cef.cefSendKeyEvent(this.browserId, 2054, 0, 0);
+          arkui_cef.cefSendKeyEvent(this.browserId, 2054, 2, 0, 13);
+          arkui_cef.cefSendKeyEvent(this.browserId, 2054, 1, 0);
+        }
+      },
+      (text: string) => {
+        if (this.isCreated() && this.renderAreaActive) {
+          hilog.info(DOMAIN, MODULE, "IME setPreviewText: '%{public}s'", text);
+          arkui_cef.cefImeSetComposition(this.browserId, text);
+        }
+      },
+      () => {
+        if (this.isCreated() && this.renderAreaActive) {
+          hilog.info(DOMAIN, MODULE, "IME finishTextPreview");
+          arkui_cef.cefImeCancelComposition(this.browserId);
+        }
       }
-    };
-    // Try attach directly first. If the IMF is in a clean (detached) state,
-    // this succeeds without flicker. If it fails (partially attached state),
-    // fall back to detach→attach to ensure clean state.
-    this.inputMethodController.attach(true, textConfig).then(() => {
+    );
+
+    this.imeAttaching = false;
+    if (ok) {
       this.imeAttached = true;
-      this.imeAttaching = false;
-      hilog.info(DOMAIN, MODULE, "IME attached successfully");
-      this.subscribeImeEvents();
-    }).catch((err: BusinessError) => {
-      hilog.info(DOMAIN, MODULE, "IME direct attach failed (%{public}d), trying detach→attach", err.code);
-      this.inputMethodController.detach().then(() => {
-        return this.inputMethodController.attach(true, textConfig);
-      }).then(() => {
-        this.imeAttached = true;
-        this.imeAttaching = false;
-        hilog.info(DOMAIN, MODULE, "IME attached successfully (after detach)");
-        this.subscribeImeEvents();
-      }).catch((err2: BusinessError) => {
-        this.imeAttaching = false;
-        hilog.error(DOMAIN, MODULE, "IME attach chain failed: code=%{public}d msg=%{public}s",
-          err2.code, err2.message);
-        this.subscribeImeEvents();
-      });
-    });
+      hilog.info(DOMAIN, MODULE, "IME attached (C API) successfully");
+      this.refreshImeCursor();
+    } else {
+      hilog.error(DOMAIN, MODULE, "IME attach (C API) failed");
+    }
+  }
+
+  private refreshImeCursor(): void {
+    if (!this.imeAttached || !this.hasCaretBounds) {
+      return;
+    }
+    let winRect = this.getWindowRect();
+    this.lastWinRectLeft = winRect.left;
+    this.lastWinRectTop = winRect.top;
+    let screenLeft = this.lastCaretWinLeft + winRect.left;
+    let screenTop = this.lastCaretWinTop + winRect.top;
+    hilog.info(DOMAIN, MODULE,
+      "refreshImeCursor: winRel=%{public}d,%{public}d winRect=%{public}d,%{public}d screen=%{public}d,%{public}d",
+      this.lastCaretWinLeft, this.lastCaretWinTop, winRect.left, winRect.top, screenLeft, screenTop);
+    this.applyImeCursor(screenLeft, screenTop, this.lastCaretWidth, this.lastCaretHeight);
   }
 
   private detachInputMethod(): void {
@@ -871,17 +942,8 @@ export struct OsrCefView {
       return;
     }
     this.imeAttached = false;
-    this.inputMethodController.off('insertText');
-    this.inputMethodController.off('setPreviewText');
-    this.inputMethodController.off('finishTextPreview');
-    this.inputMethodController.off('deleteLeft');
-    this.inputMethodController.off('sendFunctionKey');
-    this.inputMethodController.detach().then(() => {
-      hilog.info(DOMAIN, MODULE, "IME detached successfully");
-    }).catch((err: BusinessError) => {
-      hilog.error(DOMAIN, MODULE, "IME detach failed: code=%{public}d msg=%{public}s",
-        err.code, err.message);
-    });
+    arkui_cef.cefImeCDetach();
+    hilog.info(DOMAIN, MODULE, "IME detached (C API)");
   }
 
   // ==================== Key Event (键盘) ====================

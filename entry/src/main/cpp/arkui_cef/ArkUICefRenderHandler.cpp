@@ -215,6 +215,38 @@ void ArkUICefRenderHandler::OnImeCompositionRangeChanged(
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
         "OnImeCompositionRangeChanged: from=%{public}d, to=%{public}d, bounds_count=%{public}zu",
         selected_range.from, selected_range.to, character_bounds.size());
+
+    if (character_bounds.empty()) {
+        return;
+    }
+
+    // character_bounds are in CSS pixels (view coordinates, matching GetViewRect).
+    // CursorInfo expects px (physical pixels) relative to the window.
+    // Convert: (view_css + componentOffset_css) * deviceScaleFactor = window_px
+    // Use first_bound (matches cefclient behavior) — cursor at composition start.
+    int left, top, cursorWidth, cursorHeight;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const CefRect& first = character_bounds.front();
+        left = static_cast<int>((first.x + componentOffsetX_) * deviceScaleFactor_);
+        top = static_cast<int>((first.y + componentOffsetY_) * deviceScaleFactor_);
+        cursorWidth = static_cast<int>(first.width * deviceScaleFactor_);
+        cursorHeight = static_cast<int>(first.height * deviceScaleFactor_);
+    }
+    if (cursorWidth <= 0) {
+        cursorWidth = 2;
+    }
+    if (cursorHeight <= 0) {
+        cursorHeight = 24;
+    }
+
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
+        "OnImeCompositionRangeChanged -> cursor px: left=%{public}d, top=%{public}d, w=%{public}d, h=%{public}d",
+        left, top, cursorWidth, cursorHeight);
+
+    if (imeCursorCallback_) {
+        imeCursorCallback_(left, top, cursorWidth, cursorHeight);
+    }
 }
 
 } // namespace arkui_cef

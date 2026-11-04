@@ -98,7 +98,8 @@ int64_t ArkUICefManager::createOsrBrowser(const std::string& url, int width, int
                                           ScrollOffsetCallback onScrollOffset,
                                           VirtualKeyboardCallback onVirtualKeyboard,
                                           TextSelectionCallback onTextSelection,
-                                          CursorChangeCallback onCursorChange) {
+                                          CursorChangeCallback onCursorChange,
+                                          ImeCursorCallback onImeCursor) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initOk_) {
         return -1;
@@ -116,6 +117,7 @@ int64_t ArkUICefManager::createOsrBrowser(const std::string& url, int width, int
     if (onScrollOffset) renderHandler->SetScrollOffsetCallback(onScrollOffset);
     if (onVirtualKeyboard) renderHandler->SetVirtualKeyboardCallback(onVirtualKeyboard);
     if (onTextSelection) renderHandler->SetTextSelectionCallback(onTextSelection);
+    if (onImeCursor) renderHandler->SetImeCursorCallback(onImeCursor);
     if (onCursorChange) browser->SetCursorChangeCallback(onCursorChange);
 
     CefRefPtr<ArkUICefClient> client = new ArkUICefClient(id, browser, this);

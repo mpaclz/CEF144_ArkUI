@@ -16,6 +16,7 @@
 #include "arkui_cef/ArkUICefApp.h"
 #include "arkui_cef/ArkUICefManager.h"
 #include "arkui_cef/ArkUICefRenderHandler.h"
+#include "arkui_cef/ArkUICefInputMethod.h"
 #include "include/base/cef_callback.h"
 
 namespace {
@@ -794,15 +795,15 @@ static napi_value NAPI_Global_hasCef(napi_env env, napi_callback_info info) {
 static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info info) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "createOsrCefView called");
 
-    size_t argc = 11;
-    napi_value args[11];
+    size_t argc = 12;
+    napi_value args[12];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
     if (argc < 7) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-            "createOsrCefView: expected 7-11 arguments, got %{public}zu", argc);
+            "createOsrCefView: expected 7-12 arguments, got %{public}zu", argc);
         napi_throw_error(env, nullptr,
-            "Expected 7-11 arguments: url, width, height, onPaint, onCreated, onTitleChange, onFocusTake [, onScrollOffset, onVirtualKeyboard, onTextSelection, onCursorChange]");
+            "Expected 7-12 arguments: url, width, height, onPaint, onCreated, onTitleChange, onFocusTake [, onScrollOffset, onVirtualKeyboard, onTextSelection, onCursorChange, onImeCursor]");
         return nullptr;
     }
 
@@ -905,6 +906,22 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
         }
     }
 
+    std::function<void(int, int, int, int)> imeCursorCb;
+    if (argc >= 12) {
+        napi_valuetype vt;
+        napi_typeof(env, args[11], &vt);
+        if (vt == napi_function) {
+            auto jsImeCursorCb = makeJsThreadSafeCallback<int32_t, int32_t, int32_t, int32_t>(
+                env, args[11], "OsrImeCursorCallback");
+            if (jsImeCursorCb) {
+                imeCursorCb = [jsImeCursorCb](int left, int top, int width, int height) {
+                    jsImeCursorCb->Call(static_cast<int32_t>(left), static_cast<int32_t>(top),
+                                        static_cast<int32_t>(width), static_cast<int32_t>(height));
+                };
+            }
+        }
+    }
+
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
         "createOsrCefView: width=%{public}d, height=%{public}d", width, height);
 
@@ -929,7 +946,8 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
         scrollOffsetCb,
         virtualKeyboardCb,
         textSelectionCb,
-        cursorChangeCb);
+        cursorChangeCb,
+        imeCursorCb);
 
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
         "createOsrCefView: browserId=%{public}ld", browserId);
@@ -1460,6 +1478,98 @@ static napi_value NAPI_Global_cefImeCancelComposition(napi_env env, napi_callbac
     return nullptr;
 }
 
+// ==================== IMF C API NAPI Functions ====================
+
+static std::unique_ptr<arkui_cef::ArkUICefInputMethod> g_imeCApi;
+
+static napi_value NAPI_Global_cefImeCAttach(napi_env env, napi_callback_info info) {
+    size_t argc = 10;
+    napi_value args[10] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 10) {
+        napi_throw_error(env, nullptr,
+            "Expected 10 args: windowId, cursorLeft, cursorTop, cursorWidth, cursorHeight, "
+            "onInsertText, onDeleteLeft, onSendEnterKey, onSetPreviewText, onFinishTextPreview");
+        return nullptr;
+    }
+
+    int32_t windowId = 0;
+    napi_get_value_int32(env, args[0], &windowId);
+    double cursorLeft = 0, cursorTop = 0, cursorWidth = 0, cursorHeight = 0;
+    napi_get_value_double(env, args[1], &cursorLeft);
+    napi_get_value_double(env, args[2], &cursorTop);
+    napi_get_value_double(env, args[3], &cursorWidth);
+    napi_get_value_double(env, args[4], &cursorHeight);
+
+    auto jsInsertText = makeJsThreadSafeCallback<std::string>(env, args[5], "ImeInsertText");
+    auto jsDeleteLeft = makeJsThreadSafeCallback<int32_t>(env, args[6], "ImeDeleteLeft");
+    auto jsSendEnterKey = makeJsThreadSafeCallback<>(env, args[7], "ImeSendEnterKey");
+    auto jsSetPreviewText = makeJsThreadSafeCallback<std::string>(env, args[8], "ImeSetPreviewText");
+    auto jsFinishPreview = makeJsThreadSafeCallback<>(env, args[9], "ImeFinishPreview");
+
+    if (!jsInsertText || !jsDeleteLeft || !jsSendEnterKey || !jsSetPreviewText || !jsFinishPreview) {
+        napi_throw_error(env, nullptr, "Failed to create IME callbacks");
+        return nullptr;
+    }
+
+    arkui_cef::ImeEventCallbacks callbacks;
+    callbacks.onInsertText = [jsInsertText](const std::string& text) {
+        jsInsertText->Call(text);
+    };
+    callbacks.onDeleteBackward = [jsDeleteLeft](int32_t length) {
+        jsDeleteLeft->Call(length);
+    };
+    callbacks.onSendEnterKey = [jsSendEnterKey]() {
+        jsSendEnterKey->Call();
+    };
+    callbacks.onSetPreviewText = [jsSetPreviewText](const std::string& text) {
+        jsSetPreviewText->Call(text);
+    };
+    callbacks.onFinishTextPreview = [jsFinishPreview]() {
+        jsFinishPreview->Call();
+    };
+
+    g_imeCApi = std::make_unique<arkui_cef::ArkUICefInputMethod>();
+    bool ok = g_imeCApi->attach(true, windowId, cursorLeft, cursorTop, cursorWidth, cursorHeight, callbacks);
+
+    napi_value result;
+    napi_get_boolean(env, ok, &result);
+    return result;
+}
+
+static napi_value NAPI_Global_cefImeCUpdateCursor(napi_env env, napi_callback_info info) {
+    size_t argc = 4;
+    napi_value args[4] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 4) {
+        napi_throw_error(env, nullptr, "Expected 4 args: left, top, width, height");
+        return nullptr;
+    }
+
+    double left = 0, top = 0, width = 0, height = 0;
+    napi_get_value_double(env, args[0], &left);
+    napi_get_value_double(env, args[1], &top);
+    napi_get_value_double(env, args[2], &width);
+    napi_get_value_double(env, args[3], &height);
+
+    bool ok = false;
+    if (g_imeCApi) {
+        ok = g_imeCApi->updateCursor(left, top, width, height);
+    }
+
+    napi_value result;
+    napi_get_boolean(env, ok, &result);
+    return result;
+}
+
+static napi_value NAPI_Global_cefImeCDetach(napi_env env, napi_callback_info info) {
+    if (g_imeCApi) {
+        g_imeCApi->detach();
+        g_imeCApi.reset();
+    }
+    return nullptr;
+}
+
 EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "Init called");
@@ -1499,6 +1609,9 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"cefImeCancelComposition", nullptr, NAPI_Global_cefImeCancelComposition, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"registerOsrKeyFilter", nullptr, NAPI_Global_registerOsrKeyFilter, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setRenderAreaActive", nullptr, NAPI_Global_setRenderAreaActive, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefImeCAttach", nullptr, NAPI_Global_cefImeCAttach, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefImeCUpdateCursor", nullptr, NAPI_Global_cefImeCUpdateCursor, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefImeCDetach", nullptr, NAPI_Global_cefImeCDetach, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     

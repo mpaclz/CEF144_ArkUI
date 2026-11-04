@@ -28,7 +28,8 @@ export const createOsrCefView: (url: string, width: number, height: number,
                                  onScrollOffset?: (offset: string) => void,
                                  onVirtualKeyboard?: (show: boolean) => void,
                                  onTextSelection?: (selectedText: string) => void,
-                                 onCursorChange?: (cursorType: number) => void) => number;
+                                 onCursorChange?: (cursorType: number) => void,
+                                 onImeCursor?: (left: number, top: number, width: number, height: number) => void) => number;
 export const destroyOsrCefView: (browserId: number) => void;
 export const cefOsrResize: (browserId: number, width: number, height: number) => void;
 export const cefOsrSetScale: (browserId: number, scaleFactor: number) => void;
@@ -46,3 +47,14 @@ export const cefImeCommitText: (browserId: number, text: string) => void;
 export const cefImeCancelComposition: (browserId: number) => void;
 export const registerOsrKeyFilter: (windowId: number, browserId: number) => void;
 export const setRenderAreaActive: (active: boolean) => void;
+export const cefImeCAttach: (
+  windowId: number,
+  cursorLeft: number, cursorTop: number, cursorWidth: number, cursorHeight: number,
+  onInsertText: (text: string) => void,
+  onDeleteLeft: (length: number) => void,
+  onSendEnterKey: () => void,
+  onSetPreviewText: (text: string) => void,
+  onFinishTextPreview: () => void
+) => boolean;
+export const cefImeCUpdateCursor: (left: number, top: number, width: number, height: number) => boolean;
+export const cefImeCDetach: () => void;

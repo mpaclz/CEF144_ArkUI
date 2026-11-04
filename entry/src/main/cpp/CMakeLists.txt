@@ -66,6 +66,11 @@ find_library(
     ohinput
 )
 
+find_library(
+    inputmethod-lib
+    ohinputmethod
+)
+
 add_library(arkui_cef_core SHARED
     arkui_cef/ArkUICefApp.cpp
     arkui_cef/ArkUICefClient.cpp
@@ -98,7 +103,7 @@ target_link_libraries(arkui_cef_core PUBLIC
     ${libnapi-lib}
 )
 
-add_library(arkui_cef SHARED napi_init.cpp JsThreadSafeCallback.cpp)
+add_library(arkui_cef SHARED napi_init.cpp JsThreadSafeCallback.cpp arkui_cef/ArkUICefInputMethod.cpp)
 target_include_directories(arkui_cef PUBLIC
     ${NATIVERENDER_ROOT_PATH}
     arkui_cef
@@ -114,6 +119,7 @@ target_link_libraries(arkui_cef PUBLIC
     libace_napi.z.so
     ${window-manager-lib}
     ${input-lib}
+    ${inputmethod-lib}
 )
 
 # cefsimple 共享库：OHOS 子进程入口
