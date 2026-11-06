@@ -2,6 +2,7 @@
 #define ARKUI_CEF_RENDER_HANDLER_H
 
 #include "include/cef_render_handler.h"
+#include "include/cef_drag_data.h"
 #include <functional>
 #include <mutex>
 #include <vector>
@@ -14,6 +15,8 @@ using VirtualKeyboardCallback = std::function<void(bool show)>;
 using TextSelectionCallback = std::function<void(const std::string& selected_text)>;
 using CursorChangeCallback = std::function<void(int cursorType)>;
 using ImeCursorCallback = std::function<void(int left, int top, int width, int height)>;
+using StartDragCallback = std::function<void(const std::string& text, const std::string& html, const std::string& url, const std::string& urlTitle, const std::string& fileName, const std::vector<uint8_t>& fileData, int x, int y)>;
+using UpdateDragCursorCallback = std::function<void(int operation)>;
 
 class ArkUICefRenderHandler : public CefRenderHandler {
 public:
@@ -43,6 +46,9 @@ public:
     void OnVirtualKeyboardRequested(CefRefPtr<CefBrowser> browser,
                                     TextInputMode input_mode) override;
     void OnScrollOffsetChanged(CefRefPtr<CefBrowser> browser, double x, double y) override;
+    bool StartDragging(CefRefPtr<CefBrowser> browser, CefRefPtr<CefDragData> drag_data,
+                       DragOperationsMask allowed_ops, int x, int y) override;
+    void UpdateDragCursor(CefRefPtr<CefBrowser> browser, DragOperation operation) override;
 
     void SetSize(int width, int height);
     void SetDeviceScaleFactor(float factor);
@@ -52,6 +58,8 @@ public:
     void SetVirtualKeyboardCallback(VirtualKeyboardCallback cb) { virtualKeyboardCallback_ = std::move(cb); }
     void SetTextSelectionCallback(TextSelectionCallback cb) { textSelectionCallback_ = std::move(cb); }
     void SetImeCursorCallback(ImeCursorCallback cb) { imeCursorCallback_ = std::move(cb); }
+    void SetStartDragCallback(StartDragCallback cb) { startDragCallback_ = std::move(cb); }
+    void SetUpdateDragCursorCallback(UpdateDragCursorCallback cb) { updateDragCursorCallback_ = std::move(cb); }
 
     void Invalidate();
     void SetPopupBuffer(const void* buffer, int width, int height);
@@ -80,6 +88,8 @@ private:
     VirtualKeyboardCallback virtualKeyboardCallback_;
     TextSelectionCallback textSelectionCallback_;
     ImeCursorCallback imeCursorCallback_;
+    StartDragCallback startDragCallback_;
+    UpdateDragCursorCallback updateDragCursorCallback_;
 };
 
 } // namespace arkui_cef

@@ -4,6 +4,8 @@
 #include "arkui_cef/NodeHandle.h"
 
 #include <hilog/log.h>
+#include "include/cef_drag_data.h"
+#include <sstream>
 
 namespace {
 constexpr unsigned int LOG_PRINT_DOMAIN = 0xFF00;
@@ -174,6 +176,15 @@ void ArkUICefBrowser::resize(int width, int height) {
     }
 
     browser_->GetHost()->WasResized();
+
+    // R2: force a full repaint at the new size. With OSR, WasResized() alone
+    // does not guarantee a frame — a static page emits no new damage, so the
+    // newly exposed buffer regions keep stale pixels until something else
+    // triggers a repaint. Invalidate(PET_VIEW) requests a complete redraw.
+    // Windowed (non-OSR) mode is untouched: the system composites its surface.
+    if (use_osr_) {
+        browser_->GetHost()->Invalidate(PET_VIEW);
+    }
 }
 
 void ArkUICefBrowser::setOsrScale(float factor) {
@@ -344,6 +355,106 @@ void ArkUICefBrowser::imeCancelComposition() {
     browser_->GetHost()->ImeCancelComposition();
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
         "imeCancelComposition: id=%{public}ld", id_);
+}
+
+void ArkUICefBrowser::dragTargetDragEnter(const std::string& text, const std::string& html,
+                                           const std::string& url, const std::string& filePaths,
+                                           int x, int y, int allowedOps) {
+    if (!browser_) {
+        return;
+    }
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "dragTargetDragEnter: id=%{public}ld, text_len=%{public}zu, url=%{public}s, filePaths_len=%{public}zu, x=%{public}d, y=%{public}d",
+        id_, text.size(), url.c_str(), filePaths.size(), x, y);
+
+    CefRefPtr<CefDragData> dragData = CefDragData::Create();
+    if (!text.empty()) dragData->SetFragmentText(text);
+    if (!html.empty()) dragData->SetFragmentHtml(html);
+    if (!url.empty()) {
+        dragData->SetLinkURL(url);
+        dragData->SetLinkTitle(url);
+    }
+    // Add file paths (newline-separated) for file drag-in
+    if (!filePaths.empty()) {
+        std::istringstream stream(filePaths);
+        std::string path;
+        while (std::getline(stream, path)) {
+            if (!path.empty()) {
+                // Extract display name from path (last component after '/')
+                size_t lastSlash = path.rfind('/');
+                std::string displayName = (lastSlash != std::string::npos)
+                    ? path.substr(lastSlash + 1) : path;
+                dragData->AddFile(path, displayName);
+                OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+                    "dragTargetDragEnter: AddFile path=%{public}s, name=%{public}s",
+                    path.c_str(), displayName.c_str());
+            }
+        }
+    }
+    dragData->ResetFileContents();
+
+    CefMouseEvent event;
+    event.x = x;
+    event.y = y;
+    event.modifiers = 0;
+
+    browser_->GetHost()->DragTargetDragEnter(dragData, event,
+        static_cast<CefBrowserHost::DragOperationsMask>(allowedOps));
+}
+
+void ArkUICefBrowser::dragTargetDragOver(int x, int y, int allowedOps) {
+    if (!browser_) {
+        return;
+    }
+    CefMouseEvent event;
+    event.x = x;
+    event.y = y;
+    event.modifiers = 0;
+
+    browser_->GetHost()->DragTargetDragOver(event,
+        static_cast<CefBrowserHost::DragOperationsMask>(allowedOps));
+}
+
+void ArkUICefBrowser::dragTargetDragLeave() {
+    if (!browser_) {
+        return;
+    }
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "dragTargetDragLeave: id=%{public}ld", id_);
+    browser_->GetHost()->DragTargetDragLeave();
+}
+
+void ArkUICefBrowser::dragTargetDrop(int x, int y) {
+    if (!browser_) {
+        return;
+    }
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "dragTargetDrop: id=%{public}ld, x=%{public}d, y=%{public}d", id_, x, y);
+    CefMouseEvent event;
+    event.x = x;
+    event.y = y;
+    event.modifiers = 0;
+
+    browser_->GetHost()->DragTargetDrop(event);
+}
+
+void ArkUICefBrowser::dragSourceEndedAt(int x, int y, int op) {
+    if (!browser_) {
+        return;
+    }
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "dragSourceEndedAt: id=%{public}ld, x=%{public}d, y=%{public}d, op=%{public}d", id_, x, y, op);
+    browser_->GetHost()->DragSourceEndedAt(x, y,
+        static_cast<CefBrowserHost::DragOperationsMask>(op));
+}
+
+void ArkUICefBrowser::dragSourceSystemDragEnded() {
+    if (!browser_) {
+        return;
+    }
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "dragSourceSystemDragEnded: id=%{public}ld", id_);
+    browser_->GetHost()->DragSourceSystemDragEnded();
 }
 
 ArkUICefBrowser::Node* ArkUICefBrowser::getWindowHandle() const {

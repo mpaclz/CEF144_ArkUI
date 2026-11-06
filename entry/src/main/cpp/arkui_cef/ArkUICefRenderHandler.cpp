@@ -1,8 +1,27 @@
 #include "ArkUICefRenderHandler.h"
 #include <hilog/log.h>
+#include "include/cef_stream.h"
 
 namespace {
 constexpr unsigned int LOG_PRINT_DOMAIN = 0xFF00;
+
+class MemoryWriteHandler : public CefWriteHandler {
+public:
+    size_t Write(const void* ptr, size_t size, size_t n) override {
+        size_t total = size * n;
+        const auto* bytes = static_cast<const uint8_t*>(ptr);
+        buffer_.insert(buffer_.end(), bytes, bytes + total);
+        return n;
+    }
+    int Seek(int64_t offset, int whence) override { return -1; }
+    int64_t Tell() override { return static_cast<int64_t>(buffer_.size()); }
+    int Flush() override { return 0; }
+    bool MayBlock() override { return false; }
+    const std::vector<uint8_t>& GetBuffer() const { return buffer_; }
+    IMPLEMENT_REFCOUNTING(MemoryWriteHandler);
+private:
+    std::vector<uint8_t> buffer_;
+};
 }
 
 namespace arkui_cef {
@@ -246,6 +265,52 @@ void ArkUICefRenderHandler::OnImeCompositionRangeChanged(
 
     if (imeCursorCallback_) {
         imeCursorCallback_(left, top, cursorWidth, cursorHeight);
+    }
+}
+
+bool ArkUICefRenderHandler::StartDragging(CefRefPtr<CefBrowser> browser,
+                                           CefRefPtr<CefDragData> drag_data,
+                                           DragOperationsMask allowed_ops,
+                                           int x, int y) {
+    if (!drag_data) {
+        return false;
+    }
+
+    std::string text = drag_data->GetFragmentText().ToString();
+    std::string html = drag_data->GetFragmentHtml().ToString();
+    std::string url = drag_data->GetLinkURL().ToString();
+    std::string urlTitle = drag_data->GetLinkTitle().ToString();
+
+    // Extract file contents if dragging a file (e.g. image drag from <img>)
+    std::string fileName = drag_data->GetFileName().ToString();
+    std::vector<uint8_t> fileData;
+    if (!fileName.empty()) {
+        size_t fileSize = drag_data->GetFileContents(nullptr);
+        if (fileSize > 0 && fileSize < 50 * 1024 * 1024) { // 50MB limit
+            CefRefPtr<MemoryWriteHandler> handler = new MemoryWriteHandler();
+            CefRefPtr<CefStreamWriter> writer = CefStreamWriter::CreateForHandler(handler);
+            drag_data->GetFileContents(writer);
+            fileData = handler->GetBuffer();
+        }
+    }
+
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
+        "StartDragging: text_len=%{public}zu, html_len=%{public}zu, url=%{public}s, fileName=%{public}s, fileData_size=%{public}zu, x=%{public}d, y=%{public}d",
+        text.size(), html.size(), url.c_str(), fileName.c_str(), fileData.size(), x, y);
+
+    if (startDragCallback_) {
+        startDragCallback_(text, html, url, urlTitle, fileName, fileData, x, y);
+        return true;
+    }
+    return false;
+}
+
+void ArkUICefRenderHandler::UpdateDragCursor(CefRefPtr<CefBrowser> browser,
+                                              DragOperation operation) {
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
+        "UpdateDragCursor: operation=%{public}d", static_cast<int>(operation));
+    if (updateDragCursorCallback_) {
+        updateDragCursorCallback_(static_cast<int>(operation));
     }
 }
 

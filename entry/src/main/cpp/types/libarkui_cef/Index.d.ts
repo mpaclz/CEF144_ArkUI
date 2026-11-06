@@ -29,7 +29,9 @@ export const createOsrCefView: (url: string, width: number, height: number,
                                  onVirtualKeyboard?: (show: boolean) => void,
                                  onTextSelection?: (selectedText: string) => void,
                                  onCursorChange?: (cursorType: number) => void,
-                                 onImeCursor?: (left: number, top: number, width: number, height: number) => void) => number;
+                                 onImeCursor?: (left: number, top: number, width: number, height: number) => void,
+                                  onStartDrag?: (text: string, html: string, url: string, urlTitle: string, fileName: string, fileData: ArrayBuffer, x: number, y: number) => void,
+                                 onUpdateDragCursor?: (operation: number) => void) => number;
 export const destroyOsrCefView: (browserId: number) => void;
 export const cefOsrResize: (browserId: number, width: number, height: number) => void;
 export const cefOsrSetScale: (browserId: number, scaleFactor: number) => void;
@@ -58,3 +60,9 @@ export const cefImeCAttach: (
 ) => boolean;
 export const cefImeCUpdateCursor: (left: number, top: number, width: number, height: number) => boolean;
 export const cefImeCDetach: () => void;
+export const cefDragTargetDragEnter: (browserId: number, text: string, html: string, url: string, filePaths: string, x: number, y: number, allowedOps: number) => void;
+export const cefDragTargetDragOver: (browserId: number, x: number, y: number, allowedOps: number) => void;
+export const cefDragTargetDragLeave: (browserId: number) => void;
+export const cefDragTargetDrop: (browserId: number, x: number, y: number) => void;
+export const cefDragSourceEndedAt: (browserId: number, x: number, y: number, op: number) => void;
+export const cefDragSourceSystemDragEnded: (browserId: number) => void;

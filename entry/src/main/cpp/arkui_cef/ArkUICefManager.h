@@ -92,7 +92,9 @@ public:
                              VirtualKeyboardCallback onVirtualKeyboard = nullptr,
                              TextSelectionCallback onTextSelection = nullptr,
                              CursorChangeCallback onCursorChange = nullptr,
-                             ImeCursorCallback onImeCursor = nullptr);
+                             ImeCursorCallback onImeCursor = nullptr,
+                             StartDragCallback onStartDrag = nullptr,
+                             UpdateDragCursorCallback onUpdateDragCursor = nullptr);
     
     /**
      * @brief 销毁指定浏览器
@@ -180,6 +182,7 @@ private:
     std::unordered_map<int64_t, CefRefPtr<ArkUICefBrowser>> browsers_; ///< 浏览器注册表
     
     bool initOk_ = false;                                        ///< CEF 是否已初始化完成
+    bool shuttingDown_ = false;                                  ///< 是否正在关闭整个 CEF（stop 已调用）
 
     std::unordered_map<int, std::function<void(const std::string&)>> popupTitleCallbacks_; ///< cefBrowserId → 标题回调
     std::function<void(int)> popupBrowserCreatedCallback_;                                ///< 弹窗浏览器创建回调

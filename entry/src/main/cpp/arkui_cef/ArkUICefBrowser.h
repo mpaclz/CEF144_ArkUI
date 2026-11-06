@@ -180,6 +180,15 @@ public:
     void imeCommitText(const std::string& text);
     void imeCancelComposition();
 
+    void dragTargetDragEnter(const std::string& text, const std::string& html,
+                             const std::string& url, const std::string& filePaths,
+                             int x, int y, int allowedOps);
+    void dragTargetDragOver(int x, int y, int allowedOps);
+    void dragTargetDragLeave();
+    void dragTargetDrop(int x, int y);
+    void dragSourceEndedAt(int x, int y, int op);
+    void dragSourceSystemDragEnded();
+
     /**
      * @brief 获取浏览器唯一 ID
      * @return 浏览器 ID

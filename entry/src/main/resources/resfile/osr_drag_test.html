@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OSR 拖放测试</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; background: #f5f5f5; padding: 12px; color: #333; }
+h1 { text-align: center; font-size: 18px; margin-bottom: 10px; }
+h2 { font-size: 14px; color: #444; margin: 0 0 6px; border-bottom: 2px solid #ccc; padding-bottom: 3px; }
+.section { background: white; border-radius: 8px; padding: 12px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+.desc { font-size: 12px; color: #666; margin-bottom: 8px; }
+.steps { font-size: 12px; color: #555; margin: 6px 0; padding-left: 18px; line-height: 1.7; }
+.steps li { margin-bottom: 2px; }
+.expect { font-size: 11px; color: #e91e63; font-weight: bold; margin-top: 6px; line-height: 1.6; padding: 4px 8px; background: #fff0f5; border-radius: 4px; }
+.note { font-size: 11px; color: #888; margin-top: 4px; line-height: 1.5; }
+
+/* Draggable items */
+.drag-item {
+  display: inline-block; padding: 8px 14px; margin: 2px; border-radius: 4px;
+  font-size: 13px; cursor: grab; user-select: none; -webkit-user-drag: element;
+  transition: opacity 0.15s;
+}
+.drag-item:active { opacity: 0.6; }
+.drag-text { background: #e3f2fd; border: 1px solid #2196f3; color: #1565c0; }
+.drag-link { background: #e8f5e9; border: 1px solid #4caf50; color: #2e7d32; text-decoration: underline; }
+.drag-html  { background: #fff3e0; border: 1px solid #ff9800; color: #e65100; }
+
+/* Drop zones */
+.drop-zone {
+  border: 2px dashed #bbb; border-radius: 8px; padding: 10px; margin-top: 8px; min-height: 56px;
+}
+.drop-zone-label { font-size: 11px; color: #999; text-align: center; }
+.drop-result {
+  padding: 6px 8px; border-radius: 4px; background: #e8f5e9; font-size: 12px;
+  border: 1px solid #4caf50; margin-top: 4px; word-break: break-all;
+}
+
+/* Input fields */
+input[type="text"], textarea {
+  width: 100%; padding: 8px; font-size: 13px; border: 2px solid #ddd; border-radius: 4px; margin-top: 6px;
+}
+input:focus, textarea:focus { border-color: #2196f3; outline: none; }
+
+/* Log */
+#logArea {
+  background: #1e1e1e; color: #4caf50; font-family: "Consolas", monospace; font-size: 11px;
+  padding: 8px; border-radius: 4px; min-height: 80px; max-height: 180px; overflow-y: auto; white-space: pre-wrap;
+}
+#statusBar { position: fixed; bottom: 0; left: 0; right: 0; background: #333; color: #0f0; font-family: monospace; font-size: 10px; padding: 3px 8px; z-index: 999; }
+</style>
+</head>
+<body>
+
+<h1>OSR 拖放测试页 Drag &amp; Drop Test</h1>
+
+<!-- ========== Section 1: 文字拖放 ========== -->
+<div class="section">
+<h2>1. 文字拖放 Text Drag &amp; Drop</h2>
+<p class="desc">拖拽蓝色文字块到下方虚线框释放。测试文字类型数据的拖拽源→目标全链路。</p>
+
+<div>
+  <span class="drag-item drag-text" draggable="true">Hello World</span>
+  <span class="drag-item drag-text" draggable="true">你好世界</span>
+</div>
+<div class="drop-zone" id="dz1">
+  <div class="drop-zone-label">拖放文字到此处 Drop text here</div>
+</div>
+
+<ol class="steps">
+  <li>长按（触摸）或左键按住（鼠标）上方蓝色文字块</li>
+  <li>拖动到虚线框内</li>
+  <li>在虚线框内松手释放</li>
+</ol>
+<div class="expect">预期：虚线框内出现绿色结果条，显示 "Text: 你好世界"。</div>
+</div>
+
+<!-- ========== Section 2: 链接拖放 ========== -->
+<div class="section">
+<h2>2. 链接拖放 Link Drag &amp; Drop</h2>
+<p class="desc">拖拽绿色链接到下方虚线框释放。测试链接（URL）类型数据的拖放。</p>
+
+<div>
+  <a href="https://example.com" class="drag-item drag-link" draggable="true">example.com</a>
+  <a href="https://bing.com" class="drag-item drag-link" draggable="true">bing.com</a>
+</div>
+<div class="drop-zone" id="dz2">
+  <div class="drop-zone-label">拖放链接到此处 Drop link here</div>
+</div>
+
+<ol class="steps">
+  <li>长按上方绿色链接文字</li>
+  <li>拖动到虚线框内</li>
+  <li>在虚线框内松手释放</li>
+</ol>
+<div class="expect">预期：绿色结果条显示 "URL: https://example.com"。</div>
+</div>
+
+<!-- ========== Section 3: 拖放到输入框 ========== -->
+<div class="section">
+<h2>3. 拖放到输入框 Drop to Input</h2>
+<p class="desc">拖拽蓝色文字到输入框中释放。测试向 editable 元素拖放。</p>
+
+<div>
+  <span class="drag-item drag-text" draggable="true">填入输入框的文字</span>
+</div>
+<input type="text" id="inp3" placeholder="拖放文字到此输入框 Drop text here..." />
+<textarea id="ta3" placeholder="多行输入框，也可拖放文字 Textarea..." rows="2"></textarea>
+
+<ol class="steps">
+  <li>长按上方蓝色文字块</li>
+  <li>拖动到输入框或多行输入框内</li>
+  <li>在输入框内松手释放</li>
+</ol>
+<div class="expect">预期：输入框中填入拖放的文字内容。</div>
+</div>
+
+<!-- ========== Section 4: HTML 片段拖放 ========== -->
+<div class="section">
+<h2>4. HTML 片段拖放 HTML Fragment Drag</h2>
+<p class="desc">拖拽橙色块到虚线框释放。拖拽数据包含 HTML 格式，验证 HTML 类型数据传输。</p>
+
+<div>
+  <span class="drag-item drag-html" draggable="true" data-html="&lt;h3 style='color:red'&gt;红色标题&lt;/h3&gt;&lt;p&gt;带格式段落&lt;/p&gt;">带格式的HTML片段</span>
+</div>
+<div class="drop-zone" id="dz4">
+  <div class="drop-zone-label">拖放 HTML 到此处 Drop HTML here</div>
+</div>
+
+<ol class="steps">
+  <li>长按上方橙色文字块</li>
+  <li>拖动到虚线框内</li>
+  <li>在虚线框内松手释放</li>
+</ol>
+<div class="expect">预期：绿色结果条显示文字内容。</div>
+</div>
+
+<!-- ========== Section 5: 拖出到系统 ========== -->
+<div class="section">
+<h2>5. 拖出到系统 Drag Out to System</h2>
+<p class="desc">从网页拖拽文字到本应用外的目标（如另一 App 的输入框）。仅测试拖拽源。</p>
+
+<div>
+  <span class="drag-item drag-text" draggable="true">拖我到系统输入框</span>
+  <span class="drag-item drag-text" draggable="true">Drag me outside</span>
+</div>
+
+<ol class="steps">
+  <li>长按上方蓝色文字块开始拖拽</li>
+  <li>拖出到本应用外（如系统浏览器的地址栏、备忘录的输入框）</li>
+  <li>在外部目标处松手释放</li>
+</ol>
+<div class="expect">预期：系统拖拽预览出现并跟随手指/鼠标。在外部输入框释放后，文字被粘贴到外部目标中。</div>
+<div class="note">注意：需要分屏或悬浮窗模式才能跨应用拖放。</div>
+</div>
+
+<!-- ========== Section 6: 外部拖入 ========== -->
+<div class="section">
+<h2>6. 外部拖入 Drop from External</h2>
+<p class="desc">从其他 App 选中文字，拖到本页虚线框释放。仅测试拖放目标。</p>
+
+<div class="drop-zone" id="dz6">
+  <div class="drop-zone-label">从外部 App 拖放到此处 Drop from external app</div>
+</div>
+
+<ol class="steps">
+  <li>切换到其他 App（如系统浏览器），选中一段文字</li>
+  <li>长按选中的文字开始拖拽</li>
+  <li>拖回到本应用的本节虚线框内</li>
+  <li>在虚线框内松手释放</li>
+</ol>
+<div class="expect">预期：外部文字出现在绿色结果条中。</div>
+<div class="note">注意：需要分屏或悬浮窗模式。触摸屏可能需要系统支持跨应用拖拽。</div>
+</div>
+
+<!-- ========== Section 7: 图片拖放 ========== -->
+<div class="section">
+<h2>7. 图片拖放 Image Drag &amp; Drop</h2>
+<p class="desc">拖拽下方图片到外部应用（文件管理器、图片查看器）或拖回本页虚线框。测试图片文件拖出与拖入。</p>
+
+<canvas id="dragImgCanvas" width="80" height="80" style="display:none;"></canvas>
+<div>
+  <img id="dragImg" draggable="true" style="width:80px;height:80px;border:1px solid #2196f3;border-radius:4px;vertical-align:middle;cursor:grab;" alt="测试图片">
+</div>
+<div class="drop-zone" id="dz7">
+  <div class="drop-zone-label">拖放图片到此处 Drop image here</div>
+</div>
+
+<ol class="steps">
+  <li>长按上方图片开始拖拽</li>
+  <li>拖到虚线框内释放（测试自拖拽），或拖到外部应用释放（测试拖出到系统）</li>
+</ol>
+<div class="expect">预期：拖到虚线框显示文件名；拖到文件管理器可保存图片文件。</div>
+<div class="note">注意：拖出到系统需要分屏或悬浮窗模式。</div>
+</div>
+
+<!-- ========== Section 8: 文件拖入 ========== -->
+<div class="section">
+<h2>8. 文件拖入 File Drag In</h2>
+<p class="desc">从文件管理器拖拽文件到下方虚线框。测试从系统接收文件类型的拖放。</p>
+
+<div class="drop-zone" id="dz8">
+  <div class="drop-zone-label">从文件管理器拖放文件到此处 Drop files here</div>
+</div>
+
+<ol class="steps">
+  <li>打开文件管理器，选中一个文件（图片、文本等）</li>
+  <li>长按文件开始拖拽</li>
+  <li>拖到本节虚线框内释放</li>
+</ol>
+<div class="expect">预期：虚线框内显示文件名和大小。</div>
+<div class="note">注意：需要分屏或悬浮窗模式才能跨应用拖放。</div>
+</div>
+
+<!-- ========== Section 9: 事件日志 ========== -->
+<div class="section">
+<h2>9. 事件日志 Event Log</h2>
+<p class="desc">所有拖放事件记录在此，用于排查问题。</p>
+<div id="logArea">页面已加载 Page loaded</div>
+</div>
+
+<div id="statusBar">Status: Ready</div>
+
+<script>
+var logArea = document.getElementById('logArea');
+var statusBar = document.getElementById('statusBar');
+
+function log(msg) {
+  var t = new Date().toLocaleTimeString();
+  logArea.innerHTML = '[' + t + '] ' + msg + '\n' + logArea.innerHTML;
+  if (logArea.innerHTML.length > 5000) logArea.innerHTML = logArea.innerHTML.substring(0, 5000);
+  statusBar.innerText = 'Status: ' + msg;
+}
+
+// --- Drag Source: all .drag-item elements ---
+document.querySelectorAll('.drag-item').forEach(function(el) {
+  el.addEventListener('dragstart', function(e) {
+    var data = el.textContent || el.innerText;
+    if (el.tagName === 'A') {
+      // Match Chromium's default link-drag behavior: text/plain carries the URL,
+      // so external text targets paste the URL instead of the link text.
+      e.dataTransfer.setData('text/plain', el.href);
+      e.dataTransfer.setData('text/uri-list', el.href);
+    } else {
+      e.dataTransfer.setData('text/plain', data);
+    }
+    e.dataTransfer.setData('text/html', '<b>' + data + '</b>');
+    var customHtml = el.getAttribute('data-html');
+    if (customHtml) {
+      e.dataTransfer.setData('text/html', customHtml);
+    }
+    e.dataTransfer.effectAllowed = 'copyMove';
+    log('dragstart: "' + data.substring(0, 30) + '"');
+  });
+  el.addEventListener('dragend', function(e) {
+    log('dragend: dropEffect=' + e.dataTransfer.dropEffect);
+  });
+});
+
+// --- Drop Target helper ---
+function setupDropZone(zone, id) {
+  zone.addEventListener('dragenter', function(e) {
+    e.preventDefault();
+  });
+  zone.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  zone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    var text = e.dataTransfer.getData('text/plain');
+    var html = e.dataTransfer.getData('text/html');
+    var url = e.dataTransfer.getData('text/uri-list');
+
+    var old = zone.querySelector('.drop-result');
+    if (old) old.remove();
+
+    var d = document.createElement('div');
+    d.className = 'drop-result';
+    var c = '';
+    if (url) c += 'URL: ' + url + '<br>';
+    if (text) c += 'Text: ' + text;
+    if (html && !text) c += 'HTML: ' + html;
+    if (!c) c = '(empty)';
+    d.innerHTML = c;
+    zone.appendChild(d);
+
+    log(id + ' drop: text="' + (text||'').substring(0,30) + '" url="' + url + '"');
+  });
+}
+
+setupDropZone(document.getElementById('dz1'), 'S1');
+setupDropZone(document.getElementById('dz2'), 'S2');
+setupDropZone(document.getElementById('dz4'), 'S4');
+setupDropZone(document.getElementById('dz6'), 'S6');
+
+// --- File/Image drop zone helper (also reads dataTransfer.files) ---
+function setupFileDropZone(zone, id) {
+  zone.addEventListener('dragenter', function(e) { e.preventDefault(); });
+  zone.addEventListener('dragover', function(e) { e.preventDefault(); });
+  zone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    var files = e.dataTransfer.files;
+    var text = e.dataTransfer.getData('text/plain');
+    var url = e.dataTransfer.getData('text/uri-list');
+
+    var old = zone.querySelector('.drop-result');
+    if (old) old.remove();
+
+    var d = document.createElement('div');
+    d.className = 'drop-result';
+    var c = '';
+    if (files && files.length > 0) {
+      for (var i = 0; i < files.length; i++) {
+        c += 'File: ' + files[i].name + ' (' + files[i].size + ' bytes, ' + (files[i].type||'unknown') + ')<br>';
+      }
+    }
+    if (url) c += 'URL: ' + url + '<br>';
+    if (text) c += 'Text: ' + text;
+    if (!c) c = '(empty)';
+    d.innerHTML = c;
+    zone.appendChild(d);
+
+    log(id + ' drop: files=' + (files ? files.length : 0) + ', text="' + (text||'').substring(0,30) + '"');
+  });
+}
+
+setupFileDropZone(document.getElementById('dz7'), 'S7');
+setupFileDropZone(document.getElementById('dz8'), 'S8');
+
+// --- Section 7: Generate test image on canvas ---
+(function() {
+  var canvas = document.getElementById('dragImgCanvas');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#2196f3';
+  ctx.fillRect(0, 0, 80, 80);
+  ctx.fillStyle = 'white';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('IMG', 40, 48);
+  var img = document.getElementById('dragImg');
+  if (img) img.src = canvas.toDataURL('image/png');
+})();
+
+// Section 3: input field drop
+var inp3 = document.getElementById('inp3');
+inp3.addEventListener('drop', function(e) {
+  e.preventDefault();
+  var t = e.dataTransfer.getData('text/plain');
+  if (t) { inp3.value = t; log('S3 input drop: "' + t.substring(0,30) + '"'); }
+});
+inp3.addEventListener('dragover', function(e) { e.preventDefault(); });
+
+var ta3 = document.getElementById('ta3');
+ta3.addEventListener('drop', function(e) {
+  e.preventDefault();
+  var t = e.dataTransfer.getData('text/plain');
+  if (t) { ta3.value = t; log('S3 textarea drop: "' + t.substring(0,30) + '"'); }
+});
+ta3.addEventListener('dragover', function(e) { e.preventDefault(); });
+
+log('页面已加载 Page loaded');
+</script>
+</body>
+</html>

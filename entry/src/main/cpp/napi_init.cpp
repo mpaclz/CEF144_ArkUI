@@ -369,6 +369,90 @@ struct OsrPaintCallbackHolder {
     explicit OsrPaintCallbackHolder(std::shared_ptr<OsrPaintTsfn> t) : tsfn(std::move(t)) {}
 };
 
+struct OsrStartDragData {
+    std::string text;
+    std::string html;
+    std::string url;
+    std::string urlTitle;
+    std::string fileName;
+    std::vector<uint8_t> fileData;
+    int x;
+    int y;
+};
+
+struct OsrStartDragTsfn {
+    napi_threadsafe_function tsfn = nullptr;
+
+    ~OsrStartDragTsfn() { Release(); }
+
+    bool Init(napi_env env, napi_value jsFunction, const char* resourceName) {
+        if (!env || !jsFunction) return false;
+        napi_valuetype type;
+        napi_status status = napi_typeof(env, jsFunction, &type);
+        if (status != napi_ok || type != napi_function) return false;
+        napi_value resource;
+        status = napi_create_string_utf8(env, resourceName, NAPI_AUTO_LENGTH, &resource);
+        if (status != napi_ok) return false;
+        status = napi_create_threadsafe_function(
+            env, jsFunction, nullptr, resource,
+            0, 1, nullptr, nullptr, this,
+            &OsrStartDragTsfn::CallJs, &tsfn);
+        return status == napi_ok && tsfn != nullptr;
+    }
+
+    void Call(const std::string& text, const std::string& html,
+              const std::string& url, const std::string& urlTitle,
+              const std::string& fileName, const std::vector<uint8_t>& fileData,
+              int x, int y) {
+        if (!tsfn) return;
+        auto* data = new OsrStartDragData{text, html, url, urlTitle, fileName, fileData, x, y};
+        napi_status status = napi_call_threadsafe_function(tsfn, data, napi_tsfn_nonblocking);
+        if (status != napi_ok) {
+            delete data;
+        }
+    }
+
+    void Release() {
+        if (tsfn) {
+            napi_release_threadsafe_function(tsfn, napi_tsfn_release);
+            tsfn = nullptr;
+        }
+    }
+
+    static void CallJs(napi_env env, napi_value jsCallback, void* context, void* data) {
+        auto* dragData = static_cast<OsrStartDragData*>(data);
+        if (!dragData) return;
+        if (!env || !jsCallback) {
+            delete dragData;
+            return;
+        }
+
+        napi_value text, html, url, urlTitle, fileName, fileDataAb, xVal, yVal;
+        napi_create_string_utf8(env, dragData->text.c_str(), NAPI_AUTO_LENGTH, &text);
+        napi_create_string_utf8(env, dragData->html.c_str(), NAPI_AUTO_LENGTH, &html);
+        napi_create_string_utf8(env, dragData->url.c_str(), NAPI_AUTO_LENGTH, &url);
+        napi_create_string_utf8(env, dragData->urlTitle.c_str(), NAPI_AUTO_LENGTH, &urlTitle);
+        napi_create_string_utf8(env, dragData->fileName.c_str(), NAPI_AUTO_LENGTH, &fileName);
+
+        void* bufferData = nullptr;
+        napi_create_arraybuffer(env, dragData->fileData.size(), &bufferData, &fileDataAb);
+        if (!dragData->fileData.empty()) {
+            memcpy(bufferData, dragData->fileData.data(), dragData->fileData.size());
+        }
+
+        napi_create_int32(env, dragData->x, &xVal);
+        napi_create_int32(env, dragData->y, &yVal);
+
+        napi_value argv[8] = { text, html, url, urlTitle, fileName, fileDataAb, xVal, yVal };
+        napi_value global;
+        napi_get_global(env, &global);
+        napi_value result;
+        napi_call_function(env, global, jsCallback, 8, argv, &result);
+
+        delete dragData;
+    }
+};
+
 Node* createParentNode() {
     ArkUI_NativeNodeAPI_1* api = reinterpret_cast<ArkUI_NativeNodeAPI_1*>(
         OH_ArkUI_QueryModuleInterfaceByName(ARKUI_NATIVE_NODE, "ArkUI_NativeNodeAPI_1"));
@@ -795,15 +879,15 @@ static napi_value NAPI_Global_hasCef(napi_env env, napi_callback_info info) {
 static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info info) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "createOsrCefView called");
 
-    size_t argc = 12;
-    napi_value args[12];
+    size_t argc = 14;
+    napi_value args[14];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
     if (argc < 7) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-            "createOsrCefView: expected 7-12 arguments, got %{public}zu", argc);
+            "createOsrCefView: expected 7-14 arguments, got %{public}zu", argc);
         napi_throw_error(env, nullptr,
-            "Expected 7-12 arguments: url, width, height, onPaint, onCreated, onTitleChange, onFocusTake [, onScrollOffset, onVirtualKeyboard, onTextSelection, onCursorChange, onImeCursor]");
+            "Expected 7-14 arguments: url, width, height, onPaint, onCreated, onTitleChange, onFocusTake [, onScrollOffset, onVirtualKeyboard, onTextSelection, onCursorChange, onImeCursor, onStartDrag, onUpdateDragCursor]");
         return nullptr;
     }
 
@@ -922,6 +1006,38 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
         }
     }
 
+    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, const std::string&, const std::vector<uint8_t>&, int, int)> startDragCb;
+    if (argc >= 13) {
+        napi_valuetype vt;
+        napi_typeof(env, args[12], &vt);
+        if (vt == napi_function) {
+            auto startDragTsfn = std::make_shared<OsrStartDragTsfn>();
+            if (startDragTsfn->Init(env, args[12], "OsrStartDragCallback")) {
+                startDragCb = [startDragTsfn](const std::string& text, const std::string& html,
+                                               const std::string& url, const std::string& urlTitle,
+                                               const std::string& fileName, const std::vector<uint8_t>& fileData,
+                                               int x, int y) {
+                    startDragTsfn->Call(text, html, url, urlTitle, fileName, fileData, x, y);
+                };
+            }
+        }
+    }
+
+    std::function<void(int)> updateDragCursorCb;
+    if (argc >= 14) {
+        napi_valuetype vt;
+        napi_typeof(env, args[13], &vt);
+        if (vt == napi_function) {
+            auto jsUpdateDragCursorCb = makeJsThreadSafeCallback<int32_t>(
+                env, args[13], "OsrUpdateDragCursorCallback");
+            if (jsUpdateDragCursorCb) {
+                updateDragCursorCb = [jsUpdateDragCursorCb](int operation) {
+                    jsUpdateDragCursorCb->Call(static_cast<int32_t>(operation));
+                };
+            }
+        }
+    }
+
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
         "createOsrCefView: width=%{public}d, height=%{public}d", width, height);
 
@@ -947,7 +1063,9 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
         virtualKeyboardCb,
         textSelectionCb,
         cursorChangeCb,
-        imeCursorCb);
+        imeCursorCb,
+        startDragCb,
+        updateDragCursorCb);
 
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
         "createOsrCefView: browserId=%{public}ld", browserId);
@@ -1570,6 +1688,178 @@ static napi_value NAPI_Global_cefImeCDetach(napi_env env, napi_callback_info inf
     return nullptr;
 }
 
+static napi_value NAPI_Global_cefDragTargetDragEnter(napi_env env, napi_callback_info info) {
+    size_t argc = 8;
+    napi_value args[8] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 8) {
+        napi_throw_error(env, nullptr,
+            "Expected 8 arguments: browserId, text, html, url, filePaths, x, y, allowedOps");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    char text[4096] = {};
+    size_t len;
+    napi_get_value_string_utf8(env, args[1], text, sizeof(text), &len);
+
+    char html[16384] = {};
+    napi_get_value_string_utf8(env, args[2], html, sizeof(html), &len);
+
+    char url[2048] = {};
+    napi_get_value_string_utf8(env, args[3], url, sizeof(url), &len);
+
+    char filePaths[8192] = {};
+    napi_get_value_string_utf8(env, args[4], filePaths, sizeof(filePaths), &len);
+
+    int32_t x = 0, y = 0, allowedOps = 0;
+    napi_get_value_int32(env, args[5], &x);
+    napi_get_value_int32(env, args[6], &y);
+    napi_get_value_int32(env, args[7], &allowedOps);
+
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+        "cefDragTargetDragEnter: browserId=%{public}ld, x=%{public}d, y=%{public}d, ops=%{public}d",
+        browserId, x, y, allowedOps);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::dragTargetDragEnter, browser,
+                           std::string(text), std::string(html), std::string(url),
+                           std::string(filePaths), x, y, allowedOps)));
+    }
+    return nullptr;
+}
+
+static napi_value NAPI_Global_cefDragTargetDragOver(napi_env env, napi_callback_info info) {
+    size_t argc = 4;
+    napi_value args[4] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 4) {
+        napi_throw_error(env, nullptr, "Expected 4 arguments: browserId, x, y, allowedOps");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    int32_t x = 0, y = 0, allowedOps = 0;
+    napi_get_value_int32(env, args[1], &x);
+    napi_get_value_int32(env, args[2], &y);
+    napi_get_value_int32(env, args[3], &allowedOps);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::dragTargetDragOver, browser, x, y, allowedOps)));
+    }
+    return nullptr;
+}
+
+static napi_value NAPI_Global_cefDragTargetDragLeave(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "Expected 1 argument: browserId");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::dragTargetDragLeave, browser)));
+    }
+    return nullptr;
+}
+
+static napi_value NAPI_Global_cefDragTargetDrop(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 3) {
+        napi_throw_error(env, nullptr, "Expected 3 arguments: browserId, x, y");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    int32_t x = 0, y = 0;
+    napi_get_value_int32(env, args[1], &x);
+    napi_get_value_int32(env, args[2], &y);
+
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+        "cefDragTargetDrop: browserId=%{public}ld, x=%{public}d, y=%{public}d", browserId, x, y);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::dragTargetDrop, browser, x, y)));
+    }
+    return nullptr;
+}
+
+static napi_value NAPI_Global_cefDragSourceEndedAt(napi_env env, napi_callback_info info) {
+    size_t argc = 4;
+    napi_value args[4] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 4) {
+        napi_throw_error(env, nullptr, "Expected 4 arguments: browserId, x, y, op");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    int32_t x = 0, y = 0, op = 0;
+    napi_get_value_int32(env, args[1], &x);
+    napi_get_value_int32(env, args[2], &y);
+    napi_get_value_int32(env, args[3], &op);
+
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+        "cefDragSourceEndedAt: browserId=%{public}ld, x=%{public}d, y=%{public}d, op=%{public}d",
+        browserId, x, y, op);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::dragSourceEndedAt, browser, x, y, op)));
+    }
+    return nullptr;
+}
+
+static napi_value NAPI_Global_cefDragSourceSystemDragEnded(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "Expected 1 argument: browserId");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::dragSourceSystemDragEnded, browser)));
+    }
+    return nullptr;
+}
+
 EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "Init called");
@@ -1612,6 +1902,12 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"cefImeCAttach", nullptr, NAPI_Global_cefImeCAttach, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefImeCUpdateCursor", nullptr, NAPI_Global_cefImeCUpdateCursor, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefImeCDetach", nullptr, NAPI_Global_cefImeCDetach, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefDragTargetDragEnter", nullptr, NAPI_Global_cefDragTargetDragEnter, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefDragTargetDragOver", nullptr, NAPI_Global_cefDragTargetDragOver, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefDragTargetDragLeave", nullptr, NAPI_Global_cefDragTargetDragLeave, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefDragTargetDrop", nullptr, NAPI_Global_cefDragTargetDrop, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefDragSourceEndedAt", nullptr, NAPI_Global_cefDragSourceEndedAt, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefDragSourceSystemDragEnded", nullptr, NAPI_Global_cefDragSourceSystemDragEnded, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     

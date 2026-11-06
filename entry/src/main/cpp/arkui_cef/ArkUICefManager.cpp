@@ -8,6 +8,8 @@
 
 #include <hilog/log.h>
 
+#include <vector>
+
 #include "ArkUICefApp.h"
 #include "ArkUICefBrowser.h"
 #include "ArkUICefClient.h"
@@ -28,6 +30,10 @@ void closeBrowser(CefRefPtr<ArkUICefBrowser> browser) {
     if (browser) {
         browser->close();
     }
+}
+
+void quitMessageLoop() {
+    CefQuitMessageLoop();
 }
 }
 
@@ -50,16 +56,51 @@ void ArkUICefManager::start() {
 }
 
 void ArkUICefManager::stop() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    initOk_ = false;
-    
-    std::unordered_map<int64_t, CefRefPtr<ArkUICefBrowser>> browsersToClose;
-    browsersToClose = browsers_;
-    
-    for (auto& [id, browser] : browsersToClose) {
+    // Snapshot the browser list and release the lock BEFORE posting close
+    // tasks and joining the CEF thread.
+    //
+    // The previous implementation held mutex_ across join(). The close chain
+    // OnBeforeClose -> onBrowserDestroyed runs ON the CEF UI thread and also
+    // acquires mutex_, so join() deadlocked with the very thread it waited
+    // for (main thread holds mutex_ waiting for CEF thread to exit; CEF
+    // thread waits for mutex_ inside onBrowserDestroyed).
+    std::vector<CefRefPtr<ArkUICefBrowser>> browsersToClose;
+    bool wasRunning = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        wasRunning = initOk_;
+        initOk_ = false;
+        shuttingDown_ = true;
+        browsersToClose.reserve(browsers_.size());
+        for (auto& [id, browser] : browsers_) {
+            browsersToClose.push_back(browser);
+        }
+    }
+
+    if (!wasRunning) {
+        // CEF never initialized or already stopped: the thread either exited
+        // early (CefThreadMain returns before CefRunMessageLoop) or was never
+        // started. Nothing to close, nothing to quit.
+        if (cefThread_.joinable()) {
+            cefThread_.join();
+        }
+        return;
+    }
+
+    for (auto& browser : browsersToClose) {
         CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&closeBrowser, browser)));
     }
-    
+
+    // No browsers alive: no OnBeforeClose will ever fire, so nobody would
+    // call CefQuitMessageLoop — quit the loop directly via a posted task.
+    if (browsersToClose.empty()) {
+        CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&quitMessageLoop)));
+    }
+
+    // CEF thread exits when: all browsers closed (last OnBeforeClose ->
+    // onBrowserDestroyed sees shuttingDown_ && empty map -> CefQuitMessageLoop)
+    // or the direct quit task above ran. CefRunMessageLoop() then returns,
+    // CefThreadMain proceeds to CefShutdown, and join() unblocks.
     if (cefThread_.joinable()) {
         cefThread_.join();
     }
@@ -99,7 +140,9 @@ int64_t ArkUICefManager::createOsrBrowser(const std::string& url, int width, int
                                           VirtualKeyboardCallback onVirtualKeyboard,
                                           TextSelectionCallback onTextSelection,
                                           CursorChangeCallback onCursorChange,
-                                          ImeCursorCallback onImeCursor) {
+                                          ImeCursorCallback onImeCursor,
+                                          StartDragCallback onStartDrag,
+                                          UpdateDragCursorCallback onUpdateDragCursor) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initOk_) {
         return -1;
@@ -118,6 +161,8 @@ int64_t ArkUICefManager::createOsrBrowser(const std::string& url, int width, int
     if (onVirtualKeyboard) renderHandler->SetVirtualKeyboardCallback(onVirtualKeyboard);
     if (onTextSelection) renderHandler->SetTextSelectionCallback(onTextSelection);
     if (onImeCursor) renderHandler->SetImeCursorCallback(onImeCursor);
+    if (onStartDrag) renderHandler->SetStartDragCallback(onStartDrag);
+    if (onUpdateDragCursor) renderHandler->SetUpdateDragCursorCallback(onUpdateDragCursor);
     if (onCursorChange) browser->SetCursorChangeCallback(onCursorChange);
 
     CefRefPtr<ArkUICefClient> client = new ArkUICefClient(id, browser, this);
@@ -169,8 +214,19 @@ void ArkUICefManager::onBrowserCreated(CefRefPtr<ArkUICefBrowser> browser) {
 }
 
 void ArkUICefManager::onBrowserDestroyed(CefRefPtr<ArkUICefBrowser> browser) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    browsers_.erase(browser->getId());
+    bool shouldQuit = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        browsers_.erase(browser->getId());
+        // Quit the message loop only during a full shutdown (stop() requested)
+        // AND only after the LAST browser closed. This callback runs on the
+        // CEF UI thread (from OnBeforeClose), which is the thread
+        // CefQuitMessageLoop must be called on.
+        shouldQuit = shuttingDown_ && browsers_.empty();
+    }
+    if (shouldQuit) {
+        CefQuitMessageLoop();
+    }
 }
 
 void ArkUICefManager::RegisterPopupTitleCallback(int cefBrowserId, std::function<void(const std::string&)> callback) {

@@ -2,11 +2,20 @@ import arkui_cef from 'libarkui_cef.so';
 import { image } from '@kit.ImageKit';
 import { hilog } from "@kit.PerformanceAnalysisKit";
 import { pointer } from '@kit.InputKit';
-import { window } from "@kit.ArkUI";
+import { window, dragController } from "@kit.ArkUI";
 import { common } from '@kit.AbilityKit';
+import { unifiedDataChannel, uniformTypeDescriptor } from '@kit.ArkData';
+import { fileIo, fileUri } from '@kit.CoreFileKit';
 
 const DOMAIN = 0xFF01;
 const MODULE = 'OsrCefView'
+
+interface DragDataInfo {
+  text: string;
+  html: string;
+  url: string;
+  filePaths: string;
+}
 
 @Component
 export struct OsrCefView {
@@ -18,13 +27,32 @@ export struct OsrCefView {
   // Track if a PixelMap creation is in progress to avoid flooding the main thread
   private pixelMapCreating: boolean = false;
   // Track mouse button state for drag operations (scrollbar drag, text selection, etc.)
+  // Tracks the LEFT button only (the only one with drag semantics).
   private mouseButtonPressed: boolean = false;
   private lastMouseX: number = 0;
   private lastMouseY: number = 0;
-  // Track if mouse button was pressed via single-touch simulation
-  private touchMouseSimulated: boolean = false;
-  // Pinch gesture tracking for touchpad zoom
+  // Double/triple-click tracking — ArkUI MouseEvent has no clickCount, but CEF
+  // requires it in the mouse event for dblclick/triple-click recognition
+  // (word/paragraph text selection). Windows defaults: 500ms, 4px slop.
+  private lastClickTime: number = 0;
+  private lastClickX: number = -1;
+  private lastClickY: number = -1;
+  private clickCount: number = 0;
+  private static readonly DOUBLE_CLICK_TIME_MS: number = 500;
+  private static readonly DOUBLE_CLICK_SLOP_PX: number = 4;
+  // Touchpad pinch → page zoom (ctrl+wheel), like desktop Chrome's touchpad
+  // pinch on macOS/Windows. Touchscreen multi-touch is forwarded to CEF
+  // natively (see handleTouchEvent) — the renderer or the page itself
+  // (e.g. maps) handles it, so the two input types intentionally use
+  // different zoom engines (touchpad = page zoom with re-layout,
+  // touchscreen = viewport zoom / page-handled).
+  // Log-scale accumulation: Chromium's zoom presets are multiplicative, so a
+  // log mapping makes pinch-in / pinch-out round trips symmetric (the same
+  // ratio in and out emits exactly opposite step counts). One accumulated
+  // step (≈15% pinch change) emits one ctrl+wheel tick.
   private pinchLastScale: number = 1.0;
+  private pinchLogAccum: number = 0.0;
+  private static readonly PINCH_ZOOM_STEP_LOG: number = 0.14; // ≈ Math.log(1.15): one zoom step per ~15% pinch change
   // Input Method Framework (IMF) — using C API via NAPI for cursor updates.
   // ArkTS inputMethodController was replaced because its async updateCursor()
   // triggered a second internal OnCursorUpdate that caused candidate window jumps.
@@ -71,6 +99,29 @@ export struct OsrCefView {
   // True when IMF was detached due to component becoming invisible (tab switch).
   // Used to re-attach when the component becomes visible again.
   private imeDetachedByVisibility: boolean = false;
+  // Drag & drop state
+  // True while a system drag (initiated by dragController.executeDrag) is in progress.
+  private isDragInProgress: boolean = false;
+  // Last drag operation from CEF UpdateDragCursor callback.
+  // DRAG_OPERATION_NONE=0, COPY=1, LINK=2, MOVE=16
+  private lastDragOperation: number = 0;
+  // Last drag position (view-relative CSS px) from onDragMove/onDrop.
+  // Used by executeDrag callback for DragSourceEndedAt coordinates.
+  // Initialized to StartDragging position as fallback (for drags that end
+  // outside the component without any onDragMove/onDrop firing).
+  private lastDragMoveX: number = 0;
+  private lastDragMoveY: number = 0;
+  // Cached drag data from CEF StartDragging — used as fallback in onDrop
+  // when ArkUI DragEvent.getData() returns empty (e.g. self-drag edge cases).
+  private pendingDragText: string = '';
+  private pendingDragHtml: string = '';
+  private pendingDragUrl: string = '';
+  // Newline-separated file paths for self-drag file drop-back
+  private pendingDragFilePaths: string = '';
+  // True when cefDragTargetDragEnter has been called for the current drag session.
+  // If true, onDrop only needs to call DragOver + Drop (Enter already done).
+  // If false (external drag, getData() not available until onDrop), onDrop calls Enter + Over + Drop.
+  private dragEnterCalled: boolean = false;
 
   @State private viewWidth: number = 800;
   @State private viewHeight: number = 600;
@@ -78,6 +129,7 @@ export struct OsrCefView {
   @State private selectedText: string = '';
   @State private keyboardVisible: boolean = false;
   @State private cursorTypeText: string = 'default';
+  @State private dragPreviewText: string = '';
 
   @Prop viewUrl: string = '';
 
@@ -191,33 +243,60 @@ export struct OsrCefView {
       .onTouch((event: TouchEvent) => this.handleTouchEvent(event))
       .onMouse((event: MouseEvent) => this.handleMouseEvent(event))
       .onAxisEvent((event: AxisEvent) => this.handleAxisEvent(event))
+      .onHover((isHover: boolean, _event: HoverEvent) => {
+        // Fires for mouse/touchpad only (touch never triggers hover). When the
+        // pointer LEAVES the render area, notify CEF so the page clears its
+        // hover state (e.g. hovered links stop highlighting). Skip during an
+        // in-progress left-button drag or a system HTML5 drag — the press
+        // stream must continue.
+        if (!isHover && this.isCreated() && !this.mouseButtonPressed && !this.isDragInProgress) {
+          arkui_cef.cefSendMouseMove(this.browserId, this.lastMouseX, this.lastMouseY, true);
+        }
+      })
       .gesture(
         PinchGesture({ fingers: 2, distance: 0.1 })
           .onActionStart((event: GestureEvent) => {
-            // Skip touchscreen — its multi-touch is handled by onTouch → CEF touch events.
-            // Only handle non-touchscreen (touchpad/mouse) pinch for page zoom.
             if (event.source === SourceType.TouchScreen) {
+              // Touchscreen multi-touch is forwarded to CEF natively in
+              // handleTouchEvent — the renderer (or the page, e.g. maps)
+              // handles the pinch itself. Adding ctrl+wheel here would
+              // double-zoom.
               return;
             }
+            // Touchpad pinch → ctrl+wheel page zoom (25%-500% with re-layout),
+            // like desktop Chrome's touchpad pinch. Touchpad input never
+            // enters the touch stream, so this cannot conflict with
+            // page-handled multi-touch.
             this.pinchLastScale = event.scale;
+            this.pinchLogAccum = 0.0;
           })
           .onActionUpdate((event: GestureEvent) => {
             if (event.source === SourceType.TouchScreen) {
               return;
             }
-            let scaleDelta = event.scale - this.pinchLastScale;
-            if (Math.abs(scaleDelta) > 0.01) {
-              // Chromium: Ctrl + wheel deltaY > 0 = zoom in, < 0 = zoom out
-              // Fingers expand → scale > 1 → deltaY > 0 → zoom in
-              let deltaY = Math.round(scaleDelta * 300);
-              let x = Math.round(event.fingerList[0].localX);
-              let y = Math.round(event.fingerList[0].localY);
-              arkui_cef.cefSendMouseWheel(this.browserId, x, y, 0, deltaY, 0x04);
-              this.pinchLastScale = event.scale;
+            if (event.scale <= 0) {
+              return;
+            }
+            // Log-scale accumulation: zoom presets are multiplicative, so log
+            // mapping makes pinch-in / pinch-out round trips symmetric.
+            this.pinchLogAccum += Math.log(event.scale / this.pinchLastScale);
+            this.pinchLastScale = event.scale;
+            // Emit ONE ctrl+wheel zoom tick per accumulated ~15% change
+            // (Chromium zooms one preset step per wheel event).
+            while (Math.abs(this.pinchLogAccum) >= OsrCefView.PINCH_ZOOM_STEP_LOG) {
+              let deltaY = this.pinchLogAccum > 0 ? 120 : -120;
+              // Touchpad pinch is a mouse-category gesture (single fingerList
+              // record per docs); guard against an empty list as insurance.
+              let px = event.fingerList.length > 0 ? Math.round(event.fingerList[0].localX) : this.lastMouseX;
+              let py = event.fingerList.length > 0 ? Math.round(event.fingerList[0].localY) : this.lastMouseY;
+              arkui_cef.cefSendMouseWheel(this.browserId, px, py, 0, deltaY, 0x04);
+              let sign = this.pinchLogAccum > 0 ? 1 : -1;
+              this.pinchLogAccum -= sign * OsrCefView.PINCH_ZOOM_STEP_LOG;
             }
           })
           .onActionEnd(() => {
             this.pinchLastScale = 1.0;
+            this.pinchLogAccum = 0.0;
           })
       )
       .onAreaChange((_oldValue: Area, newValue: Area) => {
@@ -249,6 +328,97 @@ export struct OsrCefView {
           }
         }
       })
+      .onDragEnter((event: DragEvent) => {
+        if (!this.isCreated()) return;
+        let x = Math.round(event.getWindowX() - this.componentGlobalX);
+        let y = Math.round(event.getWindowY() - this.componentGlobalY);
+        // Self-drag: data is available in pendingDrag* (from CEF StartDragging).
+        // External drag: getData() not available until onDrop — defer.
+        if (this.isDragInProgress && (this.pendingDragText.length > 0 || this.pendingDragUrl.length > 0 ||
+            this.pendingDragFilePaths.length > 0)) {
+          hilog.info(DOMAIN, MODULE, "onDragEnter: self-drag, calling DragTargetDragEnter with pending data");
+          arkui_cef.cefDragTargetDragEnter(this.browserId,
+            this.pendingDragText, this.pendingDragHtml, this.pendingDragUrl,
+            this.pendingDragFilePaths, x, y, 19);
+          this.dragEnterCalled = true;
+        } else {
+          hilog.info(DOMAIN, MODULE, "onDragEnter: external drag, deferring to onDrop");
+        }
+        event.setResult(DragResult.DROP_ENABLED);
+        event.dragBehavior = DragBehavior.MOVE;
+      })
+      .onDragMove((event: DragEvent) => {
+        if (!this.isCreated()) return;
+        let x = Math.round(event.getWindowX() - this.componentGlobalX);
+        let y = Math.round(event.getWindowY() - this.componentGlobalY);
+        // Track last drag position for DragSourceEndedAt (fix #1).
+        this.lastDragMoveX = x;
+        this.lastDragMoveY = y;
+        if (this.dragEnterCalled) {
+          arkui_cef.cefDragTargetDragOver(this.browserId, x, y, 19);
+          // Use CEF's UpdateDragCursor feedback to enable/disable drop (fix #4).
+          // lastDragOperation reflects CEF's response from the previous DragTargetDragOver.
+          // For external drag (dragEnterCalled=false), always enable since CEF hasn't been notified yet.
+          if (this.lastDragOperation === 0) {
+            event.setResult(DragResult.DROP_DISABLED);
+          } else {
+            event.setResult(DragResult.DROP_ENABLED);
+          }
+        } else {
+          event.setResult(DragResult.DROP_ENABLED);
+        }
+        event.dragBehavior = DragBehavior.MOVE;
+      })
+      .onDragLeave((event: DragEvent) => {
+        if (!this.isCreated()) return;
+        hilog.info(DOMAIN, MODULE, "onDragLeave: dragEnterCalled=%{public}s",
+          this.dragEnterCalled ? "true" : "false");
+        if (this.dragEnterCalled) {
+          arkui_cef.cefDragTargetDragLeave(this.browserId);
+          this.dragEnterCalled = false;
+        }
+      })
+      .onDrop((event: DragEvent) => {
+        if (!this.isCreated()) return;
+        let x = Math.round(event.getWindowX() - this.componentGlobalX);
+        let y = Math.round(event.getWindowY() - this.componentGlobalY);
+        // Track final drag position for DragSourceEndedAt (fix #1).
+        this.lastDragMoveX = x;
+        this.lastDragMoveY = y;
+
+        if (this.dragEnterCalled) {
+          // Self-drag: DragTargetDragEnter was already called in onDragEnter.
+          // Just call DragOver (final position) + Drop.
+          hilog.info(DOMAIN, MODULE, "onDrop: self-drag (enter already called)");
+          arkui_cef.cefDragTargetDragOver(this.browserId, x, y, 19);
+          arkui_cef.cefDragTargetDrop(this.browserId, x, y);
+        } else {
+          // External drag: getData() is available now (only in onDrop).
+          // Call Enter + Over + Drop in sequence.
+          let data = this.extractDragData(event);
+          hilog.info(DOMAIN, MODULE, "onDrop: external drag, text_len=%{public}d, url='%{public}s'",
+            data.text.length, data.url);
+          arkui_cef.cefDragTargetDragEnter(this.browserId, data.text, data.html, data.url, data.filePaths, x, y, 19);
+          arkui_cef.cefDragTargetDragOver(this.browserId, x, y, 19);
+          arkui_cef.cefDragTargetDrop(this.browserId, x, y);
+        }
+
+        // Clear state.
+        this.dragEnterCalled = false;
+        this.pendingDragText = '';
+        this.pendingDragHtml = '';
+        this.pendingDragUrl = '';
+        this.pendingDragFilePaths = '';
+        event.setResult(DragResult.DRAG_SUCCESSFUL);
+        event.dragBehavior = DragBehavior.MOVE;
+      })
+      .allowDrop([
+        uniformTypeDescriptor.UniformDataType.PLAIN_TEXT,
+        uniformTypeDescriptor.UniformDataType.HTML,
+        uniformTypeDescriptor.UniformDataType.HYPERLINK,
+        uniformTypeDescriptor.UniformDataType.FILE,
+        uniformTypeDescriptor.UniformDataType.IMAGE
+      ])
 
       // Status bar — shows OSR state info
       if (this.isCreated()) {
@@ -390,7 +560,11 @@ export struct OsrCefView {
       (show: boolean) => { this.onOsrVirtualKeyboard(show); },
       (text: string) => { this.onOsrTextSelection(text); },
       (cursorType: number) => { this.onOsrCursorChange(cursorType); },
-      (left: number, top: number, w: number, h: number) => { this.onOsrImeCursor(left, top, w, h); });
+      (left: number, top: number, w: number, h: number) => { this.onOsrImeCursor(left, top, w, h); },
+      (text: string, html: string, durl: string, urlTitle: string, fileName: string, fileData: ArrayBuffer, x: number, y: number) => {
+        this.onOsrStartDrag(text, html, durl, urlTitle, fileName, fileData, x, y);
+      },
+      (operation: number) => { this.onOsrUpdateDragCursor(operation); });
 
     hilog.info(DOMAIN, MODULE, "OSR CEF starts to create, id: %{public}d", id);
   }
@@ -627,6 +801,247 @@ export struct OsrCefView {
       left, top, ok ? "true" : "false");
   }
 
+  // ==================== Drag & Drop ====================
+
+  onOsrStartDrag(text: string, html: string, durl: string, urlTitle: string,
+                  fileName: string, fileData: ArrayBuffer, x: number, y: number): void {
+    hilog.info(DOMAIN, MODULE,
+      "onOsrStartDrag: text='%{public}s', url='%{public}s', fileName='%{public}s', fileDataSize=%{public}d, x=%{public}d, y=%{public}d",
+      text.substring(0, 50), durl, fileName, fileData.byteLength, x, y);
+    if (this.isDragInProgress) {
+      hilog.info(DOMAIN, MODULE, "onOsrStartDrag: drag already in progress, skipping");
+      return;
+    }
+    this.isDragInProgress = true;
+    // Reset per-drag state: stale lastDragOperation from the previous drag
+    // would corrupt the first DROP_ENABLED/DROP_DISABLED decision (#5).
+    this.lastDragOperation = 0;
+
+    // Cache full drag data for self-drag target (onDragEnter uses this to call
+    // cefDragTargetDragEnter immediately, and onDrop uses it for the final drop).
+    this.pendingDragText = text;
+    this.pendingDragHtml = html;
+    this.pendingDragUrl = durl;
+    this.pendingDragFilePaths = '';
+    // Initialize last drag position to start position as fallback.
+    this.lastDragMoveX = x;
+    this.lastDragMoveY = y;
+
+    // Build UnifiedData with ALL non-empty records, matching CEF's non-OSR
+    // adapter behavior (HandlePlainTextRecord/HandleUdsHtmlRecord/etc. each
+    // add their data type conditionally). The number badge is suppressed via
+    // previewOptions.numberBadge = false so multiple records don't show "+N".
+    // Records carry exactly what the web page declared (FragmentText/Html/Url) —
+    // data fidelity is preserved; the test page's dragstart sets text/plain
+    // for links to match Chromium's default link-drag behavior.
+    let unifiedData = new unifiedDataChannel.UnifiedData();
+    if (text.length > 0) {
+      let plainText = new unifiedDataChannel.PlainText();
+      plainText.textContent = text;
+      unifiedData.addRecord(plainText);
+    }
+    if (html.length > 0) {
+      let htmlRecord = new unifiedDataChannel.HTML();
+      htmlRecord.htmlContent = html;
+      if (text.length > 0) {
+        htmlRecord.plainContent = text;
+      }
+      unifiedData.addRecord(htmlRecord);
+    }
+    if (durl.length > 0) {
+      let link = new unifiedDataChannel.Hyperlink();
+      link.url = durl;
+      link.description = urlTitle.length > 0 ? urlTitle : durl;
+      unifiedData.addRecord(link);
+    }
+
+    // If CEF provided file contents (e.g. image dragged from <img>),
+    // write to a temp file and add a File/Image UDMF record so external
+    // apps (file manager, image viewer) can receive the drop.
+    if (fileName.length > 0 && fileData.byteLength > 0) {
+      try {
+        let context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+        let cacheDir = context.cacheDir;
+        // Sanitize fileName: strip path separators to prevent path traversal
+        // (fileName originates from web content and is not trustworthy).
+        let safeName = fileName.replace(/[/\\]/g, '_');
+        // Use a dedicated dragdrop sub-directory, cleared before each drag-out
+        // (mirrors the non-OSR adapter's DeletePathRecursively(dragdrop) behavior).
+        let dragDir = `${cacheDir}/dragdrop`;
+        if (fileIo.accessSync(dragDir)) {
+          fileIo.rmdirSync(dragDir);
+        }
+        fileIo.mkdirSync(dragDir);
+        let tempPath = `${dragDir}/${safeName}`;
+        let file = fileIo.openSync(tempPath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+        fileIo.writeSync(file.fd, fileData);
+        fileIo.closeSync(file);
+        let fileUriStr = fileUri.getUriFromPath(tempPath);
+        hilog.info(DOMAIN, MODULE, "onOsrStartDrag: wrote temp file %{public}s, uri=%{public}s", tempPath, fileUriStr);
+
+        // Cache file path for self-drag drop-back (cefDragTargetDragEnter → AddFile)
+        this.pendingDragFilePaths = tempPath;
+
+        // Determine if it's an image by extension
+        let isImage = /\.(png|jpg|jpeg|gif|bmp|webp|svg)$/i.test(safeName);
+        if (isImage) {
+          let image = new unifiedDataChannel.Image();
+          image.imageUri = fileUriStr;
+          unifiedData.addRecord(image);
+        } else {
+          let fileRecord = new unifiedDataChannel.File();
+          fileRecord.uri = fileUriStr;
+          unifiedData.addRecord(fileRecord);
+        }
+      } catch (e) {
+        hilog.error(DOMAIN, MODULE, "onOsrStartDrag: write temp file failed: %{public}s", (e as Error).message);
+      }
+    }
+
+    let previewOptions: DragPreviewOptions = { numberBadge: false };
+    let dragInfo: dragController.DragInfo = {
+      pointerId: 0,
+      data: unifiedData,
+      previewOptions: previewOptions
+    };
+
+    // Set drag preview text for the @Builder (match actual dragged content)
+    this.dragPreviewText = fileName.length > 0 ? fileName.substring(0, 30) :
+      (text.length > 0 ? text.substring(0, 30) :
+        (durl.length > 0 ? durl.substring(0, 30) : 'Drag'));
+
+    try {
+      this.getUIContext().getDragController().executeDrag(
+        () => { this.dragPreviewBuilder(); },
+        dragInfo,
+        (err, dragEventParam) => {
+          this.isDragInProgress = false;
+          this.pendingDragText = '';
+          this.pendingDragHtml = '';
+          this.pendingDragUrl = '';
+          this.pendingDragFilePaths = '';
+          this.dragEnterCalled = false;
+          // The release that ended the drag is consumed by the drag system —
+          // CEF never receives a matching mouse-up. Reset the button-state
+          // flag so subsequent plain moves don't carry
+          // EVENTFLAG_LEFT_MOUSE_BUTTON and trigger spurious drags.
+          this.mouseButtonPressed = false;
+          if (err) {
+            hilog.error(DOMAIN, MODULE, "executeDrag error: %{public}s", err.message ?? '');
+            arkui_cef.cefDragSourceEndedAt(this.browserId, this.lastDragMoveX, this.lastDragMoveY, 0);
+            arkui_cef.cefDragSourceSystemDragEnded(this.browserId);
+            // Synthetic mouse-up: the physical release was consumed by the drag
+            // system, so CEF never saw it — without this the renderer keeps the
+            // mouse-pressed state (CSS :active stays set, element stays dimmed).
+            arkui_cef.cefSendMouseClick(this.browserId, this.lastDragMoveX, this.lastDragMoveY, 0, true, 1, 0);
+            return;
+          }
+          let result = DragResult.DRAG_FAILED;
+          let behavior = DragBehavior.COPY;
+          if (dragEventParam && dragEventParam.event) {
+            result = dragEventParam.event.getResult();
+            behavior = dragEventParam.event.dragBehavior;
+          }
+          let cefOp = 0;
+          if (result === DragResult.DRAG_SUCCESSFUL) {
+            if (behavior === DragBehavior.MOVE) {
+              cefOp = 16;
+            } else {
+              cefOp = 1;
+            }
+          }
+          hilog.info(DOMAIN, MODULE,
+            "executeDrag done: result=%{public}d, behavior=%{public}d, cefOp=%{public}d, pos=%{public}d,%{public}d",
+            result, behavior, cefOp, this.lastDragMoveX, this.lastDragMoveY);
+          arkui_cef.cefDragSourceEndedAt(this.browserId, this.lastDragMoveX, this.lastDragMoveY, cefOp);
+          arkui_cef.cefDragSourceSystemDragEnded(this.browserId);
+          // Synthetic mouse-up (see comment in err path above). Blink suppresses
+          // click-after-drag, so this won't fire a click on the source element.
+          arkui_cef.cefSendMouseClick(this.browserId, this.lastDragMoveX, this.lastDragMoveY, 0, true, 1, 0);
+        }
+      );
+    } catch (e) {
+      this.isDragInProgress = false;
+      this.pendingDragText = '';
+      this.pendingDragHtml = '';
+      this.pendingDragUrl = '';
+      this.pendingDragFilePaths = '';
+      this.mouseButtonPressed = false;
+      hilog.error(DOMAIN, MODULE, "executeDrag exception: %{public}s", (e as Error).message);
+      arkui_cef.cefDragSourceEndedAt(this.browserId, this.lastDragMoveX, this.lastDragMoveY, 0);
+      arkui_cef.cefDragSourceSystemDragEnded(this.browserId);
+      arkui_cef.cefSendMouseClick(this.browserId, this.lastDragMoveX, this.lastDragMoveY, 0, true, 1, 0);
+    }
+  }
+
+  onOsrUpdateDragCursor(operation: number): void {
+    this.lastDragOperation = operation;
+    hilog.info(DOMAIN, MODULE, "onOsrUpdateDragCursor: operation=%{public}d", operation);
+  }
+
+  private extractDragData(event: DragEvent): DragDataInfo {
+    let text = '';
+    let html = '';
+    let url = '';
+    let filePaths = '';
+    try {
+      let data = event.getData();
+      if (data) {
+        let records = data.getRecords();
+        for (let i = 0; i < records.length; i++) {
+          let record = records[i];
+          let rtype = record.getType();
+          if (rtype === uniformTypeDescriptor.UniformDataType.PLAIN_TEXT) {
+            let pt = record as unifiedDataChannel.PlainText;
+            text = pt.textContent;
+          } else if (rtype === uniformTypeDescriptor.UniformDataType.HTML) {
+            let hr = record as unifiedDataChannel.HTML;
+            html = hr.htmlContent;
+            if (text.length === 0 && hr.plainContent) {
+              text = hr.plainContent;
+            }
+          } else if (rtype === uniformTypeDescriptor.UniformDataType.HYPERLINK) {
+            let hl = record as unifiedDataChannel.Hyperlink;
+            url = hl.url;
+          } else if (rtype === uniformTypeDescriptor.UniformDataType.FILE) {
+            let file = record as unifiedDataChannel.File;
+            if (file.uri) {
+              let fu = new fileUri.FileUri(file.uri);
+              if (filePaths.length > 0) filePaths += '\n';
+              filePaths += fu.path;
+            }
+          } else if (rtype === uniformTypeDescriptor.UniformDataType.IMAGE) {
+            let img = record as unifiedDataChannel.Image;
+            if (img.imageUri) {
+              let fu = new fileUri.FileUri(img.imageUri);
+              if (filePaths.length > 0) filePaths += '\n';
+              filePaths += fu.path;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      hilog.error(DOMAIN, MODULE, "extractDragData error: %{public}s", (e as Error).message);
+    }
+    hilog.info(DOMAIN, MODULE, "extractDragData: text_len=%{public}d, html_len=%{public}d, url='%{public}s', filePaths_len=%{public}d",
+      text.length, html.length, url, filePaths.length);
+    let result: DragDataInfo = { text: text, html: html, url: url, filePaths: filePaths };
+    return result;
+  }
+
+  @Builder
+  dragPreviewBuilder() {
+    Text(this.dragPreviewText)
+      .fontSize(12)
+      .fontColor('#333333')
+      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+      .backgroundColor('#f0f0f0')
+      .border({ width: 1, color: '#cccccc', radius: 4 })
+      .maxLines(1)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .constraintSize({ maxWidth: 200 })
+  }
+
   // ==================== Touch Event (触摸屏) ====================
   handleTouchEvent(event: TouchEvent): void {
     if (!this.isCreated()) {
@@ -634,6 +1049,18 @@ export struct OsrCefView {
     }
 
     event.stopPropagation();
+
+    // ArkUI fires onTouch for ALL pointer input (mouse, touchpad, touchscreen).
+    // Routing (verified from docs):
+    // - Touchscreen: SourceType.TouchScreen — forwarded to CEF as touch events.
+    // - Touchpad: single-finger acts as mouse (SourceType.Mouse), two-finger
+    //   swipe/pinch arrive via onAxis/PinchGesture — never as touch events here.
+    // - A mouse left-press is ALSO converted to a touch event (SourceType.Mouse)
+    //   and must be filtered out, otherwise CEF enables touch scrolling and the
+    //   page scrolls when the user clicks and drags with a mouse.
+    if (event.source === SourceType.Mouse) {
+      return;
+    }
 
     // CEF touch event types: TOUCHEVENT_RELEASED=0, TOUCHEVENT_PRESSED=1, TOUCHEVENT_MOVED=2, TOUCHEVENT_CANCELLED=3
     let touchType = 2;
@@ -645,22 +1072,18 @@ export struct OsrCefView {
       default: break;
     }
 
-    let isMultiTouch = event.touches.length > 1;
-
-    // When transitioning from single-touch to multi-touch:
-    // release the mouse button first, otherwise CEF stays in mouse-drag
-    // state and stops forwarding touch events to the page.
-    if (isMultiTouch && this.touchMouseSimulated && event.type === TouchType.Down) {
-      let t0 = event.touches[0];
-      arkui_cef.cefSendMouseClick(this.browserId,
-        Math.round(t0.x), Math.round(t0.y), 0, true, 1, 0);
-      this.touchMouseSimulated = false;
-    }
-
-    // Forward touch events to CEF (always, for all touch points)
-    // Down/Up: only send changed touches; Move/Cancel: send all touches
+    // Forward touch events to CEF — ALL fingers, native semantics. Pages that
+    // handle multi-touch themselves (maps) receive their pinch directly, like
+    // desktop Chrome with a touchscreen. NO multi-touch takeover here: the
+    // previous takeover (cancel touches + ArkTS pinch → ctrl+wheel) corrupted
+    // the touch state on pages like maps (input dead until reload) — the
+    // synthetic touchcancel broke Chromium's active-touch tracking.
+    // Down/Up/Cancel are per-point events: forward only the points that
+    // triggered this event. Cancel is per-point (e.g. a stylus interrupt
+    // cancels only the finger's stream). Move: send all active touches.
     let touchList: TouchObject[] = event.touches;
-    if (event.type === TouchType.Down || event.type === TouchType.Up) {
+    if (event.type === TouchType.Down || event.type === TouchType.Up ||
+        event.type === TouchType.Cancel) {
       touchList = event.changedTouches;
     }
     for (let i = 0; i < touchList.length; i++) {
@@ -669,49 +1092,85 @@ export struct OsrCefView {
         Math.round(touch.x), Math.round(touch.y), touchType, touch.id);
     }
 
-    // Mouse simulation: only for single-touch (1 finger).
-    // Multi-touch must not send mouse events — CEF would enter mouse-drag
-    // state and stop forwarding touch events to the page's JavaScript.
-    if (isMultiTouch) {
-      return;
-    }
-
+    // Touch input is forwarded as touch events ONLY (loop above) — native
+    // Chromium touch semantics apply: tap = click (synthesized by the touch
+    // gesture pipeline), long-press = word selection, drag = scroll.
+    // Do NOT simulate mouse events for touchscreen input: a synthesized mouse
+    // press-drag is treated by the renderer as an immediate text-selection
+    // drag, overriding the native long-press-to-select behavior.
+    // HTML5 drag is mouse-initiated in Chromium — test drag & drop with the
+    // mouse.
     let touch0 = event.touches[0];
-    if (!touch0) {
-      return;
-    }
-    let x = Math.round(touch0.x);
-    let y = Math.round(touch0.y);
-
-    switch (event.type) {
-      case TouchType.Down:
-        this.lastInputX = touch0.x;
-        this.lastInputY = touch0.y;
-        this.setRenderAreaActive(true);
-        this.handleImeFocus();
-        arkui_cef.cefSendFocusEvent(this.browserId, true);
-        arkui_cef.cefSendMouseMove(this.browserId, x, y, false);
-        arkui_cef.cefSendMouseClick(this.browserId, x, y, 0, false, 1, 0x10);
-        this.touchMouseSimulated = true;
-        break;
-      case TouchType.Up:
-        arkui_cef.cefSendMouseClick(this.browserId, x, y, 0, true, 1, 0);
-        this.touchMouseSimulated = false;
-        break;
-      case TouchType.Move:
-        arkui_cef.cefSendMouseMove(this.browserId, x, y, false, 0x10);
-        break;
-      case TouchType.Cancel:
-        arkui_cef.cefSendMouseMove(this.browserId, x, y, true);
-        arkui_cef.cefSendCaptureLost(this.browserId);
-        this.touchMouseSimulated = false;
-        break;
-      default:
-        break;
+    if (touch0 && event.type === TouchType.Down && event.touches.length === 1) {
+      // Focus bookkeeping only (single-finger Down) — no mouse events.
+      this.lastInputX = touch0.x;
+      this.lastInputY = touch0.y;
+      this.setRenderAreaActive(true);
+      this.handleImeFocus();
+      arkui_cef.cefSendFocusEvent(this.browserId, true);
     }
   }
 
-  // ==================== Mouse Event (鼠标移动/点击) ====================
+  // ==================== Mouse Event (鼠标移动/点击/触摸板单指) ====================
+  // Touchpad single-finger input also arrives here as SourceType.Mouse
+  // (verified from docs) — tap=Press/Release, swipe=Move, so touchpad is
+  // fully covered by this handler plus handleAxisEvent (two-finger scroll).
+
+  // EVENTFLAG_* helpers
+  private buttonFlag(cefButton: number): number {
+    if (cefButton === 1) {
+      return 0x20; // EVENTFLAG_MIDDLE_MOUSE_BUTTON
+    }
+    if (cefButton === 2) {
+      return 0x40; // EVENTFLAG_RIGHT_MOUSE_BUTTON
+    }
+    return 0x10;   // EVENTFLAG_LEFT_MOUSE_BUTTON
+  }
+
+  private buildMouseModifiers(event: MouseEvent, buttonMods: number): number {
+    // Shift/Ctrl/Alt via BaseEvent.getModifierKeyState (API 12+); guarded
+    // because the method is optional on older SDKs.
+    let mods = buttonMods;
+    if (event.getModifierKeyState) {
+      try {
+        if (event.getModifierKeyState(['Shift'])) {
+          mods |= 0x02; // EVENTFLAG_SHIFT_DOWN
+        }
+        if (event.getModifierKeyState(['Ctrl'])) {
+          mods |= 0x04; // EVENTFLAG_CONTROL_DOWN
+        }
+        if (event.getModifierKeyState(['Alt'])) {
+          mods |= 0x08; // EVENTFLAG_ALT_DOWN
+        }
+      } catch (e) {
+      }
+    }
+    return mods;
+  }
+
+  private heldButtonMods(event: MouseEvent): number {
+    // Prefer the system-reported button state (MouseEvent.pressedButtons,
+    // API 15+): authoritative for multi-button holds and self-correcting if
+    // a Release was missed (e.g. the button was released outside this
+    // component) — the next Move reads the true state.
+    let pb = event.pressedButtons;
+    if (pb !== undefined) {
+      let mods = 0;
+      for (let i = 0; i < pb.length; i++) {
+        if (pb[i] === MouseButton.Left) {
+          mods |= 0x10;
+        } else if (pb[i] === MouseButton.Middle) {
+          mods |= 0x20;
+        } else if (pb[i] === MouseButton.Right) {
+          mods |= 0x40;
+        }
+      }
+      return mods;
+    }
+    // Fallback (pressedButtons unavailable): left-only tracking
+    return this.mouseButtonPressed ? 0x10 : 0;
+  }
+
   handleMouseEvent(event: MouseEvent): void {
     if (!this.isCreated()) {
       return;
@@ -738,63 +1197,85 @@ export struct OsrCefView {
 
     // ArkUI MouseAction: Press=1, Release=2, Move=3
     switch (event.action) {
-      case MouseAction.Press:
+      case MouseAction.Press: {
         hilog.info(DOMAIN, MODULE, "Mouse Press: x=%{public}d, y=%{public}d, btn=%{public}d", x, y, cefButton);
         this.lastInputX = event.x;
         this.lastInputY = event.y;
         this.setRenderAreaActive(true);
         this.handleImeFocus();
         arkui_cef.cefSendFocusEvent(this.browserId, true);
-        // Set EVENTFLAG_LEFT_MOUSE_BUTTON (0x10) on mouse down so CEF scrollbar
-        // drag and text selection can start. CEF requires the button flag in
-        // modifiers even for click events.
-        let pressMods = 0x10; // EVENTFLAG_LEFT_MOUSE_BUTTON
-        if (cefButton === 1) {
-          pressMods = 0x20; // EVENTFLAG_MIDDLE_MOUSE_BUTTON
-        } else if (cefButton === 2) {
-          pressMods = 0x40; // EVENTFLAG_RIGHT_MOUSE_BUTTON
+
+        // Click count (LEFT only): double-click selects a word, triple-click
+        // selects a paragraph — CEF recognizes these from click_count.
+        let clickCount = 1;
+        if (cefButton === 0) {
+          let now = Date.now();
+          if (now - this.lastClickTime <= OsrCefView.DOUBLE_CLICK_TIME_MS &&
+              Math.abs(x - this.lastClickX) <= OsrCefView.DOUBLE_CLICK_SLOP_PX &&
+              Math.abs(y - this.lastClickY) <= OsrCefView.DOUBLE_CLICK_SLOP_PX &&
+              this.clickCount > 0) {
+            // Triple-click wraps back to 1 (4th click = new single click)
+            this.clickCount = this.clickCount >= 3 ? 1 : this.clickCount + 1;
+          } else {
+            this.clickCount = 1;
+          }
+          this.lastClickTime = now;
+          this.lastClickX = x;
+          this.lastClickY = y;
+          clickCount = this.clickCount;
+          this.mouseButtonPressed = true;
         }
-        arkui_cef.cefSendMouseClick(this.browserId, x, y, cefButton, false, 1, pressMods);
-        this.mouseButtonPressed = true;
+
+        // Modifiers: the pressed button's own flag + Shift/Ctrl/Alt
+        let pressMods = this.buildMouseModifiers(event, this.buttonFlag(cefButton));
+        arkui_cef.cefSendMouseClick(this.browserId, x, y, cefButton, false, clickCount, pressMods);
         this.lastMouseX = x;
         this.lastMouseY = y;
         break;
+      }
       case MouseAction.Release:
         hilog.info(DOMAIN, MODULE, "Mouse Release: x=%{public}d, y=%{public}d, btn=%{public}d", x, y, cefButton);
         arkui_cef.cefSendMouseClick(this.browserId, x, y, cefButton, true, 1, 0);
-        this.mouseButtonPressed = false;
+        if (cefButton === 0) {
+          // Only LEFT clears the flag — releasing RIGHT/MIDDLE while LEFT is
+          // held must not break an in-progress left-drag.
+          this.mouseButtonPressed = false;
+        }
         break;
-      case MouseAction.Move:
-        // Forward move events including during drag (mouseButtonPressed=true).
-        // CEF's SendMouseMoveEvent does NOT inherit button state from previous
-        // SendMouseClickEvent — we must set modifiers explicitly for drag to work.
-        // EVENTFLAG_LEFT_MOUSE_BUTTON = 1 << 4 = 0x10 (NOT 0x01 which is CAPS_LOCK)
-        let moveMods = 0;
-        if (this.mouseButtonPressed) {
-          moveMods = 0x10; // EVENTFLAG_LEFT_MOUSE_BUTTON
+      case MouseAction.Move: {
+        // Forward move events including during a button-drag. Modifiers come
+        // from the system-reported pressedButtons — accurate for multi-button
+        // holds and self-correcting after a missed Release.
+        let moveMods = this.buildMouseModifiers(event, this.heldButtonMods(event));
+        if ((moveMods & 0x10) !== 0) {
           hilog.info(DOMAIN, MODULE, "Mouse Drag: x=%{public}d, y=%{public}d", x, y);
         }
         arkui_cef.cefSendMouseMove(this.browserId, x, y, false, moveMods);
         this.lastMouseX = x;
         this.lastMouseY = y;
         break;
+      }
       default:
         break;
     }
   }
 
-  // ==================== Axis Event (鼠标滚轮) ====================
+  // ==================== Axis Event (鼠标滚轮 / 触摸板双指滚动) ====================
 
-  // Accumulate small axis deltas to avoid sending too many tiny scroll events.
-  // ArkUI fires many axis events per single wheel notch (momentum/inertia events).
-  // We accumulate until we have a meaningful delta, then send one event to CEF.
-  private accumulatedWheelX: number = 0;
-  private accumulatedWheelY: number = 0;
-  // Threshold: accumulate until delta exceeds this, then send. Reduces "two-stage" scroll.
-  private static readonly WHEEL_ACCUM_THRESHOLD: number = 20;
-  // Scale: ArkUI axis value per notch is variable; we scale to CEF's ~120/notch expectation.
-  // Lower value = less scroll per notch. User reports too much scroll, so reduce from 12 to 3.
-  private static readonly WHEEL_SCALE: number = 3;
+  // Wheel translation: axis values are forwarded event-by-event with a
+  // per-source gain — NO threshold batching (the old batching caused the
+  // "two-stage scroll": sub-threshold deltas waited, then jumped). The gain
+  // is an EMPIRICAL calibration factor (ArkUI's axis units are documented
+  // inconsistently: vp vs angle vs pixel per source), NOT a magic number —
+  // tune each source independently.
+  // Defaults keep the previously accepted feel (×3 was tuned historically;
+  // the old batching did not change the total amount, only its delivery).
+  // Sign note: docs say touchpad swipe-up = positive and wheel-up = negative
+  // (opposite conventions), but the unified negation below matches the
+  // accepted feel on this device — if either input ever feels inverted,
+  // flip that source's sign below.
+  private static readonly TOUCHPAD_WHEEL_GAIN: number = 3;
+  private static readonly MOUSE_WHEEL_GAIN: number = 3;
 
   handleAxisEvent(event: AxisEvent): void {
     if (!this.isCreated()) {
@@ -820,19 +1301,22 @@ export struct OsrCefView {
       return;
     }
 
-    let rawDeltaY = -vAxis * OsrCefView.WHEEL_SCALE;
-    let rawDeltaX = -hAxis * OsrCefView.WHEEL_SCALE;
-    this.accumulatedWheelY += rawDeltaY;
-    this.accumulatedWheelX += rawDeltaX;
-
-    if (Math.abs(this.accumulatedWheelY) >= OsrCefView.WHEEL_ACCUM_THRESHOLD ||
-        Math.abs(this.accumulatedWheelX) >= OsrCefView.WHEEL_ACCUM_THRESHOLD) {
-      let deltaY = Math.round(this.accumulatedWheelY);
-      let deltaX = Math.round(this.accumulatedWheelX);
-      this.accumulatedWheelY = 0;
-      this.accumulatedWheelX = 0;
-      arkui_cef.cefSendMouseWheel(this.browserId, x, y, deltaX, deltaY, modifiers);
+    // Distinguish the input source (documented use of sourceTool on axis
+    // events): TOUCHPAD = two-finger swipe, MOUSE = wheel rotation.
+    let gain = OsrCefView.MOUSE_WHEEL_GAIN;
+    if (event.sourceTool === SourceTool.TOUCHPAD) {
+      gain = OsrCefView.TOUCHPAD_WHEEL_GAIN;
     }
+
+    // Direct pass-through: every axis event becomes one wheel event with the
+    // same total delta — Chromium coalesces rapid events itself.
+    let deltaY = Math.round(-vAxis * gain);
+    let deltaX = Math.round(-hAxis * gain);
+    if (deltaY === 0 && deltaX === 0) {
+      // Sub-rounding remainder (< 0.5 units) — skip.
+      return;
+    }
+    arkui_cef.cefSendMouseWheel(this.browserId, x, y, deltaX, deltaY, modifiers);
   }
 
   // ==================== Input Method Framework (IME) ====================
