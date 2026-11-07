@@ -66,15 +66,20 @@ struct MultiTabPage {
         )
         TabContent() {
           Column() {
-            OsrCefView({viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_test.html'})
+            OsrCefView({viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_display_test.html'})
           }
+          .width('100%')
+          .height('100%')
+          .focusable(true)
         }.tabBar(
-          SubTabBarStyle.of('OSR离屏渲染')
+          SubTabBarStyle.of('OSR显示测试')
         )
         TabContent() {
           Column() {
             OsrCefView({viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_input_test.html'})
           }
+          .width('100%')
+          .height('100%')
           .focusable(true)
         }.tabBar(
           SubTabBarStyle.of('OSR输入测试')
@@ -83,6 +88,8 @@ struct MultiTabPage {
           Column() {
             OsrCefView({viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_drag_test.html'})
           }
+          .width('100%')
+          .height('100%')
           .focusable(true)
         }.tabBar(
           SubTabBarStyle.of('OSR拖放测试')

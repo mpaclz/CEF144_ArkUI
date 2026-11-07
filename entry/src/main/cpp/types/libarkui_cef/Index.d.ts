@@ -21,7 +21,8 @@ export const unregisterPopupTitleCallback: (cefBrowserId: number) => void;
 export const setPopupBrowserCreatedCallback: (callback: (cefBrowserId: number) => void) => void;
 export const cefSendKeyEvent: (browserId: number, keyCode: number, keyType: number, modifiers: number, charCode?: number) => void;
 export const createOsrCefView: (url: string, width: number, height: number,
-                                 onPaint: (buffer: ArrayBuffer, width: number, height: number) => void,
+                                 onPaint: (regionData: ArrayBuffer, x: number, y: number, w: number, h: number,
+                                           fullFrame: boolean, viewW: number, viewH: number) => void,
                                  onCreated: (browserId: number) => void,
                                  onTitleChange: (title: string) => void,
                                  onFocusTake: (next: boolean) => void,
@@ -36,6 +37,8 @@ export const destroyOsrCefView: (browserId: number) => void;
 export const cefOsrResize: (browserId: number, width: number, height: number) => void;
 export const cefOsrSetScale: (browserId: number, scaleFactor: number) => void;
 export const cefSetComponentOffset: (browserId: number, offsetX: number, offsetY: number) => void;
+export const cefSetFrameRate: (browserId: number, frameRate: number) => void;
+export const cefExecuteJavaScript: (browserId: number, code: string) => void;
 export const cefSendMouseClick: (browserId: number, x: number, y: number, button: number, mouseUp: boolean, clickCount?: number, modifiers?: number) => void;
 export const cefSendMouseMove: (browserId: number, x: number, y: number, mouseLeave: boolean, modifiers?: number) => void;
 export const cefSendMouseWheel: (browserId: number, x: number, y: number, deltaX: number, deltaY: number, modifiers?: number) => void;

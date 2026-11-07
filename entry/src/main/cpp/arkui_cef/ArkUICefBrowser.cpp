@@ -72,10 +72,11 @@ void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* pare
     }
     
     CefBrowserSettings browserSettings;
-    // Limit OSR frame rate to reduce main-thread load from PixelMap creation.
-    // Each frame requires a 10MB+ deep copy + ArrayBuffer allocation + createPixelMap on the
-    // ArkTS main thread. At 30fps this floods the event queue and causes APP_INPUT_BLOCK.
-    // 10fps is sufficient for interactive web content and prevents freeze.
+    // Initial cap during startup; the ArkTS layer raises this after creation
+    // (see OsrCefView onOsrCreated -> cefSetFrameRate). The render pipeline
+    // is now synchronous dirty-region updates (no per-frame createPixelMap),
+    // so 20-30fps no longer floods the JS thread the way the old full-frame
+    // ArrayBuffer path did at 30fps.
     if (use_osr_) {
         browserSettings.windowless_frame_rate = 10;
     }
@@ -199,8 +200,7 @@ void ArkUICefBrowser::setOsrScale(float factor) {
     }
 
     if (browser_) {
-        browser_->GetHost()->NotifyScreenInfoChanged();
-    }
+        browser_->GetHost()->NotifyScreenInfoChanged();    }
 }
 
 void ArkUICefBrowser::setComponentOffset(int x, int y) {
@@ -210,6 +210,15 @@ void ArkUICefBrowser::setComponentOffset(int x, int y) {
             handler->SetComponentOffset(x, y);
         }
     }
+}
+
+void ArkUICefBrowser::setFrameRate(int frameRate) {
+    if (!browser_ || frameRate < 1) {
+        return;
+    }
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "setFrameRate: id=%{public}ld, rate=%{public}d", id_, frameRate);
+    browser_->GetHost()->SetWindowlessFrameRate(frameRate);
 }
 
 void ArkUICefBrowser::show() {

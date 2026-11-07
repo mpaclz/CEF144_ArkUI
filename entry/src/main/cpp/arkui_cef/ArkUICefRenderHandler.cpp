@@ -84,15 +84,23 @@ void ArkUICefRenderHandler::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementT
                                      const RectList& dirtyRects, const void* buffer,
                                      int width, int height) {
     if (type == PET_POPUP) {
-        // Store popup buffer for compositing onto the view buffer
+        // Store popup pixels, then composite into the staging buffer right
+        // away (a popup repaint may arrive without a matching PET_VIEW
+        // frame, e.g. selection highlight moving inside a dropdown).
         std::lock_guard<std::mutex> lock(mutex_);
         size_t size = static_cast<size_t>(width) * height * 4;
         popupBuffer_.resize(size);
         memcpy(popupBuffer_.data(), buffer, size);
         popupBufferW_ = width;
         popupBufferH_ = height;
-        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
-            "OnPaint PET_POPUP: w=%{public}d, h=%{public}d", width, height);
+        if (frameW_ > 0 && frameH_ > 0 &&
+            popupVisible_ && !popupBuffer_.empty()) {
+            CefRect written = CompositePopup(frameBuffer_.data(), frameW_, frameH_);
+            if (written.width > 0 && written.height > 0) {
+                AddToDirtyRegion(written);
+                NotifyFrameReady();
+            }
+        }
         return;
     }
 
@@ -100,31 +108,135 @@ void ArkUICefRenderHandler::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementT
         return;
     }
 
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
-        "OnPaint: width=%{public}d, height=%{public}d, dirtyRects=%{public}zu",
-        width, height, dirtyRects.size());
+    std::lock_guard<std::mutex> lock(mutex_);
 
-    // If a popup is visible, composite it onto the view buffer before sending to ArkTS
-    bool hasPopup = false;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        hasPopup = popupVisible_ && !popupBuffer_.empty() && popupBufferW_ > 0 && popupBufferH_ > 0;
-    }
-
-    if (hasPopup) {
-        // Make a copy and composite popup onto it
-        size_t viewSize = static_cast<size_t>(width) * height * 4;
-        std::vector<uint8_t> composited(static_cast<const uint8_t*>(buffer),
-                                        static_cast<const uint8_t*>(buffer) + viewSize);
-        CompositePopup(composited.data(), width, height);
-        if (paintCallback_) {
-            paintCallback_(composited.data(), width, height);
-        }
+    if (frameW_ != width || frameH_ != height) {
+        // First frame or resize: replace the whole staging buffer and mark a
+        // full frame so the JS side rebuilds its PixelMap.
+        size_t size = static_cast<size_t>(width) * height * 4;
+        frameBuffer_.assign(static_cast<const uint8_t*>(buffer),
+                            static_cast<const uint8_t*>(buffer) + size);
+        frameW_ = width;
+        frameH_ = height;
+        accumDirty_ = CefRect(0, 0, width, height);
+        accumDirtyValid_ = true;
+        fullFramePending_ = true;
     } else {
-        if (paintCallback_) {
-            paintCallback_(buffer, width, height);
+        // Incremental frame: blit only the dirty rects into the staging
+        // buffer (QCefView's dirty-region update). CEF's buffer is a full
+        // frame, so the source rows are always at full-width stride.
+        for (const auto& rc : dirtyRects) {
+            BlitDirtyRect(rc, buffer, width, height);
         }
     }
+
+    // If a popup is visible, composite it on the staging buffer and include
+    // the popup area in the dirty region.
+    if (popupVisible_ && !popupBuffer_.empty() && popupBufferW_ > 0 && popupBufferH_ > 0) {
+        CefRect written = CompositePopup(frameBuffer_.data(), frameW_, frameH_);
+        if (written.width > 0 && written.height > 0) {
+            AddToDirtyRegion(written);
+        }
+    }
+
+    if (accumDirtyValid_) {
+        NotifyFrameReady();
+    }
+}
+
+void ArkUICefRenderHandler::BlitDirtyRect(const CefRect& rc, const void* buffer,
+                                           int bufferW, int bufferH) {
+    if (frameBuffer_.empty() || frameW_ <= 0 || frameH_ <= 0) {
+        return;
+    }
+    // Clamp the rect to both the incoming buffer and the staging buffer
+    // (they have the same size on the incremental path).
+    CefRect r = rc;
+    if (r.x < 0) r.x = 0;
+    if (r.y < 0) r.y = 0;
+    if (r.x + r.width > bufferW) r.width = bufferW - r.x;
+    if (r.y + r.height > bufferH) r.height = bufferH - r.y;
+    if (r.width <= 0 || r.height <= 0) {
+        return;
+    }
+    const auto* src = static_cast<const uint8_t*>(buffer);
+    uint8_t* dst = frameBuffer_.data();
+    for (int row = 0; row < r.height; row++) {
+        size_t offset = (static_cast<size_t>(r.y + row) * bufferW + r.x) * 4;
+        memcpy(dst + offset, src + offset, static_cast<size_t>(r.width) * 4);
+    }
+    AddToDirtyRegion(r);
+}
+
+void ArkUICefRenderHandler::AddToDirtyRegion(const CefRect& rc) {
+    if (rc.width <= 0 || rc.height <= 0) {
+        return;
+    }
+    if (!accumDirtyValid_) {
+        accumDirty_ = rc;
+        accumDirtyValid_ = true;
+        return;
+    }
+    int x1 = accumDirty_.x;
+    int y1 = accumDirty_.y;
+    int x2 = accumDirty_.x + accumDirty_.width;
+    int y2 = accumDirty_.y + accumDirty_.height;
+    if (rc.x < x1) x1 = rc.x;
+    if (rc.y < y1) y1 = rc.y;
+    if (rc.x + rc.width > x2) x2 = rc.x + rc.width;
+    if (rc.y + rc.height > y2) y2 = rc.y + rc.height;
+    accumDirty_ = CefRect(x1, y1, x2 - x1, y2 - y1);
+}
+
+void ArkUICefRenderHandler::NotifyFrameReady() {
+    // Called with mutex_ held — only touch the callback (the callback itself
+    // must not call back into this handler).
+    if (paintCallback_) {
+        paintCallback_();
+    }
+}
+
+bool ArkUICefRenderHandler::ConsumePendingRegion(OsrPendingRegion& out) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!accumDirtyValid_ || frameW_ <= 0 || frameH_ <= 0) {
+        return false;
+    }
+
+    CefRect r = accumDirty_;
+    if (fullFramePending_) {
+        r = CefRect(0, 0, frameW_, frameH_);
+    }
+    // Clamp to the staging buffer as a safety net.
+    if (r.x < 0) r.x = 0;
+    if (r.y < 0) r.y = 0;
+    if (r.x + r.width > frameW_) r.width = frameW_ - r.x;
+    if (r.y + r.height > frameH_) r.height = frameH_ - r.y;
+    if (r.width <= 0 || r.height <= 0) {
+        accumDirtyValid_ = false;
+        fullFramePending_ = false;
+        return false;
+    }
+
+    out.x = r.x;
+    out.y = r.y;
+    out.w = r.width;
+    out.h = r.height;
+    out.fullFrame = fullFramePending_;
+    out.viewW = frameW_;
+    out.viewH = frameH_;
+
+    // Compact the region rows into a reused buffer (avoids per-frame alloc).
+    size_t rowBytes = static_cast<size_t>(r.width) * 4;
+    out.pixels.resize(rowBytes * r.height);
+    const uint8_t* src = frameBuffer_.data();
+    for (int row = 0; row < r.height; row++) {
+        size_t srcOffset = (static_cast<size_t>(r.y + row) * frameW_ + r.x) * 4;
+        memcpy(out.pixels.data() + row * rowBytes, src + srcOffset, rowBytes);
+    }
+
+    accumDirtyValid_ = false;
+    fullFramePending_ = false;
+    return true;
 }
 
 void ArkUICefRenderHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
@@ -170,12 +282,13 @@ void ArkUICefRenderHandler::Invalidate() {
     // This is a no-op if there's no browser; the caller (ArkUICefBrowser) handles that
 }
 
-void ArkUICefRenderHandler::CompositePopup(const void* viewBuffer, int viewW, int viewH) {
+CefRect ArkUICefRenderHandler::CompositePopup(const void* viewBuffer, int viewW, int viewH) {
     // popupRect_ is in CSS pixels (from OnPopupSize, matching GetViewRect's CSS pixel coordinate system).
     // The view buffer from OnPaint is in physical pixels (width_ * height_).
     // We must scale popupRect_ by deviceScaleFactor_ to convert to physical pixel coordinates.
+    // Returns the physical-pixel rect actually written into viewBuffer (for dirty tracking).
     if (popupBuffer_.empty() || popupBufferW_ <= 0 || popupBufferH_ <= 0) {
-        return;
+        return CefRect(0, 0, 0, 0);
     }
 
     auto* viewPixels = static_cast<uint8_t*>(const_cast<void*>(viewBuffer));
@@ -186,17 +299,12 @@ void ArkUICefRenderHandler::CompositePopup(const void* viewBuffer, int viewW, in
     int popW = static_cast<int>(popupRect_.width * deviceScaleFactor_);
     int popH = static_cast<int>(popupRect_.height * deviceScaleFactor_);
 
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
-        "CompositePopup: css(%{public}d,%{public}d,%{public}d,%{public}d) -> phys(%{public}d,%{public}d,%{public}d,%{public}d) dsf=%{public}f view=%{public}dx%{public}d popupBuf=%{public}dx%{public}d",
-        popupRect_.x, popupRect_.y, popupRect_.width, popupRect_.height,
-        popX, popY, popW, popH, deviceScaleFactor_, viewW, viewH, popupBufferW_, popupBufferH_);
-
     // Clamp to view bounds
     if (popX < 0) popX = 0;
     if (popY < 0) popY = 0;
     if (popX + popW > viewW) popW = viewW - popX;
     if (popY + popH > viewH) popH = viewH - popY;
-    if (popW <= 0 || popH <= 0) return;
+    if (popW <= 0 || popH <= 0) return CefRect(0, 0, 0, 0);
 
     // Clamp to popup buffer bounds
     if (popW > popupBufferW_) popW = popupBufferW_;
@@ -212,6 +320,7 @@ void ArkUICefRenderHandler::CompositePopup(const void* viewBuffer, int viewW, in
             memcpy(viewPixels + dstOffset, popupBuffer_.data() + srcOffset, copyBytes);
         }
     }
+    return CefRect(popX, popY, popW, popH);
 }
 
 void ArkUICefRenderHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {

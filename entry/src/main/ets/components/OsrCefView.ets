@@ -24,8 +24,32 @@ export struct OsrCefView {
   @State private pixelMap: image.PixelMap | undefined = undefined;
   @State private pageTitle: string = '';
   @State private urlInput: string = '';
-  // Track if a PixelMap creation is in progress to avoid flooding the main thread
+  // Double-buffered persistent PixelMaps. The Image component only reloads
+  // when the object REFERENCE changes (in-place content updates are not
+  // rendered — documented ArkUI behavior), and it keeps showing the previous
+  // image while a new src loads. So each incremental frame writes the dirty
+  // region into BOTH buffers (keeping their content identical) and swaps the
+  // reference to the back buffer: the reload is seamless because the old
+  // front image shows identical content. This replaces the earlier
+  // destroy/recreate Image toggle, which flashed the black background during
+  // every reload window.
+  private pmA: image.PixelMap | undefined = undefined;
+  private pmB: image.PixelMap | undefined = undefined;
+  private showA: boolean = true;
+  // Track if a PixelMap (re)creation is in progress — only used on the
+  // low-frequency full-frame path (first frame / resize). Incremental
+  // frames are synchronous and never need this guard.
   private pixelMapCreating: boolean = false;
+  // Size (physical px) of the currently displayed PixelMap. An incoming
+  // frame whose viewW/viewH differs takes the rebuild path.
+  private pmWidth: number = 0;
+  private pmHeight: number = 0;
+  // Latest full-frame payload received while a rebuild is already in flight
+  // (rapid resizes). Kept as pending and applied when the current build
+  // finishes; older payloads are replaced.
+  private pendingFullFrame: ArrayBuffer | undefined = undefined;
+  private pendingFullFrameW: number = 0;
+  private pendingFullFrameH: number = 0;
   // Track mouse button state for drag operations (scrollbar drag, text selection, etc.)
   // Tracks the LEFT button only (the only one with drag semantics).
   private mouseButtonPressed: boolean = false;
@@ -132,6 +156,11 @@ export struct OsrCefView {
   @State private dragPreviewText: string = '';
 
   @Prop viewUrl: string = '';
+  // Maximum OSR frame rate (fps). The render pipeline now runs fully
+  // synchronous (dirty-region writePixelsSync, no per-frame createPixelMap),
+  // so the historical 10fps cap is no longer required to keep the JS thread
+  // healthy. 20 is a safe default; profile and raise on capable devices.
+  @Prop osrFrameRate: number = 20;
 
    aboutToAppear(): void {
     this.urlInput = this.viewUrl;
@@ -182,7 +211,7 @@ export struct OsrCefView {
         TextInput({ text: this.urlInput })
           .fontSize(12)
           .height(28)
-          .flexGrow(1)
+          .layoutWeight(1)
           .margin({ left: 4 })
           .enabled(this.isCreated())
           .onChange((val: string) => { this.urlInput = val; })
@@ -236,7 +265,7 @@ export struct OsrCefView {
         }
       }
       .width('100%')
-      .flexGrow(1)
+      .layoutWeight(1)
       .backgroundColor(Color.Black)
       .hitTestBehavior(HitTestMode.Block)
       .focusable(true)
@@ -426,24 +455,9 @@ export struct OsrCefView {
           Text(`Scroll: ${this.scrollOffsetText || '0,0'}`)
             .fontSize(9)
             .fontColor('#999999')
-            .flexGrow(1)
+            .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-          if (this.selectedText.length > 0) {
-            Text(`Sel: ${this.selectedText.substring(0, 30)}`)
-              .fontSize(9)
-              .fontColor('#6666AA')
-              .flexGrow(1)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-
-          if (this.keyboardVisible) {
-            Text('KB: ON')
-              .fontSize(9)
-              .fontColor('#AA6666')
-          }
 
           Text(`Cursor: ${this.cursorTypeText}`)
             .fontSize(9)
@@ -492,10 +506,21 @@ export struct OsrCefView {
       arkui_cef.destroyOsrCefView(this.browserId);
       this.browserId = -1;
     }
-    if (this.pixelMap) {
-      this.pixelMap.release();
-      this.pixelMap = undefined;
+    // this.pixelMap aliases pmA/pmB — release the owners only.
+    if (this.pmA && this.pmA !== this.pmB) {
+      this.pmA.release();
     }
+    if (this.pmB) {
+      this.pmB.release();
+    }
+    this.pmA = undefined;
+    this.pmB = undefined;
+    this.pixelMap = undefined;
+    this.showA = true;
+    this.pmWidth = 0;
+    this.pmHeight = 0;
+    this.pendingFullFrame = undefined;
+    this.pixelMapCreating = false;
   }
 
   goBack(): void {
@@ -515,6 +540,7 @@ export struct OsrCefView {
       arkui_cef.cefReload(this.browserId);
     }
   }
+
 
   loadUrl(url: string): void {
     if (!this.isCreated()) {
@@ -552,7 +578,10 @@ export struct OsrCefView {
     this.cefCreating = true;
 
     let id = arkui_cef.createOsrCefView(url, width, height,
-      (buffer: ArrayBuffer, w: number, h: number) => { this.onOsrPaint(buffer, w, h); },
+      (regionData: ArrayBuffer, x: number, y: number, w: number, h: number,
+        fullFrame: boolean, viewW: number, viewH: number) => {
+        this.onOsrPaint(regionData, x, y, w, h, fullFrame, viewW, viewH);
+      },
       (id: number) => { this.onOsrCreated(id); },
       (title: string) => { this.onOsrTitleChanged(title); },
       (next: boolean) => { this.onOsrFocusTake(next); },
@@ -581,6 +610,13 @@ export struct OsrCefView {
     this.cachedDsf = dsf;
     arkui_cef.cefOsrSetScale(this.browserId, dsf);
     arkui_cef.cefOsrResize(this.browserId, this.viewWidth, this.viewHeight);
+    // Raise the frame rate above the initial 10fps set at browser creation.
+    // SetWindowlessFrameRate takes effect on the CEF UI thread; static
+    // pages emit no extra frames regardless of the cap, so raising it only
+    // affects pages with dynamic content.
+    if (this.osrFrameRate > 10) {
+      arkui_cef.cefSetFrameRate(this.browserId, this.osrFrameRate);
+    }
     // Register window-level key event filter for non-text keys (digits, symbols, etc.)
     this.registerKeyFilter();
   }
@@ -634,36 +670,160 @@ export struct OsrCefView {
     }
   }
 
-  onOsrPaint(buffer: ArrayBuffer, width: number, height: number): void {
-    // Skip if a previous PixelMap creation is still in progress.
-    // This prevents flooding the main thread with createPixelMap tasks
-    // which was the root cause of APP_INPUT_BLOCK freezes.
+  onOsrPaint(regionData: ArrayBuffer, x: number, y: number, w: number, h: number,
+             fullFrame: boolean, viewW: number, viewH: number): void {
+    if (fullFrame) {
+      // First frame or resize: the PixelMap must be (re)created at the new
+      // size. Low-frequency path.
+      this.rebuildPixelMap(regionData, viewW, viewH);
+      return;
+    }
+
+    if (this.pmWidth !== viewW || this.pmHeight !== viewH) {
+      // Incremental frame at a new view size while the rebuild is still in
+      // flight (or the PixelMap is not ready yet). The region payload is NOT
+      // a full frame, so it can't be used to rebuild — drop it and ask CEF
+      // for a full repaint. The next frame arrives as fullFrame and rebuilds
+      // with complete content (one frame of latency at most).
+      if (this.isCreated()) {
+        arkui_cef.cefInvalidate(this.browserId);
+      }
+      return;
+    }
+
+    // Incremental frame: write the dirty region into BOTH persistent buffers
+    // (API 12+, keeps their content identical) and swap the displayed
+    // reference. regionData holds compact BGRA rows (w * 4 bytes per row),
+    // so stride = w * 4 and offset = 0.
+    let pmFront = this.showA ? this.pmA : this.pmB;
+    let pmBack = this.showA ? this.pmB : this.pmA;
+    if (!pmFront || !pmBack || w <= 0 || h <= 0) {
+      return;
+    }
+    try {
+      let area: image.PositionArea = {
+        pixels: regionData,
+        offset: 0,
+        stride: w * 4,
+        region: { size: { width: w, height: h }, x: x, y: y }
+      };
+      pmFront.writePixelsSync(area);
+      pmBack.writePixelsSync(area);
+      // Swap the object reference — the Image component reloads and keeps
+      // showing the old (identical) image until the new src is ready, so
+      // there is no black flash window.
+      this.pixelMap = pmBack;
+      this.showA = !this.showA;
+    } catch (e) {
+      hilog.error(DOMAIN, MODULE, "writePixelsSync failed: %{public}s", (e as Error).message);
+    }
+  }
+
+  private rebuildPixelMap(frameData: ArrayBuffer, viewW: number, viewH: number): void {
     if (this.pixelMapCreating) {
+      // A rebuild is already in flight — keep only the latest payload; it
+      // will be applied when the current creation completes.
+      this.pendingFullFrame = frameData;
+      this.pendingFullFrameW = viewW;
+      this.pendingFullFrameH = viewH;
       return;
     }
     this.pixelMapCreating = true;
     try {
-      // CEF outputs BGRA. ArkUI createPixelMap with BGRA_8888 format matches directly.
+      // CEF outputs BGRA; createPixelMap defaults srcPixelFormat to
+      // BGRA_8888 when unspecified, matching directly. editable must be
+      // true — the incremental path writes dirty regions into the
+      // persistent buffers via writePixelsSync, which fails on
+      // non-editable PixelMaps (documented behavior).
       let opts: image.InitializationOptions = {
-        size: { width: width, height: height },
+        size: { width: viewW, height: viewH },
         pixelFormat: image.PixelMapFormat.BGRA_8888,
-        editable: false,
+        editable: true,
       };
-      image.createPixelMap(buffer, opts).then((pm: image.PixelMap) => {
-        let oldPm = this.pixelMap;
-        this.pixelMap = pm;
-        if (oldPm) {
-          oldPm.release();
-        }
-        this.pixelMapCreating = false;
+      image.createPixelMap(frameData, opts).then((pm: image.PixelMap) => {
+        // Build the second buffer from the same full-frame payload so both
+        // buffers start with identical content.
+        image.createPixelMap(frameData, opts).then((pm2: image.PixelMap) => {
+          let oldA = this.pmA;
+          let oldB = this.pmB;
+          this.pmA = pm;
+          this.pmB = pm2;
+          this.showA = true;
+          this.pixelMap = this.pmA;
+          this.pmWidth = viewW;
+          this.pmHeight = viewH;
+          if (oldA && oldA !== oldB) {
+            this.retirePixelMap(oldA);
+          }
+          if (oldB) {
+            this.retirePixelMap(oldB);
+          }
+          this.pixelMapCreating = false;
+          // Diagnostic: compare the PixelMap size against the render area
+          // size (viewWidth/viewHeight track onAreaChange). A persistent
+          // mismatch means the viewport is systematically off — the bottom
+          // of the page would look cut off.
+          hilog.info(DOMAIN, MODULE,
+            "rebuildPixelMap: pm=%{public}dx%{public}d, area=%{public}dx%{public}d",
+            viewW, viewH, this.viewWidth, this.viewHeight);
+
+          // Apply a full-frame payload that arrived while we were building.
+          if (this.pendingFullFrame !== undefined) {
+            let data = this.pendingFullFrame;
+            let pw = this.pendingFullFrameW;
+            let ph = this.pendingFullFrameH;
+            this.pendingFullFrame = undefined;
+            this.rebuildPixelMap(data, pw, ph);
+          }
+        }).catch((err: Error) => {
+          hilog.error(DOMAIN, MODULE, "createPixelMap(2nd) failed: %{public}s", err.message);
+          this.finishRebuildFailed(pm, viewW, viewH);
+        });
       }).catch((err: Error) => {
         hilog.error(DOMAIN, MODULE, "createPixelMap failed: %{public}s", err.message);
-        this.pixelMapCreating = false;
+        this.finishRebuildFailed(undefined, viewW, viewH);
       });
     } catch (e) {
-      hilog.error(DOMAIN, MODULE, "onOsrPaint error: %{public}s", (e as Error).message);
-      this.pixelMapCreating = false;
+      hilog.error(DOMAIN, MODULE, "rebuildPixelMap error: %{public}s", (e as Error).message);
+      this.finishRebuildFailed(undefined, viewW, viewH);
     }
+  }
+
+  private retirePixelMap(pm: image.PixelMap): void {
+    // Deferred release. After swapping the Image src, the component keeps
+    // rendering the OLD image while the new one loads — that old image is
+    // this just-replaced PixelMap. Releasing it immediately makes that
+    // "keep showing old image" path occasionally read a released object,
+    // which shows as a black frame during rapid resizes. 200ms comfortably
+    // covers the reload, and the memory is freed shortly after.
+    setTimeout(() => {
+      pm.release();
+    }, 200);
+  }
+
+  private finishRebuildFailed(pm: image.PixelMap | undefined, viewW: number, viewH: number): void {
+    // Rebuild failed: fall back to a single-buffer mode if we at least got
+    // the first PixelMap (the double-buffer path requires both; with only
+    // one buffer the incremental path can't swap references, so keep the
+    // single PixelMap displayed statically and request full frames).
+    if (pm) {
+      let oldA = this.pmA;
+      let oldB = this.pmB;
+      this.pmA = pm;
+      this.pmB = pm;
+      this.showA = true;
+      this.pixelMap = pm;
+      this.pmWidth = viewW;
+      this.pmHeight = viewH;
+      if (oldA && oldA !== pm) {
+        this.retirePixelMap(oldA);
+      }
+      if (oldB && oldB !== pm) {
+        this.retirePixelMap(oldB);
+      }
+    }
+    this.pixelMapCreating = false;
+    this.pendingFullFrame = undefined;
   }
 
   onOsrTitleChanged(title: string): void {

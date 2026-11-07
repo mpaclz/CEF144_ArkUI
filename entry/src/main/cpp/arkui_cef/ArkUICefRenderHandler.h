@@ -9,7 +9,23 @@
 
 namespace arkui_cef {
 
-using PaintCallback = std::function<void(const void* buffer, int width, int height)>;
+// PaintCallback: notification that a frame was composited into the persistent
+// staging buffer. The JS thread pulls the pending dirty region via
+// ConsumePendingRegion(). This mirrors QCefView's widget->update() — the
+// notification may be coalesced, but pixel data is never dropped.
+using PaintCallback = std::function<void()>;
+
+// A pending dirty region pulled from the staging buffer by the JS thread.
+struct OsrPendingRegion {
+    std::vector<uint8_t> pixels;  // compact BGRA rows (w * h * 4 bytes)
+    int x = 0;
+    int y = 0;
+    int w = 0;
+    int h = 0;
+    bool fullFrame = false;       // resize / first frame — rebuild the PixelMap
+    int viewW = 0;
+    int viewH = 0;
+};
 using ScrollOffsetCallback = std::function<void(double x, double y)>;
 using VirtualKeyboardCallback = std::function<void(bool show)>;
 using TextSelectionCallback = std::function<void(const std::string& selected_text)>;
@@ -62,12 +78,23 @@ public:
     void SetUpdateDragCursorCallback(UpdateDragCursorCallback cb) { updateDragCursorCallback_ = std::move(cb); }
 
     void Invalidate();
-    void SetPopupBuffer(const void* buffer, int width, int height);
+
+    // Called on the JS thread: takes the accumulated dirty region out of the
+    // staging buffer (resets the accumulation). Returns false when nothing is
+    // pending. |out.pixels| is reused across calls to avoid per-frame allocs.
+    bool ConsumePendingRegion(OsrPendingRegion& out);
 
     IMPLEMENT_REFCOUNTING(ArkUICefRenderHandler);
 
 private:
-    void CompositePopup(const void* viewBuffer, int viewW, int viewH);
+    // Blits a dirty rect from a CEF paint buffer into the staging buffer
+    // (physical pixel coords). Must be called with mutex_ held.
+    void BlitDirtyRect(const CefRect& rc, const void* buffer, int bufferW, int bufferH);
+    // Composites the popup onto |viewBuffer| and returns the physical-pixel
+    // rect actually written (for dirty tracking). Must be called with mutex_ held.
+    CefRect CompositePopup(const void* viewBuffer, int viewW, int viewH);
+    void AddToDirtyRegion(const CefRect& rc);
+    void NotifyFrameReady();
 
     int width_;
     int height_;
@@ -83,6 +110,16 @@ private:
     std::vector<uint8_t> popupBuffer_;
     int popupBufferW_ = 0;
     int popupBufferH_ = 0;
+
+    // Persistent staging frame buffer (physical pixels, BGRA), the ArkUI
+    // counterpart of QCefView's m_cefViewImage. CEF UI thread blits dirty
+    // rects into it; the JS thread pulls accumulated regions out of it.
+    std::vector<uint8_t> frameBuffer_;
+    int frameW_ = 0;
+    int frameH_ = 0;
+    CefRect accumDirty_;          // accumulated dirty rect (physical px)
+    bool accumDirtyValid_ = false;
+    bool fullFramePending_ = false;
 
     ScrollOffsetCallback scrollOffsetCallback_;
     VirtualKeyboardCallback virtualKeyboardCallback_;

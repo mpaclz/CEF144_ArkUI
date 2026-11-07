@@ -203,6 +203,19 @@ CefRefPtr<ArkUICefBrowser> ArkUICefManager::getBrowser(int64_t id) {
     return it->second;
 }
 
+CefRefPtr<ArkUICefRenderHandler> ArkUICefManager::getRenderHandler(int64_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = browsers_.find(id);
+    if (it == browsers_.end()) {
+        return nullptr;
+    }
+    CefRefPtr<ArkUICefClient> client = it->second->getClient();
+    if (!client) {
+        return nullptr;
+    }
+    return client->GetArkUICefRenderHandler();
+}
+
 bool ArkUICefManager::hasBrowser(int64_t id) {
     std::lock_guard<std::mutex> lock(mutex_);
     return browsers_.find(id) != browsers_.end();

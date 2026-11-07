@@ -4,6 +4,7 @@
 #include "arkui/native_node.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "ArkUICefClient.h"
 #include <string>
 #include <functional>
 
@@ -18,8 +19,6 @@ struct Node {
 }
 
 namespace arkui_cef {
-
-class ArkUICefClient;
 
 /**
  * @class ArkUICefBrowser
@@ -194,6 +193,12 @@ public:
      * @return 浏览器 ID
      */
     int64_t getId() const { return id_; }
+
+    /** @brief 获取关联的 Client（OSR 渲染链路查询用，可能为空） */
+    CefRefPtr<ArkUICefClient> getClient() const { return client_; }
+
+    /** @brief 获取 CEF Browser（页面执行 JS 等用，创建前可能为空） */
+    CefRefPtr<CefBrowser> getCefBrowser() const { return browser_; }
     
     /**
      * @brief 获取底层窗口句柄
@@ -241,6 +246,13 @@ public:
     void setOsrScale(float factor);
 
     void setComponentOffset(int x, int y);
+
+    /**
+     * @brief 设置离屏渲染最大帧率（OSR 模式）
+     * @param frameRate 帧率值（fps），最小 1
+     * @thread 应在 CEF UI 线程调用
+     */
+    void setFrameRate(int frameRate);
     
     /**
      * @brief 内部回调：浏览器创建完成

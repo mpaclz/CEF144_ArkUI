@@ -30,7 +30,14 @@ button:hover { opacity: 0.85; }
 .cursor-box .cexp { font-size: 10px; color: #666; margin-top: 3px; line-height: 1.3; }
 .cursor-box.unsup .cexp { color: #e91e63; }
 #pinchZoomBox { width: 200px; height: 200px; background: linear-gradient(135deg, #667eea, #764ba2); border-radius: 8px; margin: 0 auto; display: flex; align-items: center; justify-content: center; color: white; font-size: 14px; text-align: center; transform-origin: center; touch-action: none; }
-#statusBar { position: fixed; bottom: 0; left: 0; right: 0; background: #333; color: #0f0; font-family: monospace; font-size: 10px; padding: 3px 8px; z-index: 999; }
+/* Mouse move test */
+#mouseArea { background: #e8f5e9; border: 2px solid #4CAF50; border-radius: 6px; height: 100px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #555; }
+
+/* Right-click context menu test */
+#contextArea { background: #fce4ec; border: 2px solid #e91e63; border-radius: 6px; height: 80px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #555; }
+
+/* Link navigation test */
+#linkLog { font-size: 12px; color: #333; margin-top: 4px; min-height: 18px; }
 </style>
 </head>
 <body>
@@ -208,16 +215,39 @@ button:hover { opacity: 0.85; }
 <div class="note">验证：触摸滑动和滚轮都能滚动此区域。</div>
 </div>
 
-<div id="statusBar">Status: Ready</div>
+<!-- ========== Part 6: 鼠标移动测试 ========== -->
+<div class="section">
+<h2>6. 鼠标移动测试 Mouse Move Test</h2>
+<div id="mouseArea" onmousemove="this.innerText='鼠标位置: '+event.offsetX+', '+event.offsetY" onmouseleave="this.innerText='鼠标已离开 Mouse left'">
+  请在此区域移动鼠标 Move mouse here
+</div>
+<div class="note">验证: 鼠标移动时应实时显示坐标（触摸板单指滑动同样触发）。验证SendMouseMoveEvent转发。</div>
+</div>
+
+<!-- ========== Part 7: 右键菜单测试 ========== -->
+<div class="section">
+<h2>7. 右键菜单测试 Right Click Context Menu</h2>
+<div id="contextArea" oncontextmenu="event.preventDefault();document.getElementById('contextLog').innerText='右键菜单已触发'">
+  请在此区域右键点击 Right-click here
+</div>
+<div id="contextLog" style="margin-top:4px;font-size:12px;">未触发</div>
+<div class="note">验证: 右键点击后应显示"右键菜单已触发"（右键按钮事件转发）。若 Chromium 内部右键菜单可用，此处用于确认右键事件本身到达页面。</div>
+</div>
+
+<!-- ========== Part 8: 链接导航测试 ========== -->
+<div class="section">
+<h2>8. 链接导航测试 Link Navigation</h2>
+<a href="javascript:void(0)" onclick="document.getElementById('linkLog').innerText='链接被点击，当前URL: '+location.href">点击此链接 Click this link</a>
+<div id="linkLog">未点击</div>
+<div class="note">验证: 点击链接后应显示当前URL。验证页面内导航与点击事件转发。</div>
+</div>
 
 <script>
 function log(msg) {
   document.getElementById('log').innerText = msg;
-  document.getElementById('statusBar').innerText = 'Status: ' + msg;
 }
 function clickLog(msg) {
   document.getElementById('clickLog').innerText = msg;
-  document.getElementById('statusBar').innerText = 'Status: ' + msg;
 }
 var box = document.getElementById('pinchZoomBox');
 var initialDist = 0;

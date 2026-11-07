@@ -48,7 +48,6 @@ input:focus, textarea:focus { border-color: #2196f3; outline: none; }
   background: #1e1e1e; color: #4caf50; font-family: "Consolas", monospace; font-size: 11px;
   padding: 8px; border-radius: 4px; min-height: 80px; max-height: 180px; overflow-y: auto; white-space: pre-wrap;
 }
-#statusBar { position: fixed; bottom: 0; left: 0; right: 0; background: #333; color: #0f0; font-family: monospace; font-size: 10px; padding: 3px 8px; z-index: 999; }
 </style>
 </head>
 <body>
@@ -220,17 +219,13 @@ input:focus, textarea:focus { border-color: #2196f3; outline: none; }
 <div id="logArea">页面已加载 Page loaded</div>
 </div>
 
-<div id="statusBar">Status: Ready</div>
-
 <script>
 var logArea = document.getElementById('logArea');
-var statusBar = document.getElementById('statusBar');
 
 function log(msg) {
   var t = new Date().toLocaleTimeString();
   logArea.innerHTML = '[' + t + '] ' + msg + '\n' + logArea.innerHTML;
   if (logArea.innerHTML.length > 5000) logArea.innerHTML = logArea.innerHTML.substring(0, 5000);
-  statusBar.innerText = 'Status: ' + msg;
 }
 
 // --- Drag Source: all .drag-item elements ---

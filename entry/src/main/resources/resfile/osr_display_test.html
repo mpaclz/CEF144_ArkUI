@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OSR 显示渲染测试</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; background: #f0f0f0; padding: 16px; color: #333; }
+h1 { text-align: center; margin-bottom: 16px; font-size: 20px; color: #222; }
+h2 { font-size: 15px; color: #444; margin-bottom: 8px; border-bottom: 2px solid #ccc; padding-bottom: 4px; }
+.section { background: white; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.note { font-size: 12px; color: #888; margin-top: 4px; }
+
+/* 1. Color Rendering */
+.color-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.color-card { border-radius: 8px; padding: 12px; text-align: center; color: white; font-size: 13px; font-weight: bold; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); min-height: 60px; display: flex; flex-direction: column; justify-content: center; }
+
+/* 2. Scroll */
+.scroll-box { background: #fafafa; border: 2px solid #ddd; border-radius: 8px; height: 200px; overflow-y: auto; padding: 12px; }
+.scroll-box p { margin-bottom: 12px; line-height: 1.6; font-size: 14px; }
+.scroll-info { font-size: 12px; color: #0066cc; margin-top: 4px; }
+
+/* 7. Select Dropdown (Popup) */
+select { padding: 8px 16px; font-size: 14px; border-radius: 6px; border: 2px solid #ddd; background: white; }
+
+/* 10. Resize detection */
+#resizeInfo { font-size: 13px; color: #0066cc; }
+
+/* 12. Image rendering */
+
+/* 13. CSS Animation */
+@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.1); } }
+#animBox { width: 60px; height: 60px; background: #9C27B0; border-radius: 50%; margin: 8px auto; animation: pulse 2s infinite; }
+
+/* 14. Canvas */
+canvas { border: 1px solid #ddd; border-radius: 4px; display: block; margin: 8px auto; }
+
+/* 15. Flexbox layout test */
+.flex-test { display: flex; gap: 8px; }
+.flex-test div { flex: 1; text-align: center; padding: 12px; border-radius: 6px; color: white; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>OSR 显示渲染测试页</h1>
+<!-- 1. Color Rendering -->
+<div class="section">
+  <h2>1. 颜色渲染测试 Color Rendering</h2>
+  <div class="color-grid">
+    <div class="color-card" style="background:#FF0000;">红色 Red<br>#FF0000</div>
+    <div class="color-card" style="background:#00FF00;">绿色 Green<br>#00FF00</div>
+    <div class="color-card" style="background:#0000FF;">蓝色 Blue<br>#0000FF</div>
+    <div class="color-card" style="background:#FFFF00;color:#333;text-shadow:none;">黄色 Yellow<br>#FFFF00</div>
+    <div class="color-card" style="background:#FF00FF;">品红 Magenta<br>#FF00FF</div>
+    <div class="color-card" style="background:#00FFFF;color:#333;text-shadow:none;">青色 Cyan<br>#00FFFF</div>
+    <div class="color-card" style="background:#FFA500;">橙色 Orange<br>#FFA500</div>
+    <div class="color-card" style="background:#808080;">灰色 Gray<br>#808080</div>
+  </div>
+  <div class="note">验证: 每种颜色应与名称一致。BGRA格式不应出现红蓝互换。</div>
+</div>
+
+<!-- 2. Scroll Test -->
+<div class="section">
+  <h2>2. 滚动测试 Scroll Test</h2>
+  <div class="scroll-box" id="scrollBox">
+    <p>第1行 Line 1: 触摸滑动或鼠标滚轮滚动，观察流畅度（脏矩形更新路径）。</p>
+    <p>第2行 Line 2: 滚动是脏区面积最大的场景，用于验证增量帧管线性能。</p>
+    <p>第3行 Line 3: Scroll content line 3.</p>
+    <p>第4行 Line 4: Scroll content line 4.</p>
+    <p>第5行 Line 5: Scroll content line 5.</p>
+    <p>第6行 Line 6: Scroll content line 6.</p>
+    <p>第7行 Line 7: Scroll content line 7.</p>
+    <p>第8行 Line 8: Scroll content line 8.</p>
+    <p>第9行 Line 9: Scroll content line 9.</p>
+    <p>第10行 Line 10: Scroll content line 10.</p>
+    <p>第11行 Line 11: Scroll content line 11.</p>
+    <p>第12行 Line 12: Scroll content line 12.</p>
+    <p>第13行 Line 13: Scroll content line 13.</p>
+    <p>第14行 Line 14: Scroll content line 14.</p>
+    <p>第15行 Line 15: 如果你能看到这行，说明滚动正常工作！</p>
+  </div>
+  <div class="scroll-info" id="scrollInfo">滚动位置: 0</div>
+  <div class="note">验证: 整页滚动和区域内滚动都应正常、跟手。底部状态栏应显示滚动偏移量。</div>
+</div>
+
+<!-- 3. Select Dropdown (Popup Rendering) -->
+<div class="section">
+  <h2>3. 下拉菜单测试 Popup/Select Test</h2>
+  <select onchange="document.getElementById('selectLog').innerText='选择了: '+this.value">
+    <option value="选项A">选项A - Option A</option>
+    <option value="选项B">选项B - Option B</option>
+    <option value="选项C">选项C - Option C</option>
+    <option value="选项D">选项D - Option D</option>
+  </select>
+  <div id="selectLog" style="margin-top:8px;font-size:13px;color:#333;">未选择</div>
+  <div class="note">验证: 点击下拉箭头后应弹出选项列表（PET_POPUP 合成路径）。选择后应显示选中项，点击外部区域后关闭。</div>
+</div>
+
+<!-- 4. Resize / Viewport -->
+<div class="section">
+  <h2>4. 窗口尺寸测试 Resize Test</h2>
+  <div id="resizeInfo">当前视口: 等待加载...</div>
+  <div class="note">验证: 拖动窗口边缘改变大小时，此处应持续更新且画面无黑块、无残留（全帧重建路径）。</div>
+</div>
+
+<!-- 5. Image Rendering -->
+<div class="section">
+  <h2>5. 图片渲染测试 Image Rendering</h2>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;">
+    <svg width="80" height="80" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="40" cy="40" r="35" fill="#FF6B6B" stroke="#333" stroke-width="2"/>
+      <text x="40" y="45" text-anchor="middle" fill="white" font-size="12">SVG</text>
+    </svg>
+    <div style="width:80px;height:80px;background:linear-gradient(135deg,#667eea,#764ba2);border-radius:8px;display:flex;align-items:center;justify-content:center;color:white;font-size:11px;">Gradient</div>
+  </div>
+  <div class="note">验证: SVG和CSS渐变应正确渲染。验证矢量图形和渐变色渲染通路。</div>
+</div>
+
+<!-- 6. CSS Animation -->
+<div class="section">
+  <h2>6. CSS动画测试 CSS Animation</h2>
+  <div id="animBox"></div>
+  <div class="note">验证: 紫色圆球应持续脉冲动画且流畅（增量帧持续刷新，观察帧率）。</div>
+</div>
+
+<!-- 7. Canvas Rendering -->
+<div class="section">
+  <h2>7. Canvas渲染测试 Canvas Rendering</h2>
+  <canvas id="testCanvas" width="200" height="80"></canvas>
+  <div class="note">验证: Canvas应显示彩色矩形和文字。验证2D Canvas软件渲染。</div>
+</div>
+
+<!-- 8. Flexbox Layout -->
+<div class="section">
+  <h2>8. Flexbox布局测试 Flexbox Layout</h2>
+  <div class="flex-test">
+    <div style="background:#e91e63;">Flex 1</div>
+    <div style="background:#3f51b5;">Flex 2</div>
+    <div style="background:#009688;">Flex 3</div>
+  </div>
+  <div class="note">验证: 三个色块应等宽并排。验证CSS Flexbox布局引擎。</div>
+</div>
+
+<script>
+// Scroll tracking
+document.getElementById('scrollBox').addEventListener('scroll', function() {
+  document.getElementById('scrollInfo').innerText = '滚动位置: ' + Math.round(this.scrollTop) + ' / ' + Math.round(this.scrollHeight);
+});
+
+// Resize tracking
+function updateResize() {
+  document.getElementById('resizeInfo').innerText = '当前视口: ' + window.innerWidth + ' x ' + window.innerHeight;
+}
+window.addEventListener('resize', updateResize);
+updateResize();
+
+// Canvas drawing
+var canvas = document.getElementById('testCanvas');
+var ctx = canvas.getContext('2d');
+ctx.fillStyle = '#4CAF50';
+ctx.fillRect(10, 10, 60, 60);
+ctx.fillStyle = '#2196F3';
+ctx.fillRect(80, 10, 60, 60);
+ctx.fillStyle = '#FF9800';
+ctx.fillRect(150, 10, 40, 60);
+ctx.fillStyle = '#333';
+ctx.font = '12px sans-serif';
+ctx.fillText('Canvas OK', 60, 75);
+</script>
+
+</body>
+</html>

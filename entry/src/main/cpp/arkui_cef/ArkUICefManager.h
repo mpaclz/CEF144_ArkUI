@@ -109,6 +109,13 @@ public:
      * @return 浏览器引用，若不存在返回 nullptr
      */
     CefRefPtr<ArkUICefBrowser> getBrowser(int64_t id);
+
+    /**
+     * @brief 获取 OSR 浲览器的渲染处理器（帧消费入口）
+     * @param id 浏览器 ID
+     * @return 渲染处理器，浏览器不存在或非 OSR 模式时返回 nullptr
+     */
+    CefRefPtr<ArkUICefRenderHandler> getRenderHandler(int64_t id);
     
     /**
      * @brief 检查浏览器是否存在

@@ -244,6 +244,20 @@ void ArkUICefClient::OnTakeFocus(CefRefPtr<CefBrowser> browser, bool next) {
     }
 }
 
+bool ArkUICefClient::OnConsoleMessage(CefRefPtr<CefBrowser> browser,
+                                      cef_log_severity_t level,
+                                      const CefString& message,
+                                      const CefString& source,
+                                      int line) {
+    // Forward web console output to hilog for on-device page diagnostics.
+    std::string msg = message.ToString();
+    std::string src = source.ToString();
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "WebConsole",
+        "%{public}s (source: %{public}s:%{public}d)",
+        msg.c_str(), src.c_str(), line);
+    return false;
+}
+
 bool ArkUICefClient::OnCursorChange(CefRefPtr<CefBrowser> browser,
                                     CefCursorHandle cursor,
                                     cef_cursor_type_t type,

@@ -274,6 +274,16 @@ public:
      */
     void OnTakeFocus(CefRefPtr<CefBrowser> browser, bool next) override;
 
+    // --- CefDisplayHandler: Console ---
+    // Web page console messages forwarded to hilog — the diagnostic
+    // entry point for pages loaded inside OSR (viewport/scroll metrics
+    // via cefExecuteJavaScript + console.log).
+    bool OnConsoleMessage(CefRefPtr<CefBrowser> browser,
+                          cef_log_severity_t level,
+                          const CefString& message,
+                          const CefString& source,
+                          int line) override;
+
     // --- CefDisplayHandler: Cursor ---
     bool OnCursorChange(CefRefPtr<CefBrowser> browser,
                         CefCursorHandle cursor,

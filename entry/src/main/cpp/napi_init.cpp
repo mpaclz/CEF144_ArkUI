@@ -260,21 +260,27 @@ struct CefCreatedCallbackData {
     int64_t browserId = -1;
 };
 
-// OSR paint data: holds a copy of the BGRA pixel buffer from CEF OnPaint
-struct OsrPaintData {
-    std::vector<uint8_t> pixels;
-    int width;
-    int height;
-};
-
-// Custom threadsafe function for OSR paint callbacks.
+// Custom threadsafe function for OSR paint notifications.
 // JsThreadSafeCallback doesn't support ArrayBuffer, so we need a dedicated
-// threadsafe function that creates an ArrayBuffer from the pixel data.
+// threadsafe function that delivers the pending dirty region as an ArrayBuffer.
+//
+// Pixel data itself lives in the ArkUICefRenderHandler's persistent staging
+// buffer (blitted there on the CEF UI thread, never dropped). This tsfn only
+// carries a "frame ready" notification which is coalesced by framePending_:
+// when the JS thread is still busy, later frames merge into the accumulated
+// dirty region instead of queueing up — content is never lost, notifications
+// are. This mirrors QCefView's widget->update() coalescing.
 struct OsrPaintTsfn {
     napi_threadsafe_function tsfn = nullptr;
-    // Frame-skipping: if a frame is still pending in the JS thread queue,
-    // skip the next frame to prevent flooding and APP_INPUT_BLOCK.
+    // Notification coalescing (formerly frame skipping — with the staging
+    // buffer no pixel data is dropped, only redundant notifications).
     std::atomic<bool> framePending_{false};
+    // Browser id is assigned after createOsrBrowser() returns; until then
+    // notifications are delivered but consumed as "no data" (safe — the
+    // accumulated dirty region stays in the render handler).
+    std::atomic<int64_t> browserId_{-1};
+    // Reused region buffer to avoid per-frame heap traffic.
+    arkui_cef::OsrPendingRegion region_;
 
     ~OsrPaintTsfn() {
         Release();
@@ -298,26 +304,25 @@ struct OsrPaintTsfn {
         return status == napi_ok && tsfn != nullptr;
     }
 
-    void Call(const void* buf, int w, int h) {
+    void SetBrowserId(int64_t id) {
+        browserId_.store(id);
+    }
+
+    // Called from the CEF UI thread (inside ArkUICefRenderHandler::OnPaint,
+    // with the handler's mutex held): must stay lock-free and non-blocking.
+    void Notify() {
         if (!tsfn) return;
 
-        // Frame-skipping: if the previous frame hasn't been consumed by the JS thread yet,
-        // skip this frame to avoid queue flooding and main-thread blocking.
+        // Coalesce: if a notification is still pending in the JS thread queue,
+        // skip this one — the JS side will consume the accumulated dirty
+        // region (which already includes this frame) when it catches up.
         bool expected = false;
         if (!framePending_.compare_exchange_strong(expected, true)) {
-            // Previous frame still pending — skip this one
             return;
         }
 
-        size_t size = static_cast<size_t>(w) * h * 4;
-        auto* data = new OsrPaintData{
-            std::vector<uint8_t>(static_cast<const uint8_t*>(buf),
-                                 static_cast<const uint8_t*>(buf) + size),
-            w, h
-        };
-        napi_status status = napi_call_threadsafe_function(tsfn, data, napi_tsfn_nonblocking);
+        napi_status status = napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_nonblocking);
         if (status != napi_ok) {
-            delete data;
             framePending_.store(false);
         }
     }
@@ -330,37 +335,61 @@ struct OsrPaintTsfn {
     }
 
     static void CallJs(napi_env env, napi_value jsCallback, void* context, void* data) {
-        auto* paintData = static_cast<OsrPaintData*>(data);
-        if (!paintData) return;
-        if (!env || !jsCallback) {
-            delete paintData;
-            return;
-        }
-
-        napi_value arrayBuffer;
-        void* bufferData = nullptr;
-        napi_status status = napi_create_arraybuffer(env, paintData->pixels.size(), &bufferData, &arrayBuffer);
-        if (status == napi_ok) {
-            memcpy(bufferData, paintData->pixels.data(), paintData->pixels.size());
-
-            napi_value widthVal;
-            napi_create_int32(env, paintData->width, &widthVal);
-            napi_value heightVal;
-            napi_create_int32(env, paintData->height, &heightVal);
-
-            napi_value argv[3] = { arrayBuffer, widthVal, heightVal };
-            napi_value global;
-            napi_get_global(env, &global);
-            napi_value result;
-            napi_call_function(env, global, jsCallback, 3, argv, &result);
-        }
-        delete paintData;
-
-        // Clear the pending flag so the next frame can be sent
+        // data is always nullptr — notifications carry no payload; the pixel
+        // data is pulled from the render handler's staging buffer below.
+        (void)data;
         auto* self = static_cast<OsrPaintTsfn*>(context);
-        if (self) {
-            self->framePending_.store(false);
+        if (!self) return;
+
+        // Pull the accumulated dirty region from the render handler on this
+        // (JS) thread. Looked up by browser id to avoid a reference cycle
+        // (handler -> paintCallback -> tsfn -> handler). region_ is reused
+        // across calls to avoid per-frame heap traffic.
+        arkui_cef::OsrPendingRegion& region = self->region_;
+        bool hasRegion = false;
+        int64_t browserId = self->browserId_.load();
+        if (browserId > 0) {
+            auto handler = arkui_cef::ArkUICefManager::getInstance().getRenderHandler(browserId);
+            if (handler) {
+                hasRegion = handler->ConsumePendingRegion(region);
+            }
         }
+
+        if (env && jsCallback && hasRegion && !region.pixels.empty()) {
+            // Copy into a real ArrayBuffer. A zero-copy external wrapper was
+            // tried here, but full-frame payloads feed the ASYNC
+            // createPixelMap, which may read the buffer after this CallJs
+            // returns — by then the next frame's ConsumePendingRegion has
+            // already reused/overwritten the shared region_ buffer. Revert
+            // to copying for ALL payloads (incremental writePixelsSync is
+            // synchronous and could take an external buffer, but keep one
+            // well-understood path until that is separately verified).
+            napi_value arrayBuffer;
+            void* bufferData = nullptr;
+            napi_status status = napi_create_arraybuffer(
+                env, region.pixels.size(), &bufferData, &arrayBuffer);
+            if (status == napi_ok) {
+                memcpy(bufferData, region.pixels.data(), region.pixels.size());
+                napi_value xVal, yVal, wVal, hVal, fullFrameVal, viewWVal, viewHVal;
+                napi_create_int32(env, region.x, &xVal);
+                napi_create_int32(env, region.y, &yVal);
+                napi_create_int32(env, region.w, &wVal);
+                napi_create_int32(env, region.h, &hVal);
+                napi_get_boolean(env, region.fullFrame, &fullFrameVal);
+                napi_create_int32(env, region.viewW, &viewWVal);
+                napi_create_int32(env, region.viewH, &viewHVal);
+
+                napi_value argv[8] = { arrayBuffer, xVal, yVal, wVal, hVal,
+                                       fullFrameVal, viewWVal, viewHVal };
+                napi_value global;
+                napi_get_global(env, &global);
+                napi_value result;
+                napi_call_function(env, global, jsCallback, 8, argv, &result);
+            }
+        }
+
+        // Clear the pending flag so the next notification can be delivered.
+        self->framePending_.store(false);
     }
 };
 
@@ -1041,10 +1070,12 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
         "createOsrCefView: width=%{public}d, height=%{public}d", width, height);
 
-    // Wrap the paint threadsafe function in a PaintCallback
+    // Wrap the paint notification in a PaintCallback. The pixel data stays in
+    // the render handler's staging buffer; the JS thread pulls it via
+    // ConsumePendingRegion when CallJs runs.
     auto paintHolder = std::make_shared<OsrPaintCallbackHolder>(paintTsfn);
-    PaintCallback paintCallback = [paintHolder](const void* buffer, int w, int h) {
-        paintHolder->tsfn->Call(buffer, w, h);
+    PaintCallback paintCallback = [paintHolder]() {
+        paintHolder->tsfn->Notify();
     };
 
     int64_t browserId = arkui_cef::ArkUICefManager::getInstance().createOsrBrowser(
@@ -1069,6 +1100,15 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
 
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
         "createOsrCefView: browserId=%{public}ld", browserId);
+
+    // The browser id is only known now; hook the tsfn to it and force one
+    // notification. This closes the race where a first-frame notification
+    // was delivered (and consumed as "no data") before the id was assigned:
+    // the accumulated dirty region is still intact in the render handler, so
+    // this forced notification picks it up. With nothing pending it's a
+    // harmless no-op consume.
+    paintTsfn->SetBrowserId(browserId);
+    paintTsfn->Notify();
 
     napi_value result;
     napi_create_int64(env, browserId, &result);
@@ -1282,6 +1322,70 @@ static napi_value NAPI_Global_cefSetComponentOffset(napi_env env, napi_callback_
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
             base::BindOnce(&ArkUICefBrowser::setComponentOffset, browser, offsetX, offsetY)));
+    }
+    return nullptr;
+}
+
+static napi_value NAPI_Global_cefSetFrameRate(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "Expected 2 arguments: browserId, frameRate");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    int32_t frameRate = 0;
+    napi_get_value_int32(env, args[1], &frameRate);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::setFrameRate, browser, frameRate)));
+    }
+    return nullptr;
+}
+
+namespace {
+// Runs arbitrary JS in the browser's main frame. Results can be reported
+// via console.log — ArkUICefClient::OnConsoleMessage forwards them to hilog.
+void executeJavaScript(CefRefPtr<arkui_cef::ArkUICefBrowser> browser, const std::string& code) {
+    if (!browser) {
+        return;
+    }
+    CefRefPtr<CefBrowser> cefBrowser = browser->getCefBrowser();
+    if (!cefBrowser || !cefBrowser->GetMainFrame()) {
+        return;
+    }
+    cefBrowser->GetMainFrame()->ExecuteJavaScript(code, cefBrowser->GetMainFrame()->GetURL(), 0);
+}
+} // namespace
+
+static napi_value NAPI_Global_cefExecuteJavaScript(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "Expected 2 arguments: browserId, code");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    char code[8192] = {};
+    size_t codeLen = 0;
+    napi_get_value_string_utf8(env, args[1], code, sizeof(code), &codeLen);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&executeJavaScript, browser, std::string(code))));
     }
     return nullptr;
 }
@@ -1886,6 +1990,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"cefOsrResize", nullptr, NAPI_Global_cefOsrResize, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefOsrSetScale", nullptr, NAPI_Global_cefOsrSetScale, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSetComponentOffset", nullptr, NAPI_Global_cefSetComponentOffset, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefSetFrameRate", nullptr, NAPI_Global_cefSetFrameRate, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefExecuteJavaScript", nullptr, NAPI_Global_cefExecuteJavaScript, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSendMouseClick", nullptr, NAPI_Global_cefSendMouseClick, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSendMouseMove", nullptr, NAPI_Global_cefSendMouseMove, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSendMouseWheel", nullptr, NAPI_Global_cefSendMouseWheel, nullptr, nullptr, nullptr, napi_default, nullptr},
