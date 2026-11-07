@@ -250,6 +250,7 @@ void ArkUICefBrowser::sendMouseClickEvent(int x, int y, int button, bool mouseUp
     if (!browser_) {
         return;
     }
+    ApplyOsrPopupOffset(x, y);
     CefMouseEvent event;
     event.x = x;
     event.y = y;
@@ -262,6 +263,7 @@ void ArkUICefBrowser::sendMouseMoveEvent(int x, int y, bool mouseLeave, uint32_t
     if (!browser_) {
         return;
     }
+    ApplyOsrPopupOffset(x, y);
     CefMouseEvent event;
     event.x = x;
     event.y = y;
@@ -321,6 +323,7 @@ void ArkUICefBrowser::sendTouchEvent(int x, int y, int touchType, int pointerId)
     if (!browser_) {
         return;
     }
+    ApplyOsrPopupOffset(x, y);
     CefTouchEvent event;
     event.id = pointerId;
     event.x = static_cast<float>(x);
@@ -334,18 +337,62 @@ void ArkUICefBrowser::sendTouchEvent(int x, int y, int touchType, int pointerId)
     browser_->GetHost()->SendTouchEvent(event);
 }
 
+void ArkUICefBrowser::ApplyOsrPopupOffset(int& x, int& y) {
+    // OSR popups may be repositioned for display (GetPopupRectInWebView).
+    // Map the incoming view coordinate back onto CEF's original popup rect
+    // so clicks land on the right option. No-op in windowed mode or when
+    // no popup is visible.
+    if (!use_osr_ || !client_) {
+        return;
+    }
+    auto handler = client_->GetArkUICefRenderHandler();
+    if (handler) {
+        handler->ApplyPopupOffset(x, y);
+    }
+}
+
+namespace {
+// Counts UTF-16 code units in a UTF-8 string (surrogate pairs = 2 units).
+// CEF composition ranges use UTF-16 offsets, while the text travels as UTF-8.
+size_t Utf16Length(const std::string& utf8) {
+    size_t units = 0;
+    for (size_t i = 0; i < utf8.size();) {
+        unsigned char c = static_cast<unsigned char>(utf8[i]);
+        size_t advance = 1;
+        if (c >= 0xF0) {
+            advance = 4;  // > U+FFFF: surrogate pair → 2 code units
+            units += 2;
+        } else if (c >= 0xE0) {
+            advance = 3;
+            units += 1;
+        } else if (c >= 0xC0) {
+            advance = 2;
+            units += 1;
+        } else {
+            units += 1;
+        }
+        i += (i + advance <= utf8.size()) ? advance : (utf8.size() - i);
+    }
+    return units;
+}
+}
+
 void ArkUICefBrowser::imeSetComposition(const std::string& text) {
     if (!browser_) {
         return;
     }
     CefCompositionUnderline underline;
-    underline.range = CefRange(0, static_cast<size_t>(text.length()));
+    // Ranges are UTF-16 offsets — use the UTF-16 length, not the UTF-8 byte
+    // count (a UTF-8 byte count over-extends the underline for CJK text,
+    // which is 3 bytes per character but 1 UTF-16 unit each).
+    underline.range = CefRange(0, Utf16Length(text));
     underline.background_color = 0;
     browser_->GetHost()->ImeSetComposition(text, {underline},
                                            CefRange(UINT32_MAX, UINT32_MAX),
                                            CefRange(UINT32_MAX, UINT32_MAX));
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "imeSetComposition: id=%{public}ld, len=%{public}zu", id_, text.length());
+        "imeSetComposition: id=%{public}ld, utf8_len=%{public}zu, utf16_len=%{public}zu",
+        id_, text.length(), Utf16Length(text));
 }
 
 void ArkUICefBrowser::imeCommitText(const std::string& text) {

@@ -270,6 +270,8 @@ public:
     IMPLEMENT_REFCOUNTING(ArkUICefBrowser);
 
 private:
+    void ApplyOsrPopupOffset(int& x, int& y);
+
     int64_t id_;                    ///< 浏览器唯一标识符
     int width_;                     ///< 当前宽度
     int height_;                    ///< 当前高度

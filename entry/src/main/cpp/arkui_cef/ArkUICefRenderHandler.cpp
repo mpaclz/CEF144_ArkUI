@@ -326,14 +326,75 @@ CefRect ArkUICefRenderHandler::CompositePopup(const void* viewBuffer, int viewW,
 void ArkUICefRenderHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
         "OnPopupShow: show=%{public}d", show);
-    popupVisible_ = show;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        popupVisible_ = show;
+        if (!show) {
+            // Popup closed: clear the rects. Following cefclient
+            // (BrowserWindowOsrOhos::OnPopupShow), request a full view
+            // repaint right away — the popup pixels were composited into
+            // the staging buffer and only a full repaint guarantees the
+            // covered area is restored (without this the popup region
+            // lingers on screen until something else triggers a repaint).
+            ClearPopupRects();
+        }
+    }
+    if (!show) {
+        browser->GetHost()->Invalidate(PET_VIEW);
+    }
 }
 
 void ArkUICefRenderHandler::OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
         "OnPopupSize: x=%{public}d, y=%{public}d, w=%{public}d, h=%{public}d",
         rect.x, rect.y, rect.width, rect.height);
-    popupRect_ = rect;
+    if (rect.width <= 0 || rect.height <= 0) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    // rect is in CSS pixels (matching GetViewRect's coordinate system).
+    // Keep both the original rect (CEF's internal notion, needed for input
+    // coordinate mapping) and the repositioned display rect (clamped into
+    // the view so the whole popup stays visible — e.g. a dropdown opening
+    // upward near the bottom edge).
+    originalPopupRect_ = rect;
+    popupRect_ = GetPopupRectInWebView(rect);
+}
+
+CefRect ArkUICefRenderHandler::GetPopupRectInWebView(const CefRect& original) {
+    CefRect rc(original);
+    if (rc.x < 0) rc.x = 0;
+    if (rc.y < 0) rc.y = 0;
+    // View dimensions in CSS pixels.
+    int viewW = static_cast<int>(width_ / deviceScaleFactor_);
+    int viewH = static_cast<int>(height_ / deviceScaleFactor_);
+    // If the popup goes outside the view, reposition its origin instead of
+    // clipping it (mirrors cefclient's GetPopupRectInWebView).
+    if (rc.x + rc.width > viewW) rc.x = viewW - rc.width;
+    if (rc.y + rc.height > viewH) rc.y = viewH - rc.height;
+    if (rc.x < 0) rc.x = 0;
+    if (rc.y < 0) rc.y = 0;
+    return rc;
+}
+
+void ArkUICefRenderHandler::ClearPopupRects() {
+    popupRect_.Set(0, 0, 0, 0);
+    originalPopupRect_.Set(0, 0, 0, 0);
+}
+
+void ArkUICefRenderHandler::ApplyPopupOffset(int& x, int& y) {
+    // Coordinates are in CSS pixels (the event coordinate system). When the
+    // popup was repositioned for display, clicks on the DISPLAYED popup
+    // region must be mapped back to CEF's internal (original) popup rect.
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!popupVisible_ || popupRect_.width <= 0 || popupRect_.height <= 0) {
+        return;
+    }
+    if (x >= popupRect_.x && x < popupRect_.x + popupRect_.width &&
+        y >= popupRect_.y && y < popupRect_.y + popupRect_.height) {
+        x += originalPopupRect_.x - popupRect_.x;
+        y += originalPopupRect_.y - popupRect_.y;
+    }
 }
 
 void ArkUICefRenderHandler::OnImeCompositionRangeChanged(

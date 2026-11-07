@@ -53,7 +53,7 @@ public:
     void OnImeCompositionRangeChanged(CefRefPtr<CefBrowser> browser,
                                        const CefRange& selected_range,
                                        const RectList& character_bounds) override;
-    void OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
+    void OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintEleme   ntType type,
                             const RectList& dirtyRects,
                             const CefAcceleratedPaintInfo& info) override;
     void OnTextSelectionChanged(CefRefPtr<CefBrowser> browser,
@@ -84,6 +84,12 @@ public:
     // pending. |out.pixels| is reused across calls to avoid per-frame allocs.
     bool ConsumePendingRegion(OsrPendingRegion& out);
 
+    // Translates a CSS-pixel view coordinate to CEF's internal popup
+    // coordinates when the point lands on the DISPLAYED popup rect (the
+    // display rect may have been repositioned by GetPopupRectInWebView).
+    // Called from input event forwarding (mouse/touch click paths).
+    void ApplyPopupOffset(int& x, int& y);
+
     IMPLEMENT_REFCOUNTING(ArkUICefRenderHandler);
 
 private:
@@ -95,6 +101,10 @@ private:
     CefRect CompositePopup(const void* viewBuffer, int viewW, int viewH);
     void AddToDirtyRegion(const CefRect& rc);
     void NotifyFrameReady();
+    // Repositions a popup rect so it stays fully inside the view (CSS px).
+    // Mirrors cefclient's GetPopupRectInWebView.
+    CefRect GetPopupRectInWebView(const CefRect& original);
+    void ClearPopupRects();
 
     int width_;
     int height_;
@@ -104,7 +114,8 @@ private:
     PaintCallback paintCallback_;
     std::mutex mutex_;
     bool popupVisible_ = false;
-    CefRect popupRect_;
+    CefRect popupRect_;            // display rect (CSS px, repositioned into the view)
+    CefRect originalPopupRect_;    // CEF's original rect (CSS px, for input mapping)
 
     // Popup buffer (stored in CSS pixel coordinates, BGRA)
     std::vector<uint8_t> popupBuffer_;
