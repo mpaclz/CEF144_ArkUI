@@ -500,8 +500,7 @@ struct OsrPaintTsfn {
                                               region.x, region.y, region.w, region.h);
                     if (!nativeWritten) {
                         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
-                            "OSR "
-                            "native pixelmap write failed, falling back to ArrayBuffer");
+                            "OSR native pixelmap write failed, falling back to ArrayBuffer");
                     }
                 }
             }
@@ -1717,25 +1716,25 @@ static napi_value NAPI_Global_cefInvalidate(napi_env env, napi_callback_info inf
     return nullptr;
 }
 
-static napi_value NAPI_Global_cefSetWindowlessVisibility(napi_env env, napi_callback_info info) {
+static napi_value NAPI_Global_cefWasHidden(napi_env env, napi_callback_info info) {
     size_t argc = 2;
     napi_value args[2] = { nullptr };
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
     if (argc < 2) {
-        napi_throw_error(env, nullptr, "Expected 2 arguments: browserId, visible");
+        napi_throw_error(env, nullptr, "Expected 2 arguments: browserId, hidden");
         return nullptr;
     }
 
     int64_t browserId = 0;
     napi_get_value_int64(env, args[0], &browserId);
-    bool visible = false;
-    napi_get_value_bool(env, args[1], &visible);
+    bool hidden = false;
+    napi_get_value_bool(env, args[1], &hidden);
 
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::setWindowlessVisibility, browser, visible)));
+            base::BindOnce(&ArkUICefBrowser::wasHidden, browser, hidden)));
     }
     return nullptr;
 }
@@ -2262,7 +2261,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"cefSendFocusEvent", nullptr, NAPI_Global_cefSendFocusEvent, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSendCaptureLost", nullptr, NAPI_Global_cefSendCaptureLost, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefInvalidate", nullptr, NAPI_Global_cefInvalidate, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"cefSetWindowlessVisibility", nullptr, NAPI_Global_cefSetWindowlessVisibility, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefWasHidden", nullptr, NAPI_Global_cefWasHidden, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSendTouchEvent", nullptr, NAPI_Global_cefSendTouchEvent, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefImeSetComposition", nullptr, NAPI_Global_cefImeSetComposition, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefImeCommitText", nullptr, NAPI_Global_cefImeCommitText, nullptr, nullptr, nullptr, napi_default, nullptr},

@@ -161,10 +161,11 @@ public:
     void invalidate();
 
     /**
-     * @brief 设置OSR窗口可见性 (OSR 模式)
-     * @param visible true=可见, false=不可见
+     * @brief 通知浏览器可见性变化 (OSR 模式)
+     * @param hidden true=不可见（挂起布局与 OnPaint），false=恢复渲染
+     * @thread 应在 CEF UI 线程调用
      */
-    void setWindowlessVisibility(bool visible);
+    void wasHidden(bool hidden);
 
     /**
      * @brief 向浏览器发送触摸事件 (OSR 模式)

@@ -310,14 +310,30 @@ void ArkUICefBrowser::invalidate() {
         "invalidate: id=%{public}ld", id_);
 }
 
-void ArkUICefBrowser::setWindowlessVisibility(bool visible) {
+void ArkUICefBrowser::wasHidden(bool hidden) {
     if (!browser_) {
         return;
     }
-    // SetWindowlessVisibility not available in CEF 114; use SetWindowlessFrameRate to control rendering
-    browser_->GetHost()->SetWindowlessFrameRate(visible ? 30 : 0);
+    // Official OSR visibility API (QCefView uses the same, see
+    // QCefViewPrivate::onViewVisibilityChanged): stops layouting and OnPaint
+    // in the renderer while hidden. The previous frame-rate trick
+    // (SetWindowlessFrameRate 0/30) is broken in CEF144 — ClampFrameRate
+    // maps 0 back to the default 30 instead of stopping rendering.
+    browser_->GetHost()->WasHidden(hidden);
+    if (!hidden) {
+        // Kick-start frame production after un-hiding. WasHidden(true)
+        // evicts the delegated frame host and stops the video consumer; the
+        // plain WasHidden(false) resume path can leave the compositor idle
+        // (observed as a permanently frozen page). Mirrors cefclient
+        // (BrowserWindowOsrOhos::CreateBrowser: "Send resize notification so
+        // the compositor is assigned the correct viewport size and begins
+        // rendering"): WasResized() re-synchronizes visual properties and
+        // Invalidate(PET_VIEW) requests a fresh full frame.
+        browser_->GetHost()->WasResized();
+        browser_->GetHost()->Invalidate(PET_VIEW);
+    }
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "setWindowlessVisibility: id=%{public}ld, visible=%{public}d (via frame rate)", id_, visible);
+        "wasHidden: id=%{public}ld, hidden=%{public}d", id_, hidden);
 }
 
 void ArkUICefBrowser::sendTouchEvent(int x, int y, int touchType, int pointerId) {

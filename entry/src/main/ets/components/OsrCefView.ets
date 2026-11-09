@@ -96,6 +96,11 @@ export struct OsrCefView {
   private renderAreaActive: boolean = false;
   // Set by WINDOW_INACTIVE — when true, WINDOW_ACTIVE should restore CEF focus.
   private focusLostFlag: boolean = false;
+  // Current render-pause state (CEF WasHidden). Transition-guarded so
+  // repeated onVisibleAreaChange events are idempotent. Mirrors QCefView's
+  // QEvent::Show/Hide handling — window FOCUS events deliberately do not
+  // participate (an unfocused window may still be visible and interactive).
+  private osrHidden: boolean = false;
   // Component position within the window (from globalPosition, in vp/CSS px)
   // and device scale factor — cached from onAreaChange for IME cursor computation.
   private componentGlobalX: number = 0;
@@ -474,6 +479,10 @@ export struct OsrCefView {
     .backgroundColor(Color.Black)
     .focusable(true)
     .onVisibleAreaChange([0.0, 0.01], (isVisible: boolean, currentRatio: number) => {
+      // Pause/resume CEF rendering on full (in)visibility — tab switches and
+      // scrolling off-screen. Same pattern as QCefView's QEvent::Show/Hide
+      // → WasHidden().
+      this.setOsrHidden(!isVisible || currentRatio === 0);
       if (!isVisible && currentRatio === 0) {
         if (this.imeAttached) {
           hilog.info(DOMAIN, MODULE, "onVisibleAreaChange: invisible, detaching IME");
@@ -497,6 +506,17 @@ export struct OsrCefView {
 
   isCreated(): boolean {
     return this.browserId > 0;
+  }
+
+  // Pause/resume the CEF render pipeline (WasHidden). Called from visibility
+  // transitions only — the osrHidden guard makes repeated events idempotent.
+  private setOsrHidden(hidden: boolean): void {
+    if (!this.isCreated() || this.osrHidden === hidden) {
+      return;
+    }
+    this.osrHidden = hidden;
+    hilog.info(DOMAIN, MODULE, "setOsrHidden: %{public}s", hidden ? "true" : "false");
+    arkui_cef.cefWasHidden(this.browserId, hidden);
   }
 
   destroy(): void {
@@ -644,6 +664,13 @@ export struct OsrCefView {
           if (this.isCreated() && this.renderAreaActive) {
             arkui_cef.cefSendFocusEvent(this.browserId, false);
           }
+          // Deliberately NOT pausing rendering here: WINDOW_INACTIVE is a
+          // focus event, not a visibility event. On PC form factors an
+          // unfocused window can still be fully visible (and must keep
+          // rendering and accepting wheel/touchpad input) — mirrors
+          // cefclient, where focus and WasHidden are decoupled. Only
+          // component-level invisibility (onVisibleAreaChange, e.g. tab
+          // switches) pauses the render pipeline.
         } else if (event === window.WindowEventType.WINDOW_ACTIVE) {
           if (this.focusLostFlag) {
             this.focusLostFlag = false;

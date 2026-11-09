@@ -48,7 +48,7 @@ export const cefSendMouseWheel: (browserId: number, x: number, y: number, deltaX
 export const cefSendFocusEvent: (browserId: number, focused: boolean) => void;
 export const cefSendCaptureLost: (browserId: number) => void;
 export const cefInvalidate: (browserId: number) => void;
-export const cefSetWindowlessVisibility: (browserId: number, visible: boolean) => void;
+export const cefWasHidden: (browserId: number, hidden: boolean) => void;
 export const cefSendTouchEvent: (browserId: number, x: number, y: number, touchType: number, pointerId: number) => void;
 export const cefImeSetComposition: (browserId: number, text: string) => void;
 export const cefImeCommitText: (browserId: number, text: string) => void;
