@@ -17,7 +17,7 @@ void ArkUICefClient::OnTitleChange(CefRefPtr<CefBrowser> browser,
                                    const CefString& title) {
     CEF_REQUIRE_UI_THREAD();
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefClient", 
-        "OnTitleChange: title=%{public}s, browser_id=%{public}d, arkui_cef_id_=%{public}d",
+        "OnTitleChange: title=%{public}s, browser_id=%{public}d, arkui_cef_id_=%{public}ld",
         title.ToString().c_str(), browser->GetIdentifier(), arkui_cef_id_);
     
     if (browser->GetIdentifier() != arkui_cef_id_) {
@@ -42,15 +42,12 @@ bool ArkUICefClient::OnBeforePopup(CefRefPtr<CefBrowser> browser, CefRefPtr<CefF
     // Load the target URL in the current frame instead of opening a new popup window
     frame->LoadURL(target_url);
     return true;
-    
-    // Open a new popup window
-    // return false;
 }
 
 void ArkUICefClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     CEF_REQUIRE_UI_THREAD();
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefClient", 
-        "OnAfterCreated: browser_id=%{public}d, id_=%{public}d",
+        "OnAfterCreated: browser_id=%{public}d, id_=%{public}ld",
         browser->GetIdentifier(), id_);
     
     if (arkui_cef_id_ < 0) {
@@ -137,8 +134,6 @@ bool ArkUICefClient::OnBeforeDownload(CefRefPtr<CefBrowser> browser,
     CefString download_dir;
     if (CefGetPath(PK_DIR_RESOURCES, download_dir) && !download_dir.empty()) {
         std::string download_path = download_dir.ToString() + "/" + suggested_name.ToString();
-        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefClient",
-            "OnBeforeDownload: download_path=%{public}s", download_path.c_str());
         callback->Continue(CefString(download_path), true);
     } else {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefClient",
@@ -224,7 +219,7 @@ bool ArkUICefClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser> browser,
 
     if (requested_permissions & CEF_PERMISSION_TYPE_CLIPBOARD) {
         OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefClient",
-            "OnShowPermissionPrompt: granting clipboard permission, origin=%{public}s, prompt_id=%{public}llu",
+            "OnShowPermissionPrompt: granting clipboard permission, origin=%{public}s, prompt_id=%{public}lu",
             requesting_origin.ToString().c_str(), prompt_id);
         callback->Continue(CEF_PERMISSION_RESULT_ACCEPT);
         return true;
@@ -263,8 +258,6 @@ bool ArkUICefClient::OnCursorChange(CefRefPtr<CefBrowser> browser,
                                     cef_cursor_type_t type,
                                     const CefCursorInfo& custom_cursor_info) {
     CEF_REQUIRE_UI_THREAD();
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefClient",
-        "OnCursorChange: type=%{public}d", static_cast<int>(type));
     if (cursorChangeCallback_) {
         cursorChangeCallback_(static_cast<int>(type));
         return true;

@@ -5,6 +5,14 @@ import { OsrCefView } from '../components/OsrCefView';
 @Entry
 @Component
 struct MultiTabPage {
+  // Index of the currently displayed tab, synced into the OSR views to drive
+  // their keyboard ownership (key filter target + IMF session). Tabs.onChange
+  // is used instead of relying solely on visibility edges:
+  // onVisibleAreaChange does not fire the FIRST time a TabContent's component
+  // tree gets attached (non-mounted nodes are not measured), so the first
+  // switch to an OSR tab would leave the window key filter inactive.
+  @State osrActiveTabIndex: number = -1;
+
   build() {
     RelativeContainer() {
       Tabs() {
@@ -66,7 +74,11 @@ struct MultiTabPage {
         )
         TabContent() {
           Column() {
-            OsrCefView({viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_display_test.html'})
+            OsrCefView({
+              viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_display_test.html',
+              myTabIndex: 6,
+              activeTabIndex: this.osrActiveTabIndex
+            })
           }
           .width('100%')
           .height('100%')
@@ -76,7 +88,11 @@ struct MultiTabPage {
         )
         TabContent() {
           Column() {
-            OsrCefView({viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_input_test.html'})
+            OsrCefView({
+              viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_input_test.html',
+              myTabIndex: 7,
+              activeTabIndex: this.osrActiveTabIndex
+            })
           }
           .width('100%')
           .height('100%')
@@ -86,7 +102,11 @@ struct MultiTabPage {
         )
         TabContent() {
           Column() {
-            OsrCefView({viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_drag_test.html'})
+            OsrCefView({
+              viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_drag_test.html',
+              myTabIndex: 8,
+              activeTabIndex: this.osrActiveTabIndex
+            })
           }
           .width('100%')
           .height('100%')
@@ -97,8 +117,15 @@ struct MultiTabPage {
       }
       .barBackgroundColor(Color.White)
       .animationDuration(300)
+      .onChange((index: number) => {
+        this.osrActiveTabIndex = index;
+      })
     }
     .height('100%')
     .width('100%')
+    .onAppear(() => {
+      // Tabs.onChange does not fire for the initial page (default index 0).
+      this.osrActiveTabIndex = 0;
+    })
   }
 }

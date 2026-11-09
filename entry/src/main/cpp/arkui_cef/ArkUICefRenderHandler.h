@@ -77,8 +77,6 @@ public:
     void SetStartDragCallback(StartDragCallback cb) { startDragCallback_ = std::move(cb); }
     void SetUpdateDragCursorCallback(UpdateDragCursorCallback cb) { updateDragCursorCallback_ = std::move(cb); }
 
-    void Invalidate();
-
     // Called on the JS thread: consumes the pending region METADATA (merged
     // dirty rect + view size + fullFrame flag) WITHOUT compacting pixel
     // rows — the NativeWindow path only needs the rect as the damage hint

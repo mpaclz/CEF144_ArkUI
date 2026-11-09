@@ -180,10 +180,15 @@ export struct OsrCefView {
   private lastInputY: number = 0;
   // Window ID — passed to IMF C API via TextConfig.windowId in GetTextConfigFunc.
   private cachedWindowId: number = -1;
-  // True when the IME panel was HIDDEN due to component invisibility (tab
-  // switch). The session stays attached (persistent-session design); used
-  // to restore the panel when the component becomes visible again.
-  private imeDetachedByVisibility: boolean = false;
+  // True while this view is the visible tab and owns keyboard routing
+  // (window-level key filter target + IMF session). Edge-tracked in
+  // setTabActive.
+  private tabActive: boolean = false;
+  // Latest visibility state (level-tracked, unlike the tabActive edge): the
+  // first visibility edge can fire BEFORE the browser is created, so
+  // onOsrCreated re-checks it to take keyboard ownership for the initial
+  // visible tab.
+  private visibleNow: boolean = false;
   // Drag & drop state
   // True while a system drag (initiated by dragController.executeDrag) is in progress.
   private isDragInProgress: boolean = false;
@@ -222,9 +227,38 @@ export struct OsrCefView {
   // so the historical 10fps cap is no longer required to keep the JS thread
   // healthy. 20 is a safe default; profile and raise on capable devices.
   @Prop osrFrameRate: number = 60;
+  // This view's index among the page's Tabs (plain construction parameter,
+  // not reactive).
+  myTabIndex: number = -1;
+  // Unique focus target id for the render area. Focus is requested here on
+  // activation so the ArkTS onKeyEvent fallback channel (below) receives
+  // key events without requiring a prior click on the render area.
+  private renderAreaKey: string = 'osrRender';
+  // Focus target id on the invisible anchor leaf — the only focusable node
+  // in the render area (containers can't be focused, XComponent isn't
+  // focusable).
+  private focusAnchorKey: string = 'osrAnchor';
+  // Currently active tab index, synced from the page's Tabs.onChange. @Watch
+  // routes activation: onChange fires reliably on EVERY switch including the
+  // first one — unlike the visibility edge, which does not fire when a
+  // TabContent's component tree is attached for the first time.
+  @Prop @Watch('onActiveTabChanged') activeTabIndex: number = -1;
+
+  private onActiveTabChanged(propName: string): void {
+    let active = this.activeTabIndex === this.myTabIndex;
+    if (active) {
+      // Focus does not depend on the browser being alive — request it even
+      // while CEF is still initializing, so keys work the moment the page
+      // becomes interactive.
+      this.requestFocusToRenderArea();
+    }
+    this.setTabActive(active);
+  }
 
   aboutToAppear(): void {
     this.urlInput = this.viewUrl;
+    this.renderAreaKey = 'osrRender_' + this.myTabIndex;
+    this.focusAnchorKey = 'osrAnchor_' + this.myTabIndex;
     this.xcController = new OsrSurfaceController(
       (surfaceId: string) => { this.onXcSurfaceCreated(surfaceId); },
       (surfaceId: string, w: number, h: number) => { this.onXcSurfaceChanged(surfaceId, w, h); },
@@ -320,6 +354,9 @@ export struct OsrCefView {
           // aware, vsync-aligned). No PixelMap, no per-frame @State churn.
           Stack() {
             if (this.xcController) {
+              // NOTE: the XComponent (SURFACE type) is NOT focusable —
+              // key events and focus land on the anchor leaf below and on
+              // the parent Column instead.
               XComponent({ type: XComponentType.SURFACE, controller: this.xcController })
                 .width('100%')
                 .height('100%')
@@ -349,12 +386,33 @@ export struct OsrCefView {
           .justifyContent(FlexAlign.Center)
           .backgroundColor(Color.Black)
         }
+        // Invisible focus anchor. Neither the render-area Column (ArkUI
+        // containers cannot take focus directly) nor the XComponent
+        // ("not focusable" per requestFocus's own error) can be focused by
+        // id, so activation requests focus HERE: a non-container focusable
+        // leaf. Key events received by the anchor bubble up to the render
+        // area's handler below; the anchor never intercepts touches.
+        Text('')
+          .focusable(true)
+          .id(this.focusAnchorKey)
+          .width(1)
+          .height(1)
+          .opacity(0)
+          .hitTestBehavior(HitTestMode.None)
+          .onKeyEvent((event: KeyEvent) => {
+            this.handleRenderAreaKeyEvent(event);
+          })
       }
       .width('100%')
       .layoutWeight(1)
       .backgroundColor(Color.Black)
       .hitTestBehavior(HitTestMode.Block)
       .focusable(true)
+      .tabStop(true)
+      .id(this.renderAreaKey)
+      .onKeyEvent((event: KeyEvent) => {
+        this.handleRenderAreaKeyEvent(event);
+      })
       .onTouch((event: TouchEvent) => this.handleTouchEvent(event))
       .onMouse((event: MouseEvent) => this.handleMouseEvent(event))
       .onAxisEvent((event: AxisEvent) => this.handleAxisEvent(event))
@@ -435,7 +493,6 @@ export struct OsrCefView {
       .onAreaChange((_oldValue: Area, newValue: Area) => {
         let wpx = Math.round(this.getUIContext().vp2px(newValue.width as number));
         let hpx = Math.round(this.getUIContext().vp2px(newValue.height as number));
-        hilog.info(DOMAIN, MODULE, "onAreaChange: wpx=%{public}d, hpx=%{public}d", wpx, hpx);
 
         // Cache component position and DSF for IME cursor computation
         this.componentGlobalX = newValue.globalPosition.x as number;
@@ -448,9 +505,7 @@ export struct OsrCefView {
 
           if (this.isCreated()) {
             // Set DSF to actual device scale factor for correct content sizing
-            let dsf = this.getUIContext().vp2px(1);
-        this.cachedDsf = dsf;
-            arkui_cef.cefOsrSetScale(this.browserId, dsf);
+            arkui_cef.cefOsrSetScale(this.browserId, this.cachedDsf);
             // Resize driver split: in surface mode the XComponent's
             // onSurfaceChanged is the authoritative resize source (it
             // reports the exact surface geometry); skip the duplicate post
@@ -584,25 +639,138 @@ export struct OsrCefView {
     .backgroundColor(Color.Black)
     .focusable(true)
     .onVisibleAreaChange([0.0, 0.01], (isVisible: boolean, currentRatio: number) => {
+      this.visibleNow = isVisible && currentRatio > 0;
       // Pause/resume CEF rendering on full (in)visibility — tab switches and
       // scrolling off-screen. Same pattern as QCefView's QEvent::Show/Hide
       // → WasHidden().
-      this.setOsrHidden(!isVisible || currentRatio === 0);
-      if (!isVisible && currentRatio === 0) {
-        if (this.imeAttached) {
-          hilog.info(DOMAIN, MODULE, "onVisibleAreaChange: invisible, hiding IME panel");
-          this.imeDetachedByVisibility = true;
-          this.hideImeKeyboard();
-        }
-      } else if (isVisible && this.imeDetachedByVisibility) {
-        hilog.info(DOMAIN, MODULE, "onVisibleAreaChange: visible again, kbVisible=%{public}s",
-          this.keyboardVisible ? "true" : "false");
-        this.imeDetachedByVisibility = false;
-        if (this.keyboardVisible) {
-          this.showImeKeyboardWithHeal();
-        }
-      }
+      this.setTabActive(this.visibleNow);
     })
+  }
+
+  // Keyboard ownership follows the VISIBLE tab: a tab switch hands over the
+  // window-level key filter, CEF focus and the IMF session to the tab the
+  // user is looking at — without requiring a click first. Leaving the screen
+  // tears the IMF session DOWN (not just hides the panel): a lingering IMS
+  // binding keeps synthesizing candidates at stale cursor positions and
+  // commits text into the previously focused field of an invisible browser.
+  // Edge-triggered via the tabActive guard.
+  // Retry delay for the post-activation focus request. A request issued
+  // mid-switch-animation can be overridden by the Tabs/TabBar focus
+  // management when the animation completes, so focus is re-requested after
+  // it. MUST exceed BrowserTabsPage's Tabs animationDuration (currently
+  // 300ms) — keep the two in sync when changing either.
+  private static readonly FOCUS_RETRY_DELAY_MS: number = 400;
+
+  private setTabActive(active: boolean): void {
+    if (!this.isCreated() || this.tabActive === active) {
+      return;
+    }
+    this.tabActive = active;
+    hilog.info(DOMAIN, MODULE, "OSRKEY setTabActive: %{public}s id=%{public}d",
+      active ? "activate" : "deactivate", this.browserId);
+    this.setOsrHidden(!active);
+    if (active) {
+      this.setRenderAreaActive(true);
+      arkui_cef.cefSendFocusEvent(this.browserId, true);
+      // Move ArkUI focus onto the render area so the onKeyEvent fallback
+      // channel receives key presses without requiring a click first. Retried
+      // after the switch animation — see FOCUS_RETRY_DELAY_MS.
+      this.requestFocusToRenderArea();
+      setTimeout(() => {
+        this.requestFocusToRenderArea();
+      }, OsrCefView.FOCUS_RETRY_DELAY_MS);
+      if (this.keyboardVisible) {
+        // CEF believed an input field was focused before the switch. The
+        // focus restoration above may NOT re-fire VKR(true) (the renderer
+        // dedupes TextInputState changes), so recreate the session here —
+        // otherwise the visually focused input (blinking caret) is dead to
+        // the keyboard: no panel, no candidates, no text.
+        this.attachInputMethod();
+      }
+    } else {
+      if (this.imeAttached && !this.urlInputFocused) {
+        this.detachInputMethod();
+      }
+      this.setRenderAreaActive(false);
+    }
+  }
+
+  // ---- ArkTS key event fallback channel ----
+  // The window-level KeyEventFilter is not invoked for every key press (its
+  // dispatch by the input pipeline depends on the ArkUI focus state, as
+  // observed: keys only reach the filter after the render area has been
+  // clicked). This in-component channel covers the gap: once the render area
+  // holds ArkUI focus (requested on activation), key events arrive here and
+  // non-letter keys are forwarded to CEF. Letters are passed through so the
+  // physical-key IME path keeps working. The two channels are complementary:
+  // a filter interception consumes the event before ArkUI dispatch, so no
+  // double forwarding can occur.
+  private handleRenderAreaKeyEvent(event: KeyEvent): void {
+    if (!this.isCreated() || !this.renderAreaActive) {
+      return;
+    }
+
+    let mods = 0;
+    if (event.getModifierKeyState) {
+      try {
+        if (event.getModifierKeyState(['Shift'])) {
+          mods |= 0x02; // EVENTFLAG_SHIFT_DOWN
+        }
+        if (event.getModifierKeyState(['Ctrl'])) {
+          mods |= 0x04; // EVENTFLAG_CONTROL_DOWN
+        }
+        if (event.getModifierKeyState(['Alt'])) {
+          mods |= 0x08; // EVENTFLAG_ALT_DOWN
+        }
+      } catch (e) {
+      }
+    }
+
+    // Letters A-Z without Ctrl/Alt: let the IME synthesize (CJK composition
+    // + English text) — do not consume.
+    let hasCtrl = (mods & 0x04) !== 0;
+    let hasAlt = (mods & 0x08) !== 0;
+    if (event.keyCode >= 2017 && event.keyCode <= 2042 && !hasCtrl && !hasAlt) {
+      return;
+    }
+
+    // Non-letter keys: forward to CEF. KeyType.Down=0 (raw keydown) and
+    // KeyType.Up=1 (keyup) match the CefKeyEvent type mapping.
+    let keyType = event.type === KeyType.Up ? 1 : 0;
+    let charCode = event.unicode !== undefined ? event.unicode : 0;
+    arkui_cef.cefSendKeyEvent(this.browserId, event.keyCode, keyType, mods, charCode);
+
+    // Char event for text keys (mirrors the window-filter path): Blink needs
+    // the CHAR event for the key's default text/activation behavior.
+    let isTextKey =
+      (event.keyCode >= 2000 && event.keyCode <= 2009) ||  // Digits 0-9
+      event.keyCode === 2050 ||                             // Space
+      event.keyCode === 2054 ||                             // Enter
+      event.keyCode === 2049;                               // Tab
+    if (isTextKey && !hasCtrl && !hasAlt && event.type === KeyType.Down) {
+      arkui_cef.cefSendKeyEvent(this.browserId, event.keyCode, 2 /*CHAR*/, mods, charCode);
+    }
+
+    // Consume the event and keep focus on the render area — ArkUI's own
+    // focus traversal would otherwise move focus away on Tab/arrow keys.
+    event.stopPropagation();
+    if (event.type === KeyType.Down) {
+      setTimeout(() => {
+        this.requestFocusToRenderArea();
+      }, 0);
+    }
+  }
+
+  private requestFocusToRenderArea(): void {
+    // Target the invisible anchor leaf — the only requestFocus-capable node:
+    // the render-area Column is a container (cannot take focus directly) and
+    // the XComponent reports "not focusable".
+    try {
+      this.getUIContext().getFocusController().requestFocus(this.focusAnchorKey);
+    } catch (e) {
+      hilog.warn(DOMAIN, MODULE, "requestFocus failed: %{public}s %{public}s",
+        this.focusAnchorKey, (e as Error).message);
+    }
   }
 
   getBrowserId(): number {
@@ -847,6 +1015,13 @@ export struct OsrCefView {
     }
     // Register window-level key event filter for non-text keys (digits, symbols, etc.)
     this.registerKeyFilter();
+    // The activation signals (Tabs.onChange / visibility edge) may have fired
+    // before the browser existed and were dropped by the isCreated guard in
+    // setTabActive — take keyboard ownership now if this view is the active
+    // tab (e.g. the user switched here while CEF was still initializing).
+    if (this.visibleNow || this.activeTabIndex === this.myTabIndex) {
+      this.setTabActive(true);
+    }
   }
 
   private async registerKeyFilter(): Promise<void> {
@@ -861,7 +1036,6 @@ export struct OsrCefView {
       arkui_cef.registerOsrKeyFilter(windowId, this.browserId);
 
       win.on('windowEvent', (event: window.WindowEventType) => {
-        hilog.info(DOMAIN, MODULE, "windowEvent: %{public}d", event);
         if (event === window.WindowEventType.WINDOW_INACTIVE) {
           this.focusLostFlag = true;
           // Hide the panel but KEEP the session attached (Attach → Show →
@@ -898,8 +1072,6 @@ export struct OsrCefView {
       // no async second OnCursorUpdate issue. API 12+.
       win.on('windowRectChange', (data: window.RectChangeOptions) => {
         if (this.imeAttached) {
-          hilog.info(DOMAIN, MODULE, "windowRectChange: left=%{public}d top=%{public}d reason=%{public}d",
-            data.rect.left, data.rect.top, data.reason);
           this.refreshImeCursor();
         }
       });
@@ -1095,7 +1267,6 @@ export struct OsrCefView {
   }
 
   onOsrScrollOffset(offset: string): void {
-    hilog.info(DOMAIN, MODULE, "OSR scroll offset: %{public}s", offset);
     this.scrollOffsetText = offset;
   }
 
@@ -1103,32 +1274,34 @@ export struct OsrCefView {
     hilog.info(DOMAIN, MODULE, "OSR virtual keyboard: %{public}s", show ? "show" : "hide");
     this.keyboardVisible = show;
     if (show) {
-      // Web input gained focus: ensure the session exists, then show the
-      // panel. NO Attach/Detach churn — repeated attach/detach raced the
-      // ArkTS TextInput editor lifecycle at the input method service (a
-      // late teardown could kill our fresh attach). The session persists;
-      // only the panel toggles.
+      // Web input gained focus: (re)create the session and show the panel.
+      // If the show fails (session killed by an external race) the heal
+      // path in showImeKeyboardWithHeal re-attaches.
       if (!this.imeAttached) {
         this.attachInputMethod();
       } else {
         this.showImeKeyboardWithHeal();
       }
     } else {
-      // Web input lost focus. When the URL TextInput is taking over
-      // (urlInputFocused), leave the panel alone — ArkUI owns its state
-      // now and our HideKeyboard could close what the URL bar just
-      // opened. Otherwise (blank area / Tab to a button) hide our panel,
-      // keeping the session attached.
+      // Web input lost focus (focus moved to a link/button, a blank area,
+      // or the browser blurred). End the session — NOT just hide the panel:
+      // the document lifecycle is Attach → Show → Hide → Detach, and a
+      // lingering session keeps the IMS binding alive, so physical keys
+      // would keep pulling up candidates at a stale cursor and committing
+      // text into the previously focused field.
       if (this.urlInputFocused) {
+        // The URL TextInput is taking over: ArkUI owns the panel now. Our
+        // teardown could race its attach at the input method service (a
+        // late teardown kills the fresh ArkTS attach) — keep the session;
+        // its callbacks are inert while renderAreaActive is false.
         hilog.info(DOMAIN, MODULE, "OSR virtual keyboard hide skipped — URL input owns the panel");
       } else {
-        this.hideImeKeyboard();
+        this.detachInputMethod();
       }
     }
   }
 
   onOsrTextSelection(text: string): void {
-    hilog.info(DOMAIN, MODULE, "OSR text selection: len=%{public}d", text.length);
     this.selectedText = text;
   }
 
@@ -1180,7 +1353,6 @@ export struct OsrCefView {
       default: pStyle = pointer.PointerStyle.DEFAULT; label = 'type=' + cursorType; break;
     }
     this.cursorTypeText = label;
-    hilog.info(DOMAIN, MODULE, "OSR cursor change: type=%{public}d -> %{public}s", cursorType, label);
 
     try {
       let cursorController = this.getUIContext().getCursorController();
@@ -1201,19 +1373,15 @@ export struct OsrCefView {
     this.lastCaretHeight = height;
     this.hasCaretBounds = true;
 
+    if (!this.isImeOwner()) {
+      return;
+    }
+
     // Screen-absolute px = window-relative px + windowRect.left/top.
     // C API OH_InputMethodProxy_NotifyCursorUpdate expects screen-absolute.
     let winRect = this.getWindowRect();
     let screenLeft = left + winRect.left;
     let screenTop = top + winRect.top;
-    hilog.info(DOMAIN, MODULE,
-      "onOsrImeCursor: winRel=%{public}d,%{public}d winRect=%{public}d,%{public}d screen=%{public}d,%{public}d",
-      left, top, winRect.left, winRect.top, screenLeft, screenTop);
-
-    if (!this.imeAttached) {
-      hilog.info(DOMAIN, MODULE, "onOsrImeCursor: skipped (IME not attached)");
-      return;
-    }
 
     arkui_cef.cefImeCUpdateCursor(screenLeft, screenTop, width, height);
   }
@@ -1231,9 +1399,7 @@ export struct OsrCefView {
   }
 
   private applyImeCursor(left: number, top: number, width: number, height: number): void {
-    let ok = arkui_cef.cefImeCUpdateCursor(left, top, width, height);
-    hilog.info(DOMAIN, MODULE, "applyImeCursor: left=%{public}d top=%{public}d ok=%{public}s",
-      left, top, ok ? "true" : "false");
+    arkui_cef.cefImeCUpdateCursor(left, top, width, height);
   }
 
   // ==================== Drag & Drop ====================
@@ -1634,7 +1800,6 @@ export struct OsrCefView {
     // ArkUI MouseAction: Press=1, Release=2, Move=3
     switch (event.action) {
       case MouseAction.Press: {
-        hilog.info(DOMAIN, MODULE, "Mouse Press: x=%{public}d, y=%{public}d, btn=%{public}d", x, y, cefButton);
         this.lastInputX = event.x;
         this.lastInputY = event.y;
         this.setRenderAreaActive(true);
@@ -1671,7 +1836,6 @@ export struct OsrCefView {
         break;
       }
       case MouseAction.Release:
-        hilog.info(DOMAIN, MODULE, "Mouse Release: x=%{public}d, y=%{public}d, btn=%{public}d", x, y, cefButton);
         arkui_cef.cefSendMouseClick(this.browserId, x, y, cefButton, true, 1, 0);
         if (cefButton === 0) {
           // Only LEFT clears the flag — releasing RIGHT/MIDDLE while LEFT is
@@ -1684,9 +1848,6 @@ export struct OsrCefView {
         // from the system-reported pressedButtons — accurate for multi-button
         // holds and self-correcting after a missed Release.
         let moveMods = this.buildMouseModifiers(event, this.heldButtonMods(event));
-        if ((moveMods & 0x10) !== 0) {
-          hilog.info(DOMAIN, MODULE, "Mouse Drag: x=%{public}d, y=%{public}d", x, y);
-        }
         arkui_cef.cefSendMouseMove(this.browserId, x, y, false, moveMods);
         this.lastMouseX = x;
         this.lastMouseY = y;
@@ -1776,7 +1937,7 @@ export struct OsrCefView {
   // (IME_ERR_DETACHED — the session was killed by an external race),
   // re-attach and retry once: self-healing instead of dead input.
   private showImeKeyboardWithHeal(): void {
-    if (!this.imeAttached) {
+    if (!this.imeAttached || OsrCefView.imeOwnerView !== this) {
       return;
     }
     let ok = arkui_cef.cefImeCShowKeyboard();
@@ -1792,7 +1953,7 @@ export struct OsrCefView {
   // Hides the IME panel WITHOUT detaching the session (the documented
   // Attach → Show → Hide → Detach lifecycle).
   private hideImeKeyboard(): void {
-    if (!this.imeAttached) {
+    if (!this.imeAttached || OsrCefView.imeOwnerView !== this) {
       return;
     }
     arkui_cef.cefImeCHideKeyboard();
@@ -1823,7 +1984,27 @@ export struct OsrCefView {
 
   private setRenderAreaActive(active: boolean): void {
     this.renderAreaActive = active;
-    arkui_cef.setRenderAreaActive(active);
+    if (active) {
+      if (OsrCefView.imeOwnerView !== this) {
+        // Take over the global key routing and the IMF session. Destroy the
+        // global session regardless of which view owns it: across a tab
+        // switch the activation and deactivation visibility edges fire in
+        // either order, so the previous owner's own detach path may never
+        // run (its imeAttached flag was already cleared by this takeover) —
+        // a lingering session keeps the IMS binding alive (status bar stays
+        // up, physical keys keep pulling stale candidates).
+        let prev = OsrCefView.imeOwnerView;
+        if (prev !== null) {
+          prev.imeAttached = false;
+        }
+        arkui_cef.cefImeCDetach();
+        this.imeAttached = false;
+        OsrCefView.imeOwnerView = this;
+      }
+      // Already the owner (ordinary click inside our own render area while
+      // typing): leave the live session alone.
+    }
+    arkui_cef.setRenderAreaActive(this.browserId, active);
     if (!active) {
       if (this.isCreated()) {
         arkui_cef.cefSendFocusEvent(this.browserId, false);
@@ -1831,10 +2012,28 @@ export struct OsrCefView {
     }
   }
 
+  // The IMF C API session (g_imeCApi in the NAPI layer) is process-global:
+  // exactly one window-level key filter and one IME session exist per window.
+  // With several OSR views alive at once (Tabs builds every TabContent up
+  // front), only the view whose render area the user last interacted with may
+  // own that session — otherwise one view's VKR/window events detach or
+  // replace the session another view is actively typing into.
+  private static imeOwnerView: OsrCefView | null = null;
+
+  private isImeOwner(): boolean {
+    return OsrCefView.imeOwnerView === this && this.imeAttached;
+  }
+
   private attachInputMethod(): void {
     if (this.imeAttached || this.imeAttaching) {
       return;
     }
+    if (OsrCefView.imeOwnerView !== null && OsrCefView.imeOwnerView !== this) {
+      // Another view owns the global session — never replace it from a
+      // background view's callbacks.
+      return;
+    }
+    OsrCefView.imeOwnerView = this;
     this.imeAttaching = true;
 
     // Compute initial cursor position (screen-absolute px).
@@ -1853,13 +2052,11 @@ export struct OsrCefView {
       cursorLeft, cursorTop, 2, cursorHeight,
       (text: string) => {
         if (this.isCreated() && this.renderAreaActive) {
-          hilog.info(DOMAIN, MODULE, "IME insertText: '%{public}s'", text);
           arkui_cef.cefImeCommitText(this.browserId, text);
         }
       },
       (length: number) => {
         if (this.isCreated() && this.renderAreaActive) {
-          hilog.info(DOMAIN, MODULE, "IME deleteLeft: %{public}d", length);
           for (let i = 0; i < length; i++) {
             arkui_cef.cefSendKeyEvent(this.browserId, 2055, 0, 0);
             arkui_cef.cefSendKeyEvent(this.browserId, 2055, 1, 0);
@@ -1868,7 +2065,6 @@ export struct OsrCefView {
       },
       () => {
         if (this.isCreated() && this.renderAreaActive) {
-          hilog.info(DOMAIN, MODULE, "IME sendEnterKey");
           arkui_cef.cefSendKeyEvent(this.browserId, 2054, 0, 0);
           arkui_cef.cefSendKeyEvent(this.browserId, 2054, 2, 0, 13);
           arkui_cef.cefSendKeyEvent(this.browserId, 2054, 1, 0);
@@ -1876,13 +2072,11 @@ export struct OsrCefView {
       },
       (text: string) => {
         if (this.isCreated() && this.renderAreaActive) {
-          hilog.info(DOMAIN, MODULE, "IME setPreviewText: '%{public}s'", text);
           arkui_cef.cefImeSetComposition(this.browserId, text);
         }
       },
       () => {
         if (this.isCreated() && this.renderAreaActive) {
-          hilog.info(DOMAIN, MODULE, "IME finishTextPreview");
           arkui_cef.cefImeCancelComposition(this.browserId);
         }
       }
@@ -1899,7 +2093,7 @@ export struct OsrCefView {
   }
 
   private refreshImeCursor(): void {
-    if (!this.imeAttached || !this.hasCaretBounds) {
+    if (!this.isImeOwner() || !this.hasCaretBounds) {
       return;
     }
     let winRect = this.getWindowRect();
@@ -1907,9 +2101,6 @@ export struct OsrCefView {
     this.lastWinRectTop = winRect.top;
     let screenLeft = this.lastCaretWinLeft + winRect.left;
     let screenTop = this.lastCaretWinTop + winRect.top;
-    hilog.info(DOMAIN, MODULE,
-      "refreshImeCursor: winRel=%{public}d,%{public}d winRect=%{public}d,%{public}d screen=%{public}d,%{public}d",
-      this.lastCaretWinLeft, this.lastCaretWinTop, winRect.left, winRect.top, screenLeft, screenTop);
     this.applyImeCursor(screenLeft, screenTop, this.lastCaretWidth, this.lastCaretHeight);
   }
 
@@ -1918,8 +2109,13 @@ export struct OsrCefView {
       return;
     }
     this.imeAttached = false;
-    arkui_cef.cefImeCDetach();
-    hilog.info(DOMAIN, MODULE, "IME detached (C API)");
+    // The global session may already belong to another view (this one lost
+    // ownership without a detach) — only detach what we still own.
+    if (OsrCefView.imeOwnerView === this) {
+      OsrCefView.imeOwnerView = null;
+      arkui_cef.cefImeCDetach();
+      hilog.info(DOMAIN, MODULE, "IME detached (C API)");
+    }
   }
 
 }

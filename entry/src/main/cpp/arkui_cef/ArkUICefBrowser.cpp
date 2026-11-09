@@ -18,25 +18,15 @@ ArkUICefBrowser::ArkUICefBrowser(const int64_t id, int width, int height)
       height_(height),
       browserCreated_(false),
       browserClosing_(false),
-      client_(nullptr) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "constructor: id=%{public}ld, width=%{public}d, height=%{public}d",
-        id_, width_, height_);
-}
+      client_(nullptr) {}
 
 ArkUICefBrowser::~ArkUICefBrowser() {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "destructor: id=%{public}ld", id_);
-    
     if (browserCreated_ && !browserClosing_) {
         close();
     }
 }
 
 void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* parentNode, const std::string& url) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser", 
-        "createBrowser: url=%{public}s", url.c_str());
-    
     if (browserCreated_) {
         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
             "createBrowser: browser already created");
@@ -58,8 +48,6 @@ void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* pare
         client_->SetCursorChangeCallback(cursorChangeCallback_);
     }
     
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "createBrowser: parentStack: %{public}p, use_osr=%{public}d", parentNode ? parentNode->container : nullptr, use_osr_);
     CefWindowInfo windowInfo;
     windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
 
@@ -89,18 +77,10 @@ void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* pare
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
             "createBrowser: CefBrowserHost::CreateBrowser failed");
         client_ = nullptr;
-    } else {
-        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "createBrowser: CreateBrowser called successfully");
     }
-    
-    return;
 }
 
 void ArkUICefBrowser::close() {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "close: id=%{public}ld, browserCreated_=%{public}d", id_, browserCreated_);
-    
     if (!browserCreated_) {
         return;
     }
@@ -112,9 +92,6 @@ void ArkUICefBrowser::close() {
 }
 
 void ArkUICefBrowser::loadUrl(const std::string& url) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "loadUrl: id=%{public}ld, url=%{public}s", id_, url.c_str());
-    
     if (!browser_ || !browser_->GetMainFrame()) {
         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
             "loadUrl: browser not ready");
@@ -125,9 +102,6 @@ void ArkUICefBrowser::loadUrl(const std::string& url) {
 }
 
 void ArkUICefBrowser::goBack() {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "goBack: id=%{public}ld", id_);
-    
     if (!browser_ || !browser_->CanGoBack()) {
         return;
     }
@@ -136,9 +110,6 @@ void ArkUICefBrowser::goBack() {
 }
 
 void ArkUICefBrowser::goForward() {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "goForward: id=%{public}ld", id_);
-    
     if (!browser_ || !browser_->CanGoForward()) {
         return;
     }
@@ -147,9 +118,6 @@ void ArkUICefBrowser::goForward() {
 }
 
 void ArkUICefBrowser::reload() {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "reload: id=%{public}ld", id_);
-    
     if (!browser_) {
         return;
     }
@@ -158,10 +126,6 @@ void ArkUICefBrowser::reload() {
 }
 
 void ArkUICefBrowser::resize(int width, int height) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "resize: id=%{public}ld, width=%{public}d, height=%{public}d",
-        id_, width, height);
-
     width_ = width;
     height_ = height;
 
@@ -179,7 +143,7 @@ void ArkUICefBrowser::resize(int width, int height) {
 
     browser_->GetHost()->WasResized();
 
-    // R2: force a full repaint at the new size. With OSR, WasResized() alone
+    // With OSR, force a full repaint at the new size. WasResized() alone
     // does not guarantee a frame — a static page emits no new damage, so the
     // newly exposed buffer regions keep stale pixels until something else
     // triggers a repaint. Invalidate(PET_VIEW) requests a complete redraw.
@@ -201,7 +165,8 @@ void ArkUICefBrowser::setOsrScale(float factor) {
     }
 
     if (browser_) {
-        browser_->GetHost()->NotifyScreenInfoChanged();    }
+        browser_->GetHost()->NotifyScreenInfoChanged();
+    }
 }
 
 void ArkUICefBrowser::setComponentOffset(int x, int y) {
@@ -217,22 +182,16 @@ void ArkUICefBrowser::setFrameRate(int frameRate) {
     if (!browser_ || frameRate < 1) {
         return;
     }
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "setFrameRate: id=%{public}ld, rate=%{public}d", id_, frameRate);
     browser_->GetHost()->SetWindowlessFrameRate(frameRate);
 }
 
 void ArkUICefBrowser::show() {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "show: id=%{public}ld", id_);
     Node* node = getWindowHandle();
     if (node)
         arkui_cef::show(node->container);
 }
 
 void ArkUICefBrowser::hide() {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "hide: id=%{public}ld", id_);
     Node* node = getWindowHandle();
     if (node)
         arkui_cef::hide(node->container);
@@ -240,8 +199,6 @@ void ArkUICefBrowser::hide() {
 
 void ArkUICefBrowser::sendKeyEvent(const CefKeyEvent& event) {
     if (!browser_) {
-        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "sendKeyEvent: browser not ready, id=%{public}ld", id_);
         return;
     }
     browser_->GetHost()->SendKeyEvent(event);
@@ -288,8 +245,6 @@ void ArkUICefBrowser::sendFocusEvent(bool focused) {
         return;
     }
     browser_->GetHost()->SetFocus(focused);
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "sendFocusEvent: id=%{public}ld, focused=%{public}d", id_, focused);
 }
 
 void ArkUICefBrowser::sendCaptureLostEvent() {
@@ -297,8 +252,6 @@ void ArkUICefBrowser::sendCaptureLostEvent() {
         return;
     }
     browser_->GetHost()->SendCaptureLostEvent();
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "sendCaptureLostEvent: id=%{public}ld", id_);
 }
 
 void ArkUICefBrowser::invalidate() {
@@ -306,8 +259,6 @@ void ArkUICefBrowser::invalidate() {
         return;
     }
     browser_->GetHost()->Invalidate(PET_VIEW);
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "invalidate: id=%{public}ld", id_);
 }
 
 void ArkUICefBrowser::wasHidden(bool hidden) {
@@ -332,8 +283,6 @@ void ArkUICefBrowser::wasHidden(bool hidden) {
         browser_->GetHost()->WasResized();
         browser_->GetHost()->Invalidate(PET_VIEW);
     }
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "wasHidden: id=%{public}ld, hidden=%{public}d", id_, hidden);
 }
 
 void ArkUICefBrowser::sendTouchEvent(int x, int y, int touchType, int pointerId) {
@@ -407,9 +356,6 @@ void ArkUICefBrowser::imeSetComposition(const std::string& text) {
     browser_->GetHost()->ImeSetComposition(text, {underline},
                                            CefRange(UINT32_MAX, UINT32_MAX),
                                            CefRange(UINT32_MAX, UINT32_MAX));
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "imeSetComposition: id=%{public}ld, utf8_len=%{public}zu, utf16_len=%{public}zu",
-        id_, text.length(), Utf16Length(text));
 }
 
 void ArkUICefBrowser::imeCommitText(const std::string& text) {
@@ -417,8 +363,6 @@ void ArkUICefBrowser::imeCommitText(const std::string& text) {
         return;
     }
     browser_->GetHost()->ImeCommitText(text, CefRange(UINT32_MAX, UINT32_MAX), 0);
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "imeCommitText: id=%{public}ld, len=%{public}zu", id_, text.length());
 }
 
 void ArkUICefBrowser::imeCancelComposition() {
@@ -426,8 +370,6 @@ void ArkUICefBrowser::imeCancelComposition() {
         return;
     }
     browser_->GetHost()->ImeCancelComposition();
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "imeCancelComposition: id=%{public}ld", id_);
 }
 
 void ArkUICefBrowser::dragTargetDragEnter(const std::string& text, const std::string& html,
@@ -436,9 +378,6 @@ void ArkUICefBrowser::dragTargetDragEnter(const std::string& text, const std::st
     if (!browser_) {
         return;
     }
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "dragTargetDragEnter: id=%{public}ld, text_len=%{public}zu, url=%{public}s, filePaths_len=%{public}zu, x=%{public}d, y=%{public}d",
-        id_, text.size(), url.c_str(), filePaths.size(), x, y);
 
     CefRefPtr<CefDragData> dragData = CefDragData::Create();
     if (!text.empty()) dragData->SetFragmentText(text);
@@ -458,9 +397,6 @@ void ArkUICefBrowser::dragTargetDragEnter(const std::string& text, const std::st
                 std::string displayName = (lastSlash != std::string::npos)
                     ? path.substr(lastSlash + 1) : path;
                 dragData->AddFile(path, displayName);
-                OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-                    "dragTargetDragEnter: AddFile path=%{public}s, name=%{public}s",
-                    path.c_str(), displayName.c_str());
             }
         }
     }
@@ -492,8 +428,6 @@ void ArkUICefBrowser::dragTargetDragLeave() {
     if (!browser_) {
         return;
     }
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "dragTargetDragLeave: id=%{public}ld", id_);
     browser_->GetHost()->DragTargetDragLeave();
 }
 
@@ -501,8 +435,6 @@ void ArkUICefBrowser::dragTargetDrop(int x, int y) {
     if (!browser_) {
         return;
     }
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "dragTargetDrop: id=%{public}ld, x=%{public}d, y=%{public}d", id_, x, y);
     CefMouseEvent event;
     event.x = x;
     event.y = y;
@@ -515,8 +447,6 @@ void ArkUICefBrowser::dragSourceEndedAt(int x, int y, int op) {
     if (!browser_) {
         return;
     }
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "dragSourceEndedAt: id=%{public}ld, x=%{public}d, y=%{public}d, op=%{public}d", id_, x, y, op);
     browser_->GetHost()->DragSourceEndedAt(x, y,
         static_cast<CefBrowserHost::DragOperationsMask>(op));
 }
@@ -525,8 +455,6 @@ void ArkUICefBrowser::dragSourceSystemDragEnded() {
     if (!browser_) {
         return;
     }
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "dragSourceSystemDragEnded: id=%{public}ld", id_);
     browser_->GetHost()->DragSourceSystemDragEnded();
 }
 

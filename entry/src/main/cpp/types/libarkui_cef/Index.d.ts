@@ -31,7 +31,7 @@ export const createOsrCefView: (url: string, width: number, height: number,
                                  onVirtualKeyboard?: (show: boolean) => void,
                                  onTextSelection?: (selectedText: string) => void,
                                  onCursorChange?: (cursorType: number) => void,
-                                 onImeCursor?: (left: number, top: number, width: number, height: number) => void,
+                                  onImeCursor?: (left: number, top: number, width: number, height: number) => void,
                                   onStartDrag?: (text: string, html: string, url: string, urlTitle: string, fileName: string, fileData: ArrayBuffer, x: number, y: number) => void,
                                  onUpdateDragCursor?: (operation: number) => void) => number;
 export const destroyOsrCefView: (browserId: number) => void;
@@ -57,7 +57,7 @@ export const cefImeSetComposition: (browserId: number, text: string) => void;
 export const cefImeCommitText: (browserId: number, text: string) => void;
 export const cefImeCancelComposition: (browserId: number) => void;
 export const registerOsrKeyFilter: (windowId: number, browserId: number) => void;
-export const setRenderAreaActive: (active: boolean) => void;
+export const setRenderAreaActive: (browserId: number, active: boolean) => void;
 export const cefImeCAttach: (
   windowId: number,
   cursorLeft: number, cursorTop: number, cursorWidth: number, cursorHeight: number,

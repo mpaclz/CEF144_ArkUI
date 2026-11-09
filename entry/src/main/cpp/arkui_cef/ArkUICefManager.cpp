@@ -57,13 +57,9 @@ void ArkUICefManager::start() {
 
 void ArkUICefManager::stop() {
     // Snapshot the browser list and release the lock BEFORE posting close
-    // tasks and joining the CEF thread.
-    //
-    // The previous implementation held mutex_ across join(). The close chain
-    // OnBeforeClose -> onBrowserDestroyed runs ON the CEF UI thread and also
-    // acquires mutex_, so join() deadlocked with the very thread it waited
-    // for (main thread holds mutex_ waiting for CEF thread to exit; CEF
-    // thread waits for mutex_ inside onBrowserDestroyed).
+    // tasks and joining the CEF thread: the close chain OnBeforeClose ->
+    // onBrowserDestroyed runs ON the CEF UI thread and also acquires
+    // mutex_, so holding it across join() would deadlock.
     std::vector<CefRefPtr<ArkUICefBrowser>> browsersToClose;
     bool wasRunning = false;
     {
@@ -78,9 +74,7 @@ void ArkUICefManager::stop() {
     }
 
     if (!wasRunning) {
-        // CEF never initialized or already stopped: the thread either exited
-        // early (CefThreadMain returns before CefRunMessageLoop) or was never
-        // started. Nothing to close, nothing to quit.
+        // CEF never initialized or already stopped — nothing to close.
         if (cefThread_.joinable()) {
             cefThread_.join();
         }
@@ -97,10 +91,9 @@ void ArkUICefManager::stop() {
         CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&quitMessageLoop)));
     }
 
-    // CEF thread exits when: all browsers closed (last OnBeforeClose ->
+    // The CEF thread exits when all browsers closed (last OnBeforeClose ->
     // onBrowserDestroyed sees shuttingDown_ && empty map -> CefQuitMessageLoop)
-    // or the direct quit task above ran. CefRunMessageLoop() then returns,
-    // CefThreadMain proceeds to CefShutdown, and join() unblocks.
+    // or the direct quit task above ran.
     if (cefThread_.joinable()) {
         cefThread_.join();
     }
@@ -233,8 +226,8 @@ void ArkUICefManager::onBrowserDestroyed(CefRefPtr<ArkUICefBrowser> browser) {
         browsers_.erase(browser->getId());
         // Quit the message loop only during a full shutdown (stop() requested)
         // AND only after the LAST browser closed. This callback runs on the
-        // CEF UI thread (from OnBeforeClose), which is the thread
-        // CefQuitMessageLoop must be called on.
+        // CEF UI thread, which is the thread CefQuitMessageLoop must be
+        // called on.
         shouldQuit = shuttingDown_ && browsers_.empty();
     }
     if (shouldQuit) {
@@ -273,26 +266,22 @@ void ArkUICefManager::NotifyPopupBrowserCreated(int cefBrowserId) {
 
 void ArkUICefManager::CefThreadMain() {
     pthread_setname_np(pthread_self(), "CEF_Main");
-    
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefManager", 
-        "CefThreadMain: cef main thread starts.");
+
     CefMainArgs mainArgs;
     CefRefPtr<ArkUICefApp> app = new ArkUICefApp();
-    
+
     CefSettings settings;
     ArkUICefApp::PopulateSettings(&settings);
-    
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefManager", 
-        "CefThreadMain: initialize begin.");
+
     bool ok = CefInitialize(mainArgs, settings, app, nullptr);
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefManager", 
-        "CefThreadMain: initialize done: %{public}d.", ok);
-    
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefManager",
+        "CefThreadMain: CefInitialize %{public}s", ok ? "succeeded" : "failed");
+
     {
         std::lock_guard<std::mutex> lock(mutex_);
         initOk_ = ok;
     }
-    
+
     if (!ok) {
         return;
     }

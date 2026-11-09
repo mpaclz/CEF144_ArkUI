@@ -44,8 +44,6 @@ ArkUICefInputMethod::~ArkUICefInputMethod() {
 
 void ArkUICefInputMethod::releaseResources() {
     if (input_method_proxy_) {
-        OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG,
-            "releaseResources: detaching input_method_proxy_");
         InputMethod_ErrorCode res = OH_InputMethodController_Detach(input_method_proxy_);
         if (res != IME_ERR_OK) {
             OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
@@ -77,7 +75,8 @@ bool ArkUICefInputMethod::attach(bool showKeyboard, int32_t windowId,
                                  double cursorWidth, double cursorHeight,
                                  const ImeEventCallbacks& callbacks) {
     if (is_attached_) {
-        OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG, "attach: already attached, releasing first");
+        OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
+            "attach: already attached, releasing first");
         releaseResources();
     }
 
@@ -165,9 +164,6 @@ bool ArkUICefInputMethod::attach(bool showKeyboard, int32_t windowId,
         return false;
     }
 
-    OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG,
-        "attach: OH_InputMethodController_Attach success, windowId=%{public}d", windowId);
-
     if (cursor_info_) {
         OH_CursorInfo_Destroy(cursor_info_);
     }
@@ -175,23 +171,25 @@ bool ArkUICefInputMethod::attach(bool showKeyboard, int32_t windowId,
     if (cursor_info_) {
         InputMethod_ErrorCode cursorRes =
             OH_InputMethodProxy_NotifyCursorUpdate(input_method_proxy_, cursor_info_);
-        OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG,
-            "attach: initial NotifyCursorUpdate left=%{public}.0f top=%{public}.0f res=%{public}d",
-            cursorLeft, cursorTop, cursorRes);
+        if (cursorRes != IME_ERR_OK) {
+            OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
+                "attach: NotifyCursorUpdate failed: %{public}d", cursorRes);
+        }
     }
 
     // Explicitly show keyboard — don't rely on proxy TextInput focus which
     // would create a competing ArkTS IMF client.
     InputMethod_ErrorCode showRes = OH_InputMethodProxy_ShowKeyboard(input_method_proxy_);
-    OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG,
-        "attach: ShowKeyboard res=%{public}d", showRes);
+    if (showRes != IME_ERR_OK) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
+            "attach: ShowKeyboard failed: %{public}d", showRes);
+    }
 
     is_attached_ = true;
     return true;
 }
 
 void ArkUICefInputMethod::detach() {
-    OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG, "detach called");
     releaseResources();
 }
 
@@ -265,18 +263,14 @@ void ArkUICefInputMethod::GetTextConfigFunc(InputMethod_TextEditorProxy* proxy,
 void ArkUICefInputMethod::InsertTextFunc(InputMethod_TextEditorProxy* proxy,
                                          const char16_t* text, size_t length) {
     if (!proxy || !instance_) return;
-    std::string utf8Text = utf16ToUtf8(text, length);
-    OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG,
-        "InsertTextFunc: len=%{public}zu text='%{public}s'", length, utf8Text.c_str());
     if (instance_->callbacks_.onInsertText) {
-        instance_->callbacks_.onInsertText(utf8Text);
+        instance_->callbacks_.onInsertText(utf16ToUtf8(text, length));
     }
 }
 
 void ArkUICefInputMethod::DeleteBackwardFunc(InputMethod_TextEditorProxy* proxy,
                                              int32_t length) {
     if (!proxy || !instance_) return;
-    OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG, "DeleteBackwardFunc: length=%{public}d", length);
     if (instance_->callbacks_.onDeleteBackward) {
         instance_->callbacks_.onDeleteBackward(length);
     }
@@ -285,7 +279,6 @@ void ArkUICefInputMethod::DeleteBackwardFunc(InputMethod_TextEditorProxy* proxy,
 void ArkUICefInputMethod::SendEnterKeyFunc(InputMethod_TextEditorProxy* proxy,
                                            InputMethod_EnterKeyType enterKeyType) {
     if (!proxy || !instance_) return;
-    OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG, "SendEnterKeyFunc: type=%{public}d", enterKeyType);
     if (instance_->callbacks_.onSendEnterKey) {
         instance_->callbacks_.onSendEnterKey();
     }
@@ -295,18 +288,14 @@ int ArkUICefInputMethod::SetPreviewTextFunc(InputMethod_TextEditorProxy* proxy,
                                              const char16_t* text, size_t length,
                                              int32_t start, int32_t end) {
     if (!proxy || !instance_) return static_cast<int>(IME_ERR_NULL_POINTER);
-    std::string utf8Text = utf16ToUtf8(text, length);
-    OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG,
-        "SetPreviewTextFunc: len=%{public}zu text='%{public}s'", length, utf8Text.c_str());
     if (instance_->callbacks_.onSetPreviewText) {
-        instance_->callbacks_.onSetPreviewText(utf8Text);
+        instance_->callbacks_.onSetPreviewText(utf16ToUtf8(text, length));
     }
     return static_cast<int>(IME_ERR_OK);
 }
 
 void ArkUICefInputMethod::FinishTextPreviewFunc(InputMethod_TextEditorProxy* proxy) {
     if (!proxy || !instance_) return;
-    OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG, "FinishTextPreviewFunc");
     if (instance_->callbacks_.onFinishTextPreview) {
         instance_->callbacks_.onFinishTextPreview();
     }

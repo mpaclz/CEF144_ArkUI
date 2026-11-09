@@ -34,8 +34,7 @@ namespace {
 constexpr unsigned int LOG_PRINT_DOMAIN = 0xFF00;
 
 // ---------------------------------------------------------------------------
-// OSR native PixelMap registry (Step 1 of the software-render pipeline
-// optimization).
+// OSR native PixelMap registry.
 //
 // ArkTS registers its double-buffered PixelMaps (pmA/pmB) here after each
 // rebuild. The paint tsfn then blits dirty regions directly into the
@@ -49,8 +48,6 @@ constexpr unsigned int LOG_PRINT_DOMAIN = 0xFF00;
 // alias the same pixelmaps and are released with OH_PixelmapNative_Release
 // on re-registration / unregistration — always BEFORE the ArkTS objects
 // are released, so the handles never outlive the memory they point to.
-// All registry access happens on the JS thread (tsfn CallJs and the NAPI
-// entry points); the mutex guards against future multi-instance use.
 // ---------------------------------------------------------------------------
 struct OsrNativePixelmaps {
     OH_PixelmapNative* pmA = nullptr;
@@ -75,8 +72,8 @@ void ReleaseOsrNativePixelmaps(OsrNativePixelmaps& pms) {
 }
 
 // Queries stride/size and validates BGRA_8888 (the format CEF paints in).
-// NOTE: the SDK header declares GetWidth/GetHeight with uint32_t* (the
-// online docs' int32_t* is outdated) — verified against the compile error.
+// NOTE: the SDK header declares GetWidth/GetHeight with uint32_t* out
+// params, not int32_t* as the online docs state.
 bool QueryPixelmapInfo(OH_PixelmapNative* pm, uint32_t* stride,
                        int32_t* w, int32_t* h) {
     if (!pm || !stride || !w || !h) {
@@ -142,16 +139,15 @@ bool WriteRegionToPixelmap(OH_PixelmapNative* pm, uint32_t rowStride,
 
 
 // ---------------------------------------------------------------------------
-// OSR NativeWindow direct-display registry (display-side optimization).
+// OSR NativeWindow direct-display registry.
 //
 // ArkTS attaches the XComponent(SURFACE)'s OHNativeWindow here (created from
 // the surfaceId via OH_NativeWindow_CreateNativeWindowFromSurfaceId — the
 // XComponent surface lives in this process, as required). The paint tsfn
-// then blits dirty regions DIRECTLY into window buffers (RequestBuffer →
-// BufferHandle.virAddr → memcpy → FlushBuffer with a damage Region). The
+// then blits frames directly into window buffers (RequestBuffer →
+// OH_NativeBuffer_Map → memcpy → FlushBuffer with a damage Region). The
 // compositor consumes the buffer queue vsync-aligned — this replaces the
-// PixelMap/@State/Image upload chain entirely (QCefView's QPainter path is
-// the Qt equivalent; the damage Region is the HarmonyOS bonus).
+// PixelMap/@State/Image upload chain entirely.
 //
 // All access happens on the JS thread (tsfn CallJs + NAPI entry points);
 // the mutex guards against future thread migration.
@@ -177,14 +173,12 @@ struct OsrNativeSurface {
     // changes): the first frame must declare FULL-buffer damage — the
     // compositor has never presented this surface's content, so a small
     // damage rect would leave the rest of the screen on the initial black
-    // state forever. rects=nullptr / rectNumber=0 means "whole buffer is
-    // dirty" (documented).
+    // state forever.
     bool needsFullDamage = true;
-    // Diagnostics: consecutive failures / total successful flushes. Each
-    // failure branch logs on the 1st and every 60th failure so a hilog
-    // capture pinpoints the exact broken step without 60/s spam.
+    // Diagnostics: consecutive failures. Each failure branch logs on the 1st
+    // and every 60th failure so a hilog capture pinpoints the exact broken
+    // step without 60/s spam.
     int32_t failCount = 0;
-    int32_t okCount = 0;
 };
 
 std::mutex g_osrSurfaceMutex;
@@ -248,12 +242,12 @@ bool WriteRegionToSurface(OsrNativeSurface& s,
             s.height = viewH;
             s.needsFullDamage = true;
             OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
-                "OSRdiag retuned buffer geometry to frame size: %{public}dx%{public}d (was %{public}dx%{public}d)",
+                "OSR surface: retuned buffer geometry to frame size %{public}dx%{public}d (was %{public}dx%{public}d)",
                 viewW, viewH, oldW, oldH);
         } else {
             if ((++s.failCount % 60) == 1) {
                 OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
-                    "OSRdiag size mismatch: region=%{public}dx%{public}d, surface=%{public}dx%{public}d, damage=%{public}d,%{public}d %{public}dx%{public}d — posting self-heal resize",
+                    "OSR surface: size mismatch region=%{public}dx%{public}d surface=%{public}dx%{public}d damage=%{public}d,%{public}d %{public}dx%{public}d — posting self-heal resize",
                     viewW, viewH, s.width, s.height, x, y, w, h);
                 auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
                 if (browser) {
@@ -271,7 +265,7 @@ bool WriteRegionToSurface(OsrNativeSurface& s,
     if (err != 0 || !buffer) {
         if ((++s.failCount % 60) == 1) {
             OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-                "OSRdiag RequestBuffer failed: err=%{public}d", err);
+                "OSR surface: RequestBuffer failed: err=%{public}d", err);
         }
         return false;
     }
@@ -287,7 +281,7 @@ bool WriteRegionToSurface(OsrNativeSurface& s,
         OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
         if ((++s.failCount % 60) == 1) {
             OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-                "OSRdiag bad buffer handle: bh=%{public}d, fmt=%{public}d, stride=%{public}d, size=%{public}dx%{public}d",
+                "OSR surface: bad buffer handle: bh=%{public}d, fmt=%{public}d, stride=%{public}d, size=%{public}dx%{public}d",
                 bh != nullptr, bh ? bh->format : -1, bh ? bh->stride : -1,
                 bh ? bh->width : -1, bh ? bh->height : -1);
         }
@@ -306,7 +300,7 @@ bool WriteRegionToSurface(OsrNativeSurface& s,
             OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
             s.failCount++;
             OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-                "OSRdiag surface format unsupported: %{public}d (BGRA=%{public}d, RGBA=%{public}d)",
+                "OSR surface: format unsupported: %{public}d (BGRA=%{public}d, RGBA=%{public}d)",
                 bh->format, static_cast<int32_t>(NATIVEBUFFER_PIXEL_FMT_BGRA_8888),
                 static_cast<int32_t>(NATIVEBUFFER_PIXEL_FMT_RGBA_8888));
             return false;
@@ -319,7 +313,7 @@ bool WriteRegionToSurface(OsrNativeSurface& s,
         OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
         if ((++s.failCount % 60) == 1) {
             OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-                "OSRdiag buffer smaller than frame: buf=%{public}dx%{public}d, frame=%{public}dx%{public}d",
+                "OSR surface: buffer smaller than frame: buf=%{public}dx%{public}d, frame=%{public}dx%{public}d",
                 bh->width, bh->height, viewW, viewH);
         }
         return false;
@@ -342,7 +336,7 @@ bool WriteRegionToSurface(OsrNativeSurface& s,
         OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
         if ((++s.failCount % 60) == 1) {
             OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-                "OSRdiag FromNativeWindowBuffer failed");
+                "OSR surface: FromNativeWindowBuffer failed");
         }
         return false;
     }
@@ -352,7 +346,7 @@ bool WriteRegionToSurface(OsrNativeSurface& s,
         OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
         if ((++s.failCount % 60) == 1) {
             OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-                "OSRdiag Map failed: err=%{public}d (check CPU_READ usage)", mapErr);
+                "OSR surface: Map failed: err=%{public}d (check CPU_READ usage)", mapErr);
         }
         return false;
     }
@@ -367,7 +361,7 @@ bool WriteRegionToSurface(OsrNativeSurface& s,
         OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
         if ((++s.failCount % 60) == 1) {
             OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-                "OSRdiag BlitFullFrameTo failed (no staging frame?)");
+                "OSR surface: BlitFullFrameTo failed (no staging frame?)");
         }
         return false;
     }
@@ -397,19 +391,14 @@ bool WriteRegionToSurface(OsrNativeSurface& s,
     // fence is needed.
     err = OH_NativeWindow_NativeWindowFlushBuffer(s.window, buffer, -1, damage);
     if (err != 0) {
-        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
-            "OSRdiag FlushBuffer failed: err=%{public}d", err);
+        if ((++s.failCount % 60) == 1) {
+            OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
+                "OSR surface: FlushBuffer failed: err=%{public}d", err);
+        }
         return false;
     }
     s.needsFullDamage = false;
     s.failCount = 0;
-    s.okCount++;
-    if (s.okCount == 1 || (s.okCount % 300) == 0) {
-        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
-            "OSRdiag surface frame #%{public}d flushed: damage=%{public}d,%{public}d %{public}dx%{public}d (full=%{public}d), frame=%{public}dx%{public}d, fmt=%{public}d",
-            s.okCount, x, y, w, h, damage.rectNumber == 0 ? 1 : 0,
-            viewW, viewH, bh->format);
-    }
     return true;
 }
 
@@ -425,8 +414,8 @@ void ReleaseOsrNativeSurface(OsrNativeSurface& s) {
     s.convertToRgba = false;
     s.needsFullDamage = true;
     s.failCount = 0;
-    s.okCount = 0;
 }
+
 using arkui_cef::ArkUICefBrowser;
 using arkui_cef::ArkUICefApp;
 using arkui_cef::PaintCallback;
@@ -589,7 +578,11 @@ CefKeyEvent convertKeyEvent(int32_t keyCode, int32_t keyType, uint32_t modifiers
 // clicks the OSR render area, not the URL bar).
 
 struct OsrKeyFilterContext {
-    int64_t browserId;
+    // Target of key forwarding. Updated by setRenderAreaActive when the user
+    // clicks a render area — with multiple OSR instances (tabs) alive at once
+    // the filter must route to the browser the user actually interacts with,
+    // not the one that most recently (re)registered the filter.
+    std::atomic<int64_t> browserId{-1};
     std::atomic<bool> renderAreaActive{false};
     std::atomic<bool> ctrlPressed{false};
     std::atomic<bool> shiftPressed{false};
@@ -597,6 +590,9 @@ struct OsrKeyFilterContext {
 };
 
 static OsrKeyFilterContext* g_keyFilterCtx = nullptr;
+// The system filter is registered once per window; later registerOsrKeyFilter
+// calls (multi-instance) only refresh the routing target.
+static bool g_keyFilterRegistered = false;
 
 static bool OsrKeyFilterCallback(Input_KeyEvent* keyEvent) {
     if (!keyEvent || !g_keyFilterCtx) return false;
@@ -643,7 +639,8 @@ static bool OsrKeyFilterCallback(Input_KeyEvent* keyEvent) {
     bool sendChar = isTextKey && !ctrl && !alt && (action == KEY_ACTION_DOWN);
 
     CefKeyEvent cefKeyEvent = convertKeyEvent(keyCode, cefType, cefMods);
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(g_keyFilterCtx->browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(
+        g_keyFilterCtx->browserId.load());
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
             base::BindOnce(&ArkUICefBrowser::sendKeyEvent, browser, cefKeyEvent)));
@@ -653,6 +650,14 @@ static bool OsrKeyFilterCallback(Input_KeyEvent* keyEvent) {
             CefPostTask(TID_UI, CefCreateClosureTask(
                 base::BindOnce(&ArkUICefBrowser::sendKeyEvent, browser, cefCharEvent)));
         }
+    } else {
+        // The routing target browser does not exist (e.g. CEF is still
+        // initializing after the first switch to an OSR tab). Release the
+        // key to the system instead of swallowing it silently.
+        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "OSRKEY",
+            "filter: target browser %{public}ld not alive, releasing key %{public}d",
+            g_keyFilterCtx->browserId.load(), keyCode);
+        return false;
     }
 
     return true; // Filter (consume) — IME doesn't see this key
@@ -978,8 +983,7 @@ Node* createParentNode() {
     if (!stack) {
         return nullptr;
     }
-    
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "parentStack: %{public}p", stack);
+
     Node* node = new Node{};
     node->container = stack;
     node->nodeType = ARKUI_NODE_XCOMPONENT;
@@ -1008,25 +1012,18 @@ void destroyNode(Node* node) {
 } // namespace
 
 static napi_value NAPI_Global_startCef(napi_env env, napi_callback_info info) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "startCef called");
-    
     arkui_cef::ArkUICefManager::getInstance().start();
     return nullptr;
 }
 
 static napi_value NAPI_Global_isCefRunning(napi_env env, napi_callback_info info) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "isCefRunning called");
-    
     bool ok = arkui_cef::ArkUICefManager::getInstance().isCefRunning();
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "isCefRunning: %{public}d", ok);
     napi_value result;
     napi_get_boolean(env, ok, &result);
     return result;
 }
 
 static napi_value NAPI_Global_createCefView(napi_env env, napi_callback_info info) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "createCefView called");
-    
     size_t argc = 7;
     napi_value args[7];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
@@ -1050,8 +1047,6 @@ static napi_value NAPI_Global_createCefView(napi_env env, napi_callback_info inf
     char url[1024] = {};
     size_t urlLen;
     napi_get_value_string_utf8(env, args[1], url, sizeof(url), &urlLen);
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", 
-        "createCefView: url=%{public}s", url);
     
     int32_t width = 0;
     napi_get_value_int32(env, args[2], &width);
@@ -1062,9 +1057,6 @@ static napi_value NAPI_Global_createCefView(napi_env env, napi_callback_info inf
     auto jsCreatedCallback = makeJsThreadSafeCallback<int64_t>(env, args[4], "CefCreatedCallback");
     auto jsTitleChangeCallback = makeJsThreadSafeCallback<std::string>(env, args[5], "CefTitleChangeCallback");
     auto jsFocusTakeCallback = makeJsThreadSafeCallback<bool>(env, args[6], "CefFocusTakeCallback");
-    
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", 
-        "createCefView: width=%{public}d, height=%{public}d", width, height);
     
     Node* parentNode = createParentNode();
     if (parentNode == nullptr) {
@@ -1111,8 +1103,6 @@ static napi_value NAPI_Global_createCefView(napi_env env, napi_callback_info inf
 }
 
 static napi_value NAPI_Global_destroyCefView(napi_env env, napi_callback_info info) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "destroyCefView called");
-    
     size_t argc = 2;
     napi_value args[2];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
@@ -1124,14 +1114,12 @@ static napi_value NAPI_Global_destroyCefView(napi_env env, napi_callback_info in
     
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "destroyCefView id: %{public}ld",
-                 browserId);
     
     ArkUI_NodeContentHandle contentHandle = nullptr;
     OH_ArkUI_GetNodeContentFromNapiValue(env, args[1], &contentHandle);
     if (contentHandle == nullptr) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi", 
-            "createCefView: getNodeContentHandleFromNapiValue failed");
+            "destroyCefView: getNodeContentHandleFromNapiValue failed");
         napi_throw_error(env, nullptr, "Failed to get NodeContent handle");
         return nullptr;
     }
@@ -1143,7 +1131,7 @@ static napi_value NAPI_Global_destroyCefView(napi_env env, napi_callback_info in
         int32_t err = OH_ArkUI_NodeContent_RemoveNode(contentHandle, parentNode->container);
         if (err != ARKUI_ERROR_CODE_NO_ERROR) {
             OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi", 
-            "createCefView: removeNode failed");
+            "destroyCefView: removeNode failed");
         }
         destroyNode(parentNode);
     }
@@ -1152,8 +1140,6 @@ static napi_value NAPI_Global_destroyCefView(napi_env env, napi_callback_info in
 }
 
 static napi_value NAPI_Global_cefResize(napi_env env, napi_callback_info info) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "cefRisize called");
-    
     size_t argc = 3;
     napi_value args[3] = { nullptr };
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
@@ -1172,8 +1158,6 @@ static napi_value NAPI_Global_cefResize(napi_env env, napi_callback_info info) {
     int32_t height = 0;
     napi_get_value_int32(env, args[2], &height);
     
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "cefRisize %{public}ld, %{public}d X %{public}d",
-                 browserId, width, height);
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
@@ -1195,7 +1179,6 @@ static napi_value NAPI_Global_cefGoBack(napi_env env, napi_callback_info info) {
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
     
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "cefGoBack %{public}ld", browserId);
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::goBack, browser)));
@@ -1217,7 +1200,6 @@ static napi_value NAPI_Global_cefGoForward(napi_env env, napi_callback_info info
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
     
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "cefGoForward %{public}ld", browserId);
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::goForward, browser)));
@@ -1239,7 +1221,6 @@ static napi_value NAPI_Global_cefReload(napi_env env, napi_callback_info info) {
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
     
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "cefReload %{public}ld", browserId);
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::reload, browser)));
@@ -1261,7 +1242,6 @@ static napi_value NAPI_Global_cefHide(napi_env env, napi_callback_info info) {
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
     
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "cefHide %{public}ld", browserId);
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::hide, browser)));
@@ -1282,7 +1262,6 @@ static napi_value NAPI_Global_cefShow(napi_env env, napi_callback_info info) {
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
     
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "cefShow %{public}ld", browserId);
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::show, browser)));
@@ -1306,9 +1285,6 @@ static napi_value NAPI_Global_cefLoadUrl(napi_env env, napi_callback_info info) 
     char url[1024] = {};
     size_t urlLen;
     napi_get_value_string_utf8(env, args[1], url, sizeof(url), &urlLen);
-    
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "cefLoadUrl %{public}ld, url=%{public}s", 
-                 browserId, url);
     
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
@@ -1349,10 +1325,6 @@ static napi_value NAPI_Global_cefSendKeyEvent(napi_env env, napi_callback_info i
         napi_get_value_int32(env, args[4], &charCode);
     }
 
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
-        "cefSendKeyEvent: browserId=%{public}ld, keyCode=%{public}d, keyType=%{public}d, charCode=%{public}d",
-        browserId, keyCode, keyType, charCode);
-
     CefKeyEvent keyEvent = convertKeyEvent(keyCode, keyType, modifiers);
 
     // If ArkTS provided a Unicode char code, use it for the character field
@@ -1383,7 +1355,6 @@ static napi_value NAPI_Global_hasCef(napi_env env, napi_callback_info info) {
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
     
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "hasCef %{public}ld", browserId);
     bool exists = arkui_cef::ArkUICefManager::getInstance().hasBrowser(browserId);
     
     napi_value result;
@@ -1392,8 +1363,6 @@ static napi_value NAPI_Global_hasCef(napi_env env, napi_callback_info info) {
 }
 
 static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info info) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "createOsrCefView called");
-
     size_t argc = 14;
     napi_value args[14];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
@@ -1409,8 +1378,6 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
     char url[1024] = {};
     size_t urlLen;
     napi_get_value_string_utf8(env, args[0], url, sizeof(url), &urlLen);
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
-        "createOsrCefView: url=%{public}s", url);
 
     int32_t width = 0;
     napi_get_value_int32(env, args[1], &width);
@@ -1431,26 +1398,13 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
     auto jsTitleChangeCallback = makeJsThreadSafeCallback<std::string>(env, args[5], "OsrTitleChangeCallback");
     auto jsFocusTakeCallback = makeJsThreadSafeCallback<bool>(env, args[6], "OsrFocusTakeCallback");
 
-    // Optional callbacks (args 7, 8, 9, 10)
+    // Optional callbacks (args 7-13). Scroll offsets are encoded as "x,y"
+    // strings since JsThreadSafeCallback only supports single arguments.
     std::function<void(double, double)> scrollOffsetCb;
     std::function<void(bool)> virtualKeyboardCb;
     std::function<void(const std::string&)> textSelectionCb;
     std::function<void(int)> cursorChangeCb;
 
-    if (argc >= 8) {
-        auto jsScrollCallback = makeJsThreadSafeCallback<double>(env, args[7], "OsrScrollOffsetCallback");
-        if (jsScrollCallback) {
-            // We need to pass two doubles; use a pair wrapper
-            // Actually JsThreadSafeCallback only supports single arg.
-            // We'll encode as a string "x,y" and parse in JS.
-            // But that's messy. Let's create a custom threadsafe function for this.
-        }
-    }
-
-    // For scroll offset, virtual keyboard, and text selection we use custom TSFNs
-    // Since JsThreadSafeCallback doesn't support double pairs, we'll use napi_create_double
-    // Let's keep it simpler — use the JsThreadSafeCallback for single-arg callbacks
-    // and encode scroll offset as a string.
     if (argc >= 8) {
         napi_valuetype vt;
         napi_typeof(env, args[7], &vt);
@@ -1554,7 +1508,7 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
     }
 
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
-        "createOsrCefView: width=%{public}d, height=%{public}d", width, height);
+        "createOsrCefView: %{public}dx%{public}d, url=%{public}s", width, height, url);
 
     // Wrap the paint notification in a PaintCallback. The pixel data stays in
     // the render handler's staging buffer; the JS thread pulls the region
@@ -1603,8 +1557,6 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
 }
 
 static napi_value NAPI_Global_cefOsrResize(napi_env env, napi_callback_info info) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "cefOsrResize called");
-
     size_t argc = 3;
     napi_value args[3] = { nullptr };
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
@@ -1623,9 +1575,6 @@ static napi_value NAPI_Global_cefOsrResize(napi_env env, napi_callback_info info
     int32_t height = 0;
     napi_get_value_int32(env, args[2], &height);
 
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
-        "cefOsrResize %{public}ld, %{public}d X %{public}d", browserId, width, height);
-
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
@@ -1635,8 +1584,6 @@ static napi_value NAPI_Global_cefOsrResize(napi_env env, napi_callback_info info
 }
 
 static napi_value NAPI_Global_destroyOsrCefView(napi_env env, napi_callback_info info) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "destroyOsrCefView called");
-
     size_t argc = 1;
     napi_value args[1];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
@@ -2323,8 +2270,6 @@ static napi_value NAPI_Global_unregisterPopupTitleCallback(napi_env env, napi_ca
 }
 
 static napi_value NAPI_Global_setPopupBrowserCreatedCallback(napi_env env, napi_callback_info info) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "setPopupBrowserCreatedCallback called");
-
     size_t argc = 1;
     napi_value args[1];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
@@ -2364,35 +2309,77 @@ static napi_value NAPI_Global_registerOsrKeyFilter(napi_env env, napi_callback_i
     int64_t browserId = 0;
     napi_get_value_int64(env, args[1], &browserId);
 
-    if (g_keyFilterCtx) delete g_keyFilterCtx;
-    g_keyFilterCtx = new OsrKeyFilterContext{ browserId };
+    // The routing target is set once here (first browser to register) and is
+    // afterwards owned by setRenderAreaActive (click/visibility driven).
+    // Blindly overwriting it per registration would hand the keyboard to a
+    // background tab when several views register up front.
+    if (!g_keyFilterCtx) {
+        g_keyFilterCtx = new OsrKeyFilterContext();
+        g_keyFilterCtx->browserId.store(browserId);
+    }
 
-    WindowManager_ErrorCode ret = OH_NativeWindowManager_RegisterKeyEventFilter(
-        windowId, OsrKeyFilterCallback);
-
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
-        "registerOsrKeyFilter: windowId=%{public}d, browserId=%{public}ld, ret=%{public}d",
-        windowId, browserId, (int)ret);
+    if (!g_keyFilterRegistered) {
+        WindowManager_ErrorCode ret = OH_NativeWindowManager_RegisterKeyEventFilter(
+            windowId, OsrKeyFilterCallback);
+        if (ret != WindowManager_ErrorCode::OK) {
+            OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "OSRKEY",
+                "register: FAILED windowId=%{public}d ret=%{public}d",
+                windowId, static_cast<int>(ret));
+        } else {
+            g_keyFilterRegistered = true;
+            OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "OSRKEY",
+                "register: ok windowId=%{public}d target=%{public}ld",
+                windowId, browserId);
+            // Warm up the IMS connection. Physical keys are routed through
+            // the input method service, which drops events for apps that
+            // never established a connection (the first IMF attach). A
+            // one-shot attach+detach (panel NOT shown) here makes key
+            // routing work from the very first key press after startup.
+            {
+                arkui_cef::ImeEventCallbacks stub{};
+                auto warmup = std::make_unique<arkui_cef::ArkUICefInputMethod>();
+                bool ok = warmup->attach(false, windowId, 0, 0, 2, 24, stub);
+                if (ok) {
+                    warmup->detach();
+                }
+                OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "OSRKEY",
+                    "ims warmup: %{public}s", ok ? "ok" : "failed");
+            }
+        }
+    }
 
     return nullptr;
 }
 
+// Tracks which render area owns keyboard input. Called with active=true when
+// the user clicks/touches an OSR render area (making that browser the key
+// forwarding target), and with active=false when focus moves to another
+// component (e.g. the URL bar).
 static napi_value NAPI_Global_setRenderAreaActive(napi_env env, napi_callback_info info) {
-    size_t argc = 1;
-    napi_value args[1] = { nullptr };
+    size_t argc = 2;
+    napi_value args[2] = { nullptr };
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    if (argc < 1) {
-        napi_throw_error(env, nullptr, "Expected 1 argument: active (boolean)");
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "Expected 2 arguments: browserId, active (boolean)");
         return nullptr;
     }
 
-    bool active = false;
-    napi_get_value_bool(env, args[0], &active);
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
 
-    if (g_keyFilterCtx) {
-        g_keyFilterCtx->renderAreaActive.store(active);
-        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
-            "setRenderAreaActive: %{public}s", active ? "true" : "false");
+    bool active = false;
+    napi_get_value_bool(env, args[1], &active);
+
+    if (active) {
+        if (!g_keyFilterCtx) {
+            g_keyFilterCtx = new OsrKeyFilterContext();
+        }
+        g_keyFilterCtx->browserId.store(browserId);
+        g_keyFilterCtx->renderAreaActive.store(true);
+    } else if (g_keyFilterCtx && g_keyFilterCtx->browserId.load() == browserId) {
+        // Deactivate only when the caller still owns the routing target —
+        // another view may have taken over since this one was activated.
+        g_keyFilterCtx->renderAreaActive.store(false);
     }
 
     return nullptr;
@@ -2613,10 +2600,6 @@ static napi_value NAPI_Global_cefDragTargetDragEnter(napi_env env, napi_callback
     napi_get_value_int32(env, args[6], &y);
     napi_get_value_int32(env, args[7], &allowedOps);
 
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
-        "cefDragTargetDragEnter: browserId=%{public}ld, x=%{public}d, y=%{public}d, ops=%{public}d",
-        browserId, x, y, allowedOps);
-
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
@@ -2691,9 +2674,6 @@ static napi_value NAPI_Global_cefDragTargetDrop(napi_env env, napi_callback_info
     napi_get_value_int32(env, args[1], &x);
     napi_get_value_int32(env, args[2], &y);
 
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
-        "cefDragTargetDrop: browserId=%{public}ld, x=%{public}d, y=%{public}d", browserId, x, y);
-
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
@@ -2719,10 +2699,6 @@ static napi_value NAPI_Global_cefDragSourceEndedAt(napi_env env, napi_callback_i
     napi_get_value_int32(env, args[1], &x);
     napi_get_value_int32(env, args[2], &y);
     napi_get_value_int32(env, args[3], &op);
-
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
-        "cefDragSourceEndedAt: browserId=%{public}ld, x=%{public}d, y=%{public}d, op=%{public}d",
-        browserId, x, y, op);
 
     auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
     if (browser) {
@@ -2755,8 +2731,6 @@ static napi_value NAPI_Global_cefDragSourceSystemDragEnded(napi_env env, napi_ca
 
 EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "Init called");
-    
     napi_property_descriptor desc[] = {
         {"startCef", nullptr, NAPI_Global_startCef, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isCefRunning", nullptr, NAPI_Global_isCefRunning, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -2813,7 +2787,6 @@ static napi_value Init(napi_env env, napi_value exports) {
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", "Init done");
     return exports;
 }
 EXTERN_C_END
@@ -2830,7 +2803,5 @@ static napi_module demoModule = {
 
 extern "C" __attribute__((constructor)) void RegisterArkui_cefModule(void)
 {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi", 
-        "RegisterArkui_cefModule called");
     napi_module_register(&demoModule);
 }

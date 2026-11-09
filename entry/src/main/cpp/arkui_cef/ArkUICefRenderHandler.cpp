@@ -299,9 +299,6 @@ void ArkUICefRenderHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, Pa
 void ArkUICefRenderHandler::OnTextSelectionChanged(CefRefPtr<CefBrowser> browser,
                                                     const CefString& selected_text,
                                                     const CefRange& selected_range) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
-        "OnTextSelectionChanged: text_len=%{public}zu, range=[%{public}d,%{public}d]",
-        selected_text.ToString().size(), selected_range.from, selected_range.to);
     if (textSelectionCallback_) {
         textSelectionCallback_(selected_text.ToString());
     }
@@ -309,24 +306,15 @@ void ArkUICefRenderHandler::OnTextSelectionChanged(CefRefPtr<CefBrowser> browser
 
 void ArkUICefRenderHandler::OnVirtualKeyboardRequested(CefRefPtr<CefBrowser> browser,
                                                         TextInputMode input_mode) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
-        "OnVirtualKeyboardRequested: input_mode=%{public}d", input_mode);
     if (virtualKeyboardCallback_) {
         virtualKeyboardCallback_(input_mode != CEF_TEXT_INPUT_MODE_NONE);
     }
 }
 
 void ArkUICefRenderHandler::OnScrollOffsetChanged(CefRefPtr<CefBrowser> browser, double x, double y) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
-        "ScrollOffsetChanged: x=%{public}f, y=%{public}f", x, y);
     if (scrollOffsetCallback_) {
         scrollOffsetCallback_(x, y);
     }
-}
-
-void ArkUICefRenderHandler::Invalidate() {
-    // Trigger a full repaint by telling CEF the view was resized
-    // This is a no-op if there's no browser; the caller (ArkUICefBrowser) handles that
 }
 
 CefRect ArkUICefRenderHandler::CompositePopup(const void* viewBuffer, int viewW, int viewH) {
@@ -448,10 +436,6 @@ void ArkUICefRenderHandler::OnImeCompositionRangeChanged(
     CefRefPtr<CefBrowser> browser,
     const CefRange& selected_range,
     const RectList& character_bounds) {
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
-        "OnImeCompositionRangeChanged: from=%{public}d, to=%{public}d, bounds_count=%{public}zu",
-        selected_range.from, selected_range.to, character_bounds.size());
-
     if (character_bounds.empty()) {
         return;
     }
@@ -475,10 +459,6 @@ void ArkUICefRenderHandler::OnImeCompositionRangeChanged(
     if (cursorHeight <= 0) {
         cursorHeight = 24;
     }
-
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
-        "OnImeCompositionRangeChanged -> cursor px: left=%{public}d, top=%{public}d, w=%{public}d, h=%{public}d",
-        left, top, cursorWidth, cursorHeight);
 
     if (imeCursorCallback_) {
         imeCursorCallback_(left, top, cursorWidth, cursorHeight);
