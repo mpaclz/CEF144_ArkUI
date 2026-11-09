@@ -196,7 +196,7 @@ void ArkUICefRenderHandler::NotifyFrameReady() {
     }
 }
 
-bool ArkUICefRenderHandler::ConsumePendingRegion(OsrPendingRegion& out) {
+bool ArkUICefRenderHandler::ConsumePendingRegionMeta(OsrPendingRegion& out) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!accumDirtyValid_ || frameW_ <= 0 || frameH_ <= 0) {
         return false;
@@ -224,18 +224,65 @@ bool ArkUICefRenderHandler::ConsumePendingRegion(OsrPendingRegion& out) {
     out.fullFrame = fullFramePending_;
     out.viewW = frameW_;
     out.viewH = frameH_;
-
-    // Compact the region rows into a reused buffer (avoids per-frame alloc).
-    size_t rowBytes = static_cast<size_t>(r.width) * 4;
-    out.pixels.resize(rowBytes * r.height);
-    const uint8_t* src = frameBuffer_.data();
-    for (int row = 0; row < r.height; row++) {
-        size_t srcOffset = (static_cast<size_t>(r.y + row) * frameW_ + r.x) * 4;
-        memcpy(out.pixels.data() + row * rowBytes, src + srcOffset, rowBytes);
-    }
+    // Metadata only — the pixel rows are compacted lazily by
+    // CompactRegionPixels when a fallback path actually needs them (the
+    // NativeWindow path never does: it blits the full frame and uses the
+    // rect as the damage hint only).
+    out.pixels.clear();
 
     accumDirtyValid_ = false;
     fullFramePending_ = false;
+    return true;
+}
+
+void ArkUICefRenderHandler::CompactRegionPixels(OsrPendingRegion& region) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // The staging frame must still match the rect consumed by
+    // ConsumePendingRegionMeta — if a resize raced in between, the payload
+    // is stale and dropped (the resize chain delivers a fresh full frame).
+    if (region.w <= 0 || region.h <= 0 ||
+        region.viewW != frameW_ || region.viewH != frameH_ ||
+        region.x + region.w > frameW_ || region.y + region.h > frameH_) {
+        region.pixels.clear();
+        return;
+    }
+    size_t rowBytes = static_cast<size_t>(region.w) * 4;
+    region.pixels.resize(rowBytes * region.h);
+    const uint8_t* src = frameBuffer_.data();
+    for (int row = 0; row < region.h; row++) {
+        size_t srcOffset = (static_cast<size_t>(region.y + row) * frameW_ + region.x) * 4;
+        memcpy(region.pixels.data() + row * rowBytes, src + srcOffset, rowBytes);
+    }
+}
+
+bool ArkUICefRenderHandler::BlitFullFrameTo(uint8_t* dst, size_t dstStride, bool swapBR) {
+    if (!dst || dstStride == 0) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (frameBuffer_.empty() || frameW_ <= 0 || frameH_ <= 0) {
+        return false;
+    }
+    size_t rowBytes = static_cast<size_t>(frameW_) * 4;
+    if (dstStride < rowBytes) {
+        return false;
+    }
+    const uint8_t* src = frameBuffer_.data();
+    for (int row = 0; row < frameH_; row++) {
+        uint8_t* dstRow = dst + static_cast<size_t>(row) * dstStride;
+        if (swapBR) {
+            // BGRA -> RGBA: swap bytes 0 and 2 of each 32-bit pixel.
+            const uint32_t* srcRow = reinterpret_cast<const uint32_t*>(src + row * rowBytes);
+            uint32_t* dstRow32 = reinterpret_cast<uint32_t*>(dstRow);
+            for (int i = 0; i < frameW_; i++) {
+                uint32_t v = srcRow[i];
+                dstRow32[i] = (v & 0xFF00FF00u) | ((v & 0x00FF0000u) >> 16) |
+                              ((v & 0x000000FFu) << 16);
+            }
+        } else {
+            memcpy(dstRow, src + row * rowBytes, rowBytes);
+        }
+    }
     return true;
 }
 

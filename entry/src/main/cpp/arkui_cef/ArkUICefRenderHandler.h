@@ -11,7 +11,7 @@ namespace arkui_cef {
 
 // PaintCallback: notification that a frame was composited into the persistent
 // staging buffer. The JS thread pulls the pending dirty region via
-// ConsumePendingRegion(). This mirrors QCefView's widget->update() — the
+// ConsumePendingRegionMeta(). This mirrors QCefView's widget->update() — the
 // notification may be coalesced, but pixel data is never dropped.
 using PaintCallback = std::function<void()>;
 
@@ -79,10 +79,32 @@ public:
 
     void Invalidate();
 
-    // Called on the JS thread: takes the accumulated dirty region out of the
-    // staging buffer (resets the accumulation). Returns false when nothing is
-    // pending. |out.pixels| is reused across calls to avoid per-frame allocs.
-    bool ConsumePendingRegion(OsrPendingRegion& out);
+    // Called on the JS thread: consumes the pending region METADATA (merged
+    // dirty rect + view size + fullFrame flag) WITHOUT compacting pixel
+    // rows — the NativeWindow path only needs the rect as the damage hint
+    // (the full frame is blitted via BlitFullFrameTo). Returns false when
+    // nothing is pending. |out.pixels| is left empty.
+    bool ConsumePendingRegionMeta(OsrPendingRegion& out);
+
+    // Called on the JS thread AFTER ConsumePendingRegionMeta when a
+    // fallback path actually needs the pixels: compacts the dirty rows from
+    // the CURRENT staging buffer (under the handler mutex; the content may
+    // be marginally newer than the rect, which is harmless). If the frame
+    // was resized between the meta consume and this call, |pixels| is left
+    // empty and the payload is dropped (the resize chain delivers a fresh
+    // full frame).
+    void CompactRegionPixels(OsrPendingRegion& region);
+
+    // Called on the JS thread: blits the ENTIRE staging frame into |dst|
+    // (|dstStride| bytes per row). Used by the NativeWindow display path —
+    // window buffers ROTATE (the buffer queue recycles 2-3 buffers), so a
+    // flush carrying only the dirty region would leave the receiving buffer
+    // missing all prior content (black screen). Every flush must carry the
+    // complete image; the damage rect handed to FlushBuffer only limits the
+    // compositor-side upload. |swapBR| converts BGRA→RGBA per row for
+    // surfaces that hand out RGBA_8888 buffers. Returns false when no frame
+    // is available or |dst| is smaller than the frame.
+    bool BlitFullFrameTo(uint8_t* dst, size_t dstStride, bool swapBR);
 
     // Translates a CSS-pixel view coordinate to CEF's internal popup
     // coordinates when the point lands on the DISPLAYED popup rect (the

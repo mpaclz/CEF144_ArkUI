@@ -17,6 +17,38 @@ interface DragDataInfo {
   filePaths: string;
 }
 
+// XComponent(SURFACE) lifecycle controller. The onSurface* overrides are
+// XComponentController virtuals (API 12+) that fire only when libraryname is
+// NOT set; the callbacks are injected so the controller can route events
+// back into the owning OsrCefView instance.
+class OsrSurfaceController extends XComponentController {
+  private onCreated: (surfaceId: string) => void = (surfaceId: string) => {};
+  private onChanged: (surfaceId: string, w: number, h: number) => void =
+    (surfaceId: string, w: number, h: number) => {};
+  private onDestroyed: (surfaceId: string) => void = (surfaceId: string) => {};
+
+  constructor(onCreated: (surfaceId: string) => void,
+              onChanged: (surfaceId: string, w: number, h: number) => void,
+              onDestroyed: (surfaceId: string) => void) {
+    super();
+    this.onCreated = onCreated;
+    this.onChanged = onChanged;
+    this.onDestroyed = onDestroyed;
+  }
+
+  onSurfaceCreated(surfaceId: string): void {
+    this.onCreated(surfaceId);
+  }
+
+  onSurfaceChanged(surfaceId: string, rect: SurfaceRect): void {
+    this.onChanged(surfaceId, rect.surfaceWidth, rect.surfaceHeight);
+  }
+
+  onSurfaceDestroyed(surfaceId: string): void {
+    this.onDestroyed(surfaceId);
+  }
+}
+
 @Component
 export struct OsrCefView {
   @State private browserId: number = -1;
@@ -101,6 +133,22 @@ export struct OsrCefView {
   // QEvent::Show/Hide handling — window FOCUS events deliberately do not
   // participate (an unfocused window may still be visible and interactive).
   private osrHidden: boolean = false;
+
+  // ---- XComponent direct display (NativeWindow damage path) ----
+  // Primary display mode: dirty regions are written straight into window
+  // buffers by the NAPI layer (vsync-aligned buffer queue, damage-aware
+  // upload). Falls back to the legacy PixelMap/Image path when attach
+  // fails. surfaceAttached is the non-reactive mirror of the NAPI registry
+  // state; surfaceReady drives the loading overlay.
+  private xcController: XComponentController | null = null;
+  private surfaceAttached: boolean = false;
+  // Surface info waiting for the browser to be created (either the surface
+  // or the browser may come up first).
+  private pendingSurfaceId: string | undefined = undefined;
+  private pendingSurfaceW: number = 0;
+  private pendingSurfaceH: number = 0;
+  @State private useSurfaceMode: boolean = true;
+  @State private surfaceReady: boolean = false;
   // Component position within the window (from globalPosition, in vp/CSS px)
   // and device scale factor — cached from onAreaChange for IME cursor computation.
   private componentGlobalX: number = 0;
@@ -167,8 +215,12 @@ export struct OsrCefView {
   // healthy. 20 is a safe default; profile and raise on capable devices.
   @Prop osrFrameRate: number = 60;
 
-   aboutToAppear(): void {
+  aboutToAppear(): void {
     this.urlInput = this.viewUrl;
+    this.xcController = new OsrSurfaceController(
+      (surfaceId: string) => { this.onXcSurfaceCreated(surfaceId); },
+      (surfaceId: string, w: number, h: number) => { this.onXcSurfaceChanged(surfaceId, w, h); },
+      (surfaceId: string) => { this.onXcSurfaceDestroyed(surfaceId); });
     if (this.browserId <= 0) {
       // Use physical pixels for CEF buffer size (OnPaint outputs physical pixels).
       // DSF is set to the actual device scale factor so CEF's GetViewRect returns
@@ -252,7 +304,26 @@ export struct OsrCefView {
 
       // Render area — all events are captured and forwarded to CEF
       Column() {
-        if (this.pixelMap) {
+        if (this.useSurfaceMode) {
+          // Direct-display mode: the NAPI layer writes CEF dirty regions
+          // straight into the XComponent's window buffer queue (damage-
+          // aware, vsync-aligned). No PixelMap, no per-frame @State churn.
+          Stack() {
+            if (this.xcController) {
+              XComponent({ type: XComponentType.SURFACE, controller: this.xcController })
+                .width('100%')
+                .height('100%')
+            }
+            if (!this.surfaceReady) {
+              Text('OSR Loading...')
+                .fontSize(16)
+                .fontColor(Color.Gray)
+            }
+          }
+          .width('100%')
+          .height('100%')
+        } else if (this.pixelMap) {
+          // Fallback display (surface attach failed): legacy PixelMap path.
           Image(this.pixelMap)
             .width('100%')
             .height('100%')
@@ -352,7 +423,13 @@ export struct OsrCefView {
             let dsf = this.getUIContext().vp2px(1);
         this.cachedDsf = dsf;
             arkui_cef.cefOsrSetScale(this.browserId, dsf);
-            arkui_cef.cefOsrResize(this.browserId, this.viewWidth, this.viewHeight);
+            // Resize driver split: in surface mode the XComponent's
+            // onSurfaceChanged is the authoritative resize source (it
+            // reports the exact surface geometry); skip the duplicate post
+            // here. In fallback (PixelMap) mode this remains the driver.
+            if (!this.surfaceAttached) {
+              arkui_cef.cefOsrResize(this.browserId, this.viewWidth, this.viewHeight);
+            }
             // Pass component offset (window-relative, from globalPosition) for
             // cursor coordinate conversion. ArkTS adds windowRect.left/top
             // separately to get screen-absolute coordinates for IMF.
@@ -519,8 +596,100 @@ export struct OsrCefView {
     arkui_cef.cefWasHidden(this.browserId, hidden);
   }
 
+  // ---- XComponent surface lifecycle ----
+
+  private onXcSurfaceCreated(surfaceId: string): void {
+    hilog.info(DOMAIN, MODULE, "onXcSurfaceCreated: %{public}s, browserId=%{public}d",
+      surfaceId, this.browserId);
+    if (this.surfaceAttached) {
+      return;
+    }
+    this.pendingSurfaceId = surfaceId;
+    this.attachSurfaceIfPossible();
+  }
+
+  private onXcSurfaceChanged(surfaceId: string, w: number, h: number): void {
+    hilog.info(DOMAIN, MODULE, "onXcSurfaceChanged: %{public}s, %{public}dx%{public}d",
+      surfaceId, w, h);
+    this.pendingSurfaceW = w;
+    this.pendingSurfaceH = h;
+    // The XComponent rect is the AUTHORITATIVE render-area size (physical
+    // px) — keep viewWidth/viewHeight and the browser in lockstep with it.
+    // The Column's onAreaChange also drives this, but its first firing can
+    // race the browser creation (or not fire at all in some layouts),
+    // leaving the browser stuck at the aboutToAppear default
+    // 800x600*dsf — observed as a persistent size mismatch between the
+    // CEF frame and the surface.
+    if (w > 0 && h > 0) {
+      this.viewWidth = w;
+      this.viewHeight = h;
+      if (this.isCreated()) {
+        arkui_cef.cefOsrResize(this.browserId, w, h);
+      }
+    }
+    if (this.surfaceAttached && this.isCreated()) {
+      arkui_cef.updateOsrSurfaceGeometry(this.browserId, w, h);
+    }
+  }
+
+  private onXcSurfaceDestroyed(surfaceId: string): void {
+    hilog.info(DOMAIN, MODULE, "onXcSurfaceDestroyed: %{public}s", surfaceId);
+    this.pendingSurfaceId = undefined;
+    this.pendingSurfaceW = 0;
+    this.pendingSurfaceH = 0;
+    if (this.surfaceAttached) {
+      this.surfaceAttached = false;
+      this.surfaceReady = false;
+      if (this.isCreated()) {
+        arkui_cef.detachOsrSurface(this.browserId);
+      }
+    }
+  }
+
+  // Attaches the pending surface once BOTH the surface and the browser
+  // exist (either may come up first). On attach failure the view falls back
+  // to the legacy PixelMap display for the rest of its lifetime.
+  private attachSurfaceIfPossible(): void {
+    let surfaceId = this.pendingSurfaceId;
+    if (!this.isCreated() || this.surfaceAttached || surfaceId === undefined) {
+      return;
+    }
+    let w = this.pendingSurfaceW > 0 ? this.pendingSurfaceW : this.viewWidth;
+    let h = this.pendingSurfaceH > 0 ? this.pendingSurfaceH : this.viewHeight;
+    // Pass the DSF so the native layer derives the size tolerance from it
+    // (max frame/surface drift = physical mod dsf, bounded by ceil(dsf)).
+    let ok = arkui_cef.attachOsrSurface(this.browserId, surfaceId, w, h, this.cachedDsf);
+    if (ok) {
+      this.surfaceAttached = true;
+      this.surfaceReady = true;
+      // Force the browser to the surface's size — they must agree (the
+      // surface write path drops frames while they mismatch). This also
+      // recovers from any stale viewWidth captured before layout settled.
+      arkui_cef.cefOsrResize(this.browserId, w, h);
+      // The surface geometry may have settled after the browser was created
+      // (e.g. initial layout) — sync it now.
+      if (this.pendingSurfaceW > 0) {
+        arkui_cef.updateOsrSurfaceGeometry(this.browserId, this.pendingSurfaceW, this.pendingSurfaceH);
+      }
+    } else {
+      hilog.error(DOMAIN, MODULE, "attachOsrSurface failed — falling back to PixelMap display");
+      this.useSurfaceMode = false;
+      this.pendingSurfaceId = undefined;
+    }
+  }
+
   destroy(): void {
     this.detachInputMethod();
+    if (this.surfaceAttached) {
+      // Release the window handle before browser teardown (the NAPI layer
+      // also cleans it up defensively in destroyOsrCefView).
+      this.surfaceAttached = false;
+      this.surfaceReady = false;
+      if (this.isCreated()) {
+        arkui_cef.detachOsrSurface(this.browserId);
+      }
+    }
+    this.pendingSurfaceId = undefined;
     if (this.isCreated()) {
       hilog.info(DOMAIN, MODULE, "Destroying OSR browser, id: %{public}d", this.browserId);
       // Release native pixelmap handles BEFORE the ArkTS PixelMaps below —
@@ -625,6 +794,10 @@ export struct OsrCefView {
     hilog.info(DOMAIN, MODULE, "OSR CEF created, browserId=%{public}d", id);
     this.browserId = id;
     this.cefCreating = false;
+    // Set DSF BEFORE any resize: GetViewRect divides width_ by the DSF, so
+    // a resize processed while the DSF is still the default 1.0 makes the
+    // renderer treat physical pixels as CSS pixels and double-scale the
+    // next frame (observed as a 3971x2184 frame with dsf=1.9).
     // Set DSF to actual device scale factor so CEF GetViewRect returns CSS pixels.
     // This makes web content layout match non-OSR tabs (content not too small).
     // OnPaint buffer is still physical pixels (CSS * DSF).
@@ -633,6 +806,9 @@ export struct OsrCefView {
     this.cachedDsf = dsf;
     arkui_cef.cefOsrSetScale(this.browserId, dsf);
     arkui_cef.cefOsrResize(this.browserId, this.viewWidth, this.viewHeight);
+    // Attach the surface AFTER the scale/resize posts so the attach-forced
+    // resize runs with the correct DSF (post order is preserved).
+    this.attachSurfaceIfPossible();
     // Apply the requested frame rate (creation default is 60; this allows
     // callers to lower it via the osrFrameRate prop). SetWindowlessFrameRate
     // takes effect on the CEF UI thread; static pages emit no extra frames

@@ -76,6 +76,11 @@ find_library(
     pixelmap
 )
 
+find_library(
+    native-buffer-lib
+    native_buffer
+)
+
 add_library(arkui_cef_core SHARED
     arkui_cef/ArkUICefApp.cpp
     arkui_cef/ArkUICefClient.cpp
@@ -126,6 +131,8 @@ target_link_libraries(arkui_cef PUBLIC
     ${input-lib}
     ${inputmethod-lib}
     ${pixelmap-lib}
+    ${native-window-lib}
+    ${native-buffer-lib}
 )
 
 # cefsimple 共享库：OHOS 子进程入口

@@ -37,6 +37,9 @@ export const createOsrCefView: (url: string, width: number, height: number,
 export const destroyOsrCefView: (browserId: number) => void;
 export const registerOsrPixelmaps: (browserId: number, pmA: image.PixelMap, pmB: image.PixelMap) => void;
 export const unregisterOsrPixelmaps: (browserId: number) => void;
+export const attachOsrSurface: (browserId: number, surfaceId: string, widthPx: number, heightPx: number, dsf: number) => boolean;
+export const updateOsrSurfaceGeometry: (browserId: number, widthPx: number, heightPx: number) => void;
+export const detachOsrSurface: (browserId: number) => void;
 export const cefOsrResize: (browserId: number, width: number, height: number) => void;
 export const cefOsrSetScale: (browserId: number, scaleFactor: number) => void;
 export const cefSetComponentOffset: (browserId: number, offsetX: number, offsetY: number) => void;

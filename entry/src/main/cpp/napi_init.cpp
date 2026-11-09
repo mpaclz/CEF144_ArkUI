@@ -1,5 +1,7 @@
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <vector>
 #include <memory>
 #include <atomic>
@@ -12,6 +14,12 @@
 #include "window_manager/oh_window_event_filter.h"
 #include "multimodalinput/oh_input_manager.h"
 #include <multimedia/image_framework/image/pixelmap_native.h>
+#include <native_window/external_window.h>
+#include <native_window/buffer_handle.h>
+#include <native_buffer/native_buffer.h>
+#include <native_buffer/buffer_common.h>
+#include <poll.h>
+#include <unistd.h>
 
 #include "JsThreadSafeCallback.h"
 #include "napi/native_api.h"
@@ -132,6 +140,293 @@ bool WriteRegionToPixelmap(OH_PixelmapNative* pm, uint32_t rowStride,
     return true;
 }
 
+
+// ---------------------------------------------------------------------------
+// OSR NativeWindow direct-display registry (display-side optimization).
+//
+// ArkTS attaches the XComponent(SURFACE)'s OHNativeWindow here (created from
+// the surfaceId via OH_NativeWindow_CreateNativeWindowFromSurfaceId — the
+// XComponent surface lives in this process, as required). The paint tsfn
+// then blits dirty regions DIRECTLY into window buffers (RequestBuffer →
+// BufferHandle.virAddr → memcpy → FlushBuffer with a damage Region). The
+// compositor consumes the buffer queue vsync-aligned — this replaces the
+// PixelMap/@State/Image upload chain entirely (QCefView's QPainter path is
+// the Qt equivalent; the damage Region is the HarmonyOS bonus).
+//
+// All access happens on the JS thread (tsfn CallJs + NAPI entry points);
+// the mutex guards against future thread migration.
+// ---------------------------------------------------------------------------
+struct OsrNativeSurface {
+    OHNativeWindow* window = nullptr;
+    int32_t width = 0;              // buffer geometry (physical px)
+    int32_t height = 0;             // buffer geometry (physical px)
+    // Device scale factor (passed at attach). Derives the size tolerance
+    // below.
+    float deviceScaleFactor = 1.0f;
+    // Maximum |CEF frame size - requested size| drift that the retune path
+    // accepts. DERIVED, not a magic number: GetViewRect computes CSS =
+    // floor(P / dsf) (integer truncation) and CEF paints ceil(CSS * dsf),
+    // so for P = q*dsf + r the paint is exactly P - r — the drift is r
+    // (P mod dsf), bounded by ceil(dsf). +1 margin for safety.
+    int32_t sizeTolerance = 2;
+    // Set after the first buffer inspection: true → the surface refused
+    // BGRA_8888 and hands out RGBA_8888 buffers, so rows are converted
+    // during the blit.
+    bool convertToRgba = false;
+    // True until the first successful flush (and again after geometry
+    // changes): the first frame must declare FULL-buffer damage — the
+    // compositor has never presented this surface's content, so a small
+    // damage rect would leave the rest of the screen on the initial black
+    // state forever. rects=nullptr / rectNumber=0 means "whole buffer is
+    // dirty" (documented).
+    bool needsFullDamage = true;
+    // Diagnostics: consecutive failures / total successful flushes. Each
+    // failure branch logs on the 1st and every 60th failure so a hilog
+    // capture pinpoints the exact broken step without 60/s spam.
+    int32_t failCount = 0;
+    int32_t okCount = 0;
+};
+
+std::mutex g_osrSurfaceMutex;
+std::unordered_map<int64_t, OsrNativeSurface> g_osrSurfaces;
+
+// Waits for the acquire fence returned by RequestBuffer (the buffer may
+// still be in use by the previous consumer — the compositor). Bounded wait;
+// the fd is closed either way.
+void WaitAndCloseFence(int fd) {
+    if (fd < 0) {
+        return;
+    }
+    struct pollfd pfd = {};
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    int ret = poll(&pfd, 1, 100 /* ms, bounded */);
+    if (ret == 0) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
+            "OSR surface acquire fence wait timed out");
+    }
+    close(fd);
+}
+
+// Presents one frame on the surface: writes the ENTIRE staging frame into a
+// requested window buffer (window buffers ROTATE — a flush carrying only
+// the dirty region would leave the receiving buffer missing all prior
+// content; the damage rect only limits the compositor-side upload), then
+// flushes with the dirty region as damage. Returns false on any failure so
+// the caller can fall back to the pixelmap/ArrayBuffer path.
+// IMPORTANT: the FlushBuffer damage Region uses a BOTTOM-LEFT origin
+// (documented: "Region.rect以buffer左下角为坐标原点") while CEF dirty rects
+// are top-left — the Y axis is flipped below.
+bool WriteRegionToSurface(OsrNativeSurface& s,
+                          CefRefPtr<arkui_cef::ArkUICefRenderHandler> handler,
+                          int64_t browserId,
+                          int32_t x, int32_t y, int32_t w, int32_t h,
+                          int32_t viewW, int32_t viewH) {
+    if (!s.window || !handler || w <= 0 || h <= 0) {
+        return false;
+    }
+    // Size policy: EXACT equality between the CEF frame size and the buffer
+    // geometry is mathematically impossible when physical_size / dsf is not
+    // an integer — GetViewRect truncates to integer CSS (1084/1.9 = 570)
+    // and CEF paints ScaleToCeiled(CSS * dsf) (= 1083), so the frame is
+    // permanently r = (physical mod dsf) pixels off the surface (the old
+    // PixelMap path hid this via objectFit Fill stretching). Drift within
+    // sizeTolerance (dsf-derived, see OsrNativeSurface): RETUNE the buffer
+    // geometry to the frame size — the compositor's RenderFit.RESIZE_FILL
+    // scales the buffer to the surface area, making the sub-pixel remainder
+    // invisible. Larger mismatch: a resize is in flight — drop the frame
+    // and self-heal (post a browser resize to the surface size).
+    if (viewW != s.width || viewH != s.height) {
+        int dw = viewW > s.width ? viewW - s.width : s.width - viewW;
+        int dh = viewH > s.height ? viewH - s.height : s.height - viewH;
+        if (dw <= s.sizeTolerance && dh <= s.sizeTolerance && viewW > 0 && viewH > 0) {
+            int oldW = s.width;
+            int oldH = s.height;
+            OH_NativeWindow_NativeWindowHandleOpt(s.window, SET_BUFFER_GEOMETRY,
+                                                  viewW, viewH);
+            s.width = viewW;
+            s.height = viewH;
+            s.needsFullDamage = true;
+            OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+                "OSRdiag retuned buffer geometry to frame size: %{public}dx%{public}d (was %{public}dx%{public}d)",
+                viewW, viewH, oldW, oldH);
+        } else {
+            if ((++s.failCount % 60) == 1) {
+                OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
+                    "OSRdiag size mismatch: region=%{public}dx%{public}d, surface=%{public}dx%{public}d, damage=%{public}d,%{public}d %{public}dx%{public}d — posting self-heal resize",
+                    viewW, viewH, s.width, s.height, x, y, w, h);
+                auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+                if (browser) {
+                    CefPostTask(TID_UI, CefCreateClosureTask(
+                        base::BindOnce(&arkui_cef::ArkUICefBrowser::resize, browser, s.width, s.height)));
+                }
+            }
+            return false;
+        }
+    }
+
+    OHNativeWindowBuffer* buffer = nullptr;
+    int fenceFd = -1;
+    int32_t err = OH_NativeWindow_NativeWindowRequestBuffer(s.window, &buffer, &fenceFd);
+    if (err != 0 || !buffer) {
+        if ((++s.failCount % 60) == 1) {
+            OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+                "OSRdiag RequestBuffer failed: err=%{public}d", err);
+        }
+        return false;
+    }
+    WaitAndCloseFence(fenceFd);
+
+    // Buffer metadata (geometry/stride/format). The CPU mapping itself is
+    // done via the documented path below — the raw BufferHandle.virAddr is
+    // NOT used: without Map/Unmap cache maintenance, CPU writes to the DMA
+    // buffer are not guaranteed visible to the compositor (observed as a
+    // permanently black surface).
+    BufferHandle* bh = OH_NativeWindow_GetBufferHandleFromNative(buffer);
+    if (!bh || bh->stride < bh->width * 4) {
+        OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
+        if ((++s.failCount % 60) == 1) {
+            OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+                "OSRdiag bad buffer handle: bh=%{public}d, fmt=%{public}d, stride=%{public}d, size=%{public}dx%{public}d",
+                bh != nullptr, bh ? bh->format : -1, bh ? bh->stride : -1,
+                bh ? bh->width : -1, bh ? bh->height : -1);
+        }
+        return false;
+    }
+
+    // Format negotiation: we asked for BGRA_8888 via SET_FORMAT, but the
+    // surface is free to hand out RGBA_8888 — detect once, convert per-row
+    // afterwards. Any other format bails to the fallback path.
+    if (!s.convertToRgba && bh->format != NATIVEBUFFER_PIXEL_FMT_BGRA_8888) {
+        if (bh->format == NATIVEBUFFER_PIXEL_FMT_RGBA_8888) {
+            s.convertToRgba = true;
+            OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+                "OSR surface is RGBA_8888 — enabling BGRA->RGBA row conversion");
+        } else {
+            OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
+            s.failCount++;
+            OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+                "OSRdiag surface format unsupported: %{public}d (BGRA=%{public}d, RGBA=%{public}d)",
+                bh->format, static_cast<int32_t>(NATIVEBUFFER_PIXEL_FMT_BGRA_8888),
+                static_cast<int32_t>(NATIVEBUFFER_PIXEL_FMT_RGBA_8888));
+            return false;
+        }
+    }
+
+    // The window buffer must be at least as large as the staging frame
+    // (geometry matches by the size check above; this is the safety net).
+    if (bh->width < viewW || bh->height < viewH) {
+        OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
+        if ((++s.failCount % 60) == 1) {
+            OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+                "OSRdiag buffer smaller than frame: buf=%{public}dx%{public}d, frame=%{public}dx%{public}d",
+                bh->width, bh->height, viewW, viewH);
+        }
+        return false;
+    }
+
+    // Documented CPU write path (native_buffer.h): FromNativeWindowBuffer
+    // converts the window buffer, Map maps the underlying memory into this
+    // process (requires the CPU_READ usage we set at attach — see the Map
+    // doc note), Unmap releases the mapping with cache maintenance so the
+    // compositor observes the writes. API 9-12, available at 17.
+    // NOTE: FromNativeWindowBuffer is a BORROWED conversion — unlike its
+    // reverse (CreateNativeWindowBufferFromNativeBuffer, documented as
+    // "creates a new instance, pair with Destroy"), this direction does NOT
+    // add a reference. Do NOT call Unreference on it — doing so decrements
+    // the surface library's own refcount and freed the buffer inside the
+    // queue (crash in ProducerSurface::FlushBuffer after ~30s of frame
+    // churn).
+    OH_NativeBuffer* nb = nullptr;
+    if (OH_NativeBuffer_FromNativeWindowBuffer(buffer, &nb) != 0 || !nb) {
+        OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
+        if ((++s.failCount % 60) == 1) {
+            OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+                "OSRdiag FromNativeWindowBuffer failed");
+        }
+        return false;
+    }
+    void* mapped = nullptr;
+    int32_t mapErr = OH_NativeBuffer_Map(nb, &mapped);
+    if (mapErr != 0 || !mapped) {
+        OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
+        if ((++s.failCount % 60) == 1) {
+            OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+                "OSRdiag Map failed: err=%{public}d (check CPU_READ usage)", mapErr);
+        }
+        return false;
+    }
+
+    // Full-frame blit from the staging buffer (handler-internal mutex held
+    // during the copy; the fence wait above is already done so the CEF UI
+    // thread block is bounded by the copy itself).
+    auto* dstBase = static_cast<uint8_t*>(mapped);
+    bool blitOk = handler->BlitFullFrameTo(dstBase, static_cast<size_t>(bh->stride), s.convertToRgba);
+    OH_NativeBuffer_Unmap(nb);
+    if (!blitOk) {
+        OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
+        if ((++s.failCount % 60) == 1) {
+            OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+                "OSRdiag BlitFullFrameTo failed (no staging frame?)");
+        }
+        return false;
+    }
+
+    // Damage rect: top-left → bottom-left origin. rectNumber = 1 (merged
+    // dirty rect from the staging pull). Rect.w/h are uint32_t. The FIRST
+    // flush after attach/geometry change declares an EXPLICIT full-buffer
+    // rect (avoid the nullptr/rectNumber=0 "full damage" shorthand — an
+    // empty damage list behaves differently across chipset lib versions).
+    Region::Rect damageRect = {};
+    if (s.needsFullDamage) {
+        damageRect.x = 0;
+        damageRect.y = 0;
+        damageRect.w = static_cast<uint32_t>(s.width);
+        damageRect.h = static_cast<uint32_t>(s.height);
+    } else {
+        damageRect.x = x;
+        damageRect.y = s.height - (y + h);
+        damageRect.w = static_cast<uint32_t>(w);
+        damageRect.h = static_cast<uint32_t>(h);
+    }
+    Region damage = {};
+    damage.rects = &damageRect;
+    damage.rectNumber = 1;
+
+    // fenceFd = -1: the CPU write is complete at this point, no release
+    // fence is needed.
+    err = OH_NativeWindow_NativeWindowFlushBuffer(s.window, buffer, -1, damage);
+    if (err != 0) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
+            "OSRdiag FlushBuffer failed: err=%{public}d", err);
+        return false;
+    }
+    s.needsFullDamage = false;
+    s.failCount = 0;
+    s.okCount++;
+    if (s.okCount == 1 || (s.okCount % 300) == 0) {
+        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+            "OSRdiag surface frame #%{public}d flushed: damage=%{public}d,%{public}d %{public}dx%{public}d (full=%{public}d), frame=%{public}dx%{public}d, fmt=%{public}d",
+            s.okCount, x, y, w, h, damage.rectNumber == 0 ? 1 : 0,
+            viewW, viewH, bh->format);
+    }
+    return true;
+}
+
+void ReleaseOsrNativeSurface(OsrNativeSurface& s) {
+    if (s.window) {
+        OH_NativeWindow_DestroyNativeWindow(s.window);
+        s.window = nullptr;
+    }
+    s.width = 0;
+    s.height = 0;
+    s.deviceScaleFactor = 1.0f;
+    s.sizeTolerance = 2;
+    s.convertToRgba = false;
+    s.needsFullDamage = true;
+    s.failCount = 0;
+    s.okCount = 0;
+}
 using arkui_cef::ArkUICefBrowser;
 using arkui_cef::ArkUICefApp;
 using arkui_cef::PaintCallback;
@@ -452,31 +747,63 @@ struct OsrPaintTsfn {
         auto* self = static_cast<OsrPaintTsfn*>(context);
         if (!self) return;
 
-        // Pull the accumulated dirty region from the render handler on this
-        // (JS) thread. Looked up by browser id to avoid a reference cycle
-        // (handler -> paintCallback -> tsfn -> handler). region_ is reused
-        // across calls to avoid per-frame heap traffic.
+        // Pull the accumulated dirty region METADATA from the render handler
+        // on this (JS) thread. Looked up by browser id to avoid a reference
+        // cycle (handler -> paintCallback -> tsfn -> handler). region_ is
+        // reused across calls to avoid per-frame heap traffic. The pixel
+        // rows are compacted lazily below — the NativeWindow path (the
+        // common case) never needs them.
         arkui_cef::OsrPendingRegion& region = self->region_;
         bool hasRegion = false;
         int64_t browserId = self->browserId_.load();
+        CefRefPtr<arkui_cef::ArkUICefRenderHandler> handler;
         if (browserId > 0) {
-            auto handler = arkui_cef::ArkUICefManager::getInstance().getRenderHandler(browserId);
+            handler = arkui_cef::ArkUICefManager::getInstance().getRenderHandler(browserId);
             if (handler) {
-                hasRegion = handler->ConsumePendingRegion(region);
+                hasRegion = handler->ConsumePendingRegionMeta(region);
             }
         }
 
-        if (env && jsCallback && hasRegion && !region.pixels.empty()) {
-            // Fast path for incremental frames: write the dirty region
-            // directly into the registered PixelMaps (native memory access)
-            // and hand only the region metadata to JS — no pixel data
-            // crosses the NAPI boundary, no ArrayBuffer allocation, no GC
-            // pressure. Both buffers are written to keep them identical
-            // (required by the dirty-region protocol). If anything fails
-            // (no registration / size mismatch / access failure) fall back
-            // to the ArrayBuffer path below — the ArkTS side re-writes both
-            // buffers via writePixelsSync, so a partial native failure
-            // converges.
+        if (env && jsCallback && hasRegion && region.w > 0 && region.h > 0) {
+            // Priority 1: XComponent NativeWindow direct display. Writes the
+            // FULL frame straight into a window buffer and flushes it with a
+            // damage rect — no pixel compaction, no PixelMap, no JS work. On
+            // success the JS callback is skipped entirely (there is nothing
+            // to swap or rebuild).
+            bool surfaceWritten = false;
+            {
+                std::lock_guard<std::mutex> lock(g_osrSurfaceMutex);
+                auto it = g_osrSurfaces.find(browserId);
+                if (it != g_osrSurfaces.end() && handler) {
+                    surfaceWritten = WriteRegionToSurface(
+                        it->second, handler, browserId,
+                        region.x, region.y, region.w, region.h,
+                        region.viewW, region.viewH);
+                }
+            }
+            if (surfaceWritten) {
+                self->framePending_.store(false);
+                return;
+            }
+
+            // Priority 2 / 3: PixelMap native write / ArrayBuffer path.
+            // Only reached when no surface is attached or the surface write
+            // failed (format mismatch, resize window, queue error...).
+            // Compact the pixel rows on demand (the fallback paths need the
+            // actual data). If a resize raced the meta consume, |pixels| is
+            // empty and this frame is dropped (a fresh full frame follows).
+            if (handler) {
+                handler->CompactRegionPixels(region);
+            }
+            if (region.pixels.empty()) {
+                self->framePending_.store(false);
+                return;
+            }
+            // PixelMap path: write the dirty region into both registered
+            // buffers (kept identical for the dirty-region protocol) and
+            // hand only metadata to JS. If anything fails, fall back to the
+            // ArrayBuffer path — the ArkTS side re-writes both buffers via
+            // writePixelsSync, so a partial native failure converges.
             bool nativeWritten = false;
             if (!region.fullFrame) {
                 OsrNativePixelmaps pms;
@@ -530,7 +857,7 @@ struct OsrPaintTsfn {
                 // Copy into a real ArrayBuffer. full-frame payloads feed the
                 // ASYNC createPixelMap, which may read the buffer after this
                 // CallJs returns — by then the next frame's
-                // ConsumePendingRegion has already reused/overwritten the
+                // CompactRegionPixels has already reused/overwritten the
                 // shared region_ buffer, so a copy is required.
                 napi_value arrayBuffer;
                 void* bufferData = nullptr;
@@ -677,6 +1004,7 @@ void destroyNode(Node* node) {
     }
     delete node;
 }
+
 } // namespace
 
 static napi_value NAPI_Global_startCef(napi_env env, napi_callback_info info) {
@@ -1229,8 +1557,9 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
         "createOsrCefView: width=%{public}d, height=%{public}d", width, height);
 
     // Wrap the paint notification in a PaintCallback. The pixel data stays in
-    // the render handler's staging buffer; the JS thread pulls it via
-    // ConsumePendingRegion when CallJs runs.
+    // the render handler's staging buffer; the JS thread pulls the region
+    // metadata via ConsumePendingRegionMeta (and the pixels via
+    // CompactRegionPixels on fallback paths) when CallJs runs.
     auto paintHolder = std::make_shared<OsrPaintCallbackHolder>(paintTsfn);
     PaintCallback paintCallback = [paintHolder]() {
         paintHolder->tsfn->Notify();
@@ -1332,6 +1661,15 @@ static napi_value NAPI_Global_destroyOsrCefView(napi_env env, napi_callback_info
             g_osrPixelmaps.erase(it);
         }
     }
+    // Release the attached XComponent surface, if any.
+    {
+        std::lock_guard<std::mutex> lock(g_osrSurfaceMutex);
+        auto it = g_osrSurfaces.find(browserId);
+        if (it != g_osrSurfaces.end()) {
+            ReleaseOsrNativeSurface(it->second);
+            g_osrSurfaces.erase(it);
+        }
+    }
 
     arkui_cef::ArkUICefManager::getInstance().destroyBrowser(browserId);
     return nullptr;
@@ -1424,6 +1762,173 @@ static napi_value NAPI_Global_unregisterOsrPixelmaps(napi_env env, napi_callback
             g_osrPixelmaps.erase(it);
             OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
                 "unregisterOsrPixelmaps: browserId=%{public}ld", browserId);
+        }
+    }
+    return nullptr;
+}
+
+// Attaches an XComponent(SURFACE) to a browser for direct window writes.
+// surfaceId must belong to an XComponent in this process. Returns true on
+// success; on failure the ArkTS side falls back to the PixelMap display.
+static napi_value NAPI_Global_attachOsrSurface(napi_env env, napi_callback_info info) {
+    size_t argc = 5;
+    napi_value args[5] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 5) {
+        napi_throw_error(env, nullptr,
+            "Expected 5 arguments: browserId, surfaceId, widthPx, heightPx, dsf");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    char surfaceIdStr[32] = {};
+    size_t strLen = 0;
+    napi_get_value_string_utf8(env, args[1], surfaceIdStr, sizeof(surfaceIdStr), &strLen);
+    uint64_t surfaceId = strtoull(surfaceIdStr, nullptr, 10);
+
+    int32_t width = 0;
+    napi_get_value_int32(env, args[2], &width);
+    int32_t height = 0;
+    napi_get_value_int32(env, args[3], &height);
+    double dsf = 1.0;
+    napi_get_value_double(env, args[4], &dsf);
+    if (dsf < 1.0 || dsf > 10.0) {
+        dsf = 1.0;
+    }
+
+    OHNativeWindow* window = nullptr;
+    int32_t err = OH_NativeWindow_CreateNativeWindowFromSurfaceId(surfaceId, &window);
+    if (err != 0 || !window) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+            "attachOsrSurface: CreateNativeWindowFromSurfaceId failed, err=%{public}d", err);
+        napi_value result;
+        napi_get_boolean(env, false, &result);
+        return result;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_osrSurfaceMutex);
+        auto it = g_osrSurfaces.find(browserId);
+        if (it != g_osrSurfaces.end()) {
+            ReleaseOsrNativeSurface(it->second);
+        }
+        OsrNativeSurface& s = g_osrSurfaces[browserId];
+        s.window = window;
+        s.width = width;
+        s.height = height;
+        s.deviceScaleFactor = static_cast<float>(dsf);
+        // Derived size tolerance — see OsrNativeSurface::sizeTolerance.
+        s.sizeTolerance = static_cast<int32_t>(ceilf(static_cast<float>(dsf))) + 1;
+        s.convertToRgba = false;
+        s.needsFullDamage = true;
+        // BGRA_8888 matches CEF's OnPaint output directly; CPU usage makes
+        // BufferHandle.virAddr available for the blit. The surface may still
+        // hand out RGBA_8888 buffers — detected and handled per buffer.
+        uint64_t usage = 0;
+        OH_NativeWindow_NativeWindowHandleOpt(window, GET_USAGE, &usage);
+        usage |= NATIVEBUFFER_USAGE_CPU_READ | NATIVEBUFFER_USAGE_CPU_WRITE;
+        OH_NativeWindow_NativeWindowHandleOpt(window, SET_USAGE, usage);
+        OH_NativeWindow_NativeWindowHandleOpt(window, SET_FORMAT,
+            static_cast<int32_t>(NATIVEBUFFER_PIXEL_FMT_BGRA_8888));
+        OH_NativeWindow_NativeWindowHandleOpt(window, SET_BUFFER_GEOMETRY, width, height);
+    }
+
+    // Read back what the surface actually accepted (GET_BUFFER_GEOMETRY
+    // outputs (height, width) — reversed order, documented). This surfaces
+    // silent SET failures immediately in the hilog.
+    {
+        int32_t rbHeight = 0;
+        int32_t rbWidth = 0;
+        int32_t rbFormat = 0;
+        uint64_t rbUsage = 0;
+        std::lock_guard<std::mutex> lock(g_osrSurfaceMutex);
+        auto it = g_osrSurfaces.find(browserId);
+        if (it != g_osrSurfaces.end() && it->second.window) {
+            OHNativeWindow* w = it->second.window;
+            OH_NativeWindow_NativeWindowHandleOpt(w, GET_BUFFER_GEOMETRY, &rbHeight, &rbWidth);
+            OH_NativeWindow_NativeWindowHandleOpt(w, GET_FORMAT, &rbFormat);
+            OH_NativeWindow_NativeWindowHandleOpt(w, GET_USAGE, &rbUsage);
+            OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+                "attachOsrSurface readback: geometry=%{public}dx%{public}d (asked %{public}dx%{public}d), format=%{public}d (BGRA=%{public}d), usage=0x%{public}x",
+                rbWidth, rbHeight, width, height, rbFormat,
+                static_cast<int32_t>(NATIVEBUFFER_PIXEL_FMT_BGRA_8888),
+                static_cast<uint32_t>(rbUsage));
+        }
+    }
+
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+        "attachOsrSurface: browserId=%{public}ld, surface=%{public}s, %{public}dx%{public}d",
+        browserId, surfaceIdStr, width, height);
+
+    napi_value result;
+    napi_get_boolean(env, true, &result);
+    return result;
+}
+
+// Updates the surface buffer geometry (physical px) after a resize.
+static napi_value NAPI_Global_updateOsrSurfaceGeometry(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 3) {
+        napi_throw_error(env, nullptr, "Expected 3 arguments: browserId, widthPx, heightPx");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+    int32_t width = 0;
+    napi_get_value_int32(env, args[1], &width);
+    int32_t height = 0;
+    napi_get_value_int32(env, args[2], &height);
+
+    std::lock_guard<std::mutex> lock(g_osrSurfaceMutex);
+    auto it = g_osrSurfaces.find(browserId);
+    if (it == g_osrSurfaces.end()) {
+        return nullptr;
+    }
+    OsrNativeSurface& s = it->second;
+    if (s.width == width && s.height == height) {
+        return nullptr;
+    }
+    s.width = width;
+    s.height = height;
+    s.needsFullDamage = true;
+    if (s.window) {
+        OH_NativeWindow_NativeWindowHandleOpt(s.window, SET_BUFFER_GEOMETRY, width, height);
+    }
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+        "updateOsrSurfaceGeometry: browserId=%{public}ld, %{public}dx%{public}d",
+        browserId, width, height);
+    return nullptr;
+}
+
+// Detaches the XComponent surface from a browser.
+static napi_value NAPI_Global_detachOsrSurface(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "Expected 1 argument: browserId");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    {
+        std::lock_guard<std::mutex> lock(g_osrSurfaceMutex);
+        auto it = g_osrSurfaces.find(browserId);
+        if (it != g_osrSurfaces.end()) {
+            ReleaseOsrNativeSurface(it->second);
+            g_osrSurfaces.erase(it);
+            OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+                "detachOsrSurface: browserId=%{public}ld", browserId);
         }
     }
     return nullptr;
@@ -2250,6 +2755,9 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"destroyOsrCefView", nullptr, NAPI_Global_destroyOsrCefView, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"registerOsrPixelmaps", nullptr, NAPI_Global_registerOsrPixelmaps, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"unregisterOsrPixelmaps", nullptr, NAPI_Global_unregisterOsrPixelmaps, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"attachOsrSurface", nullptr, NAPI_Global_attachOsrSurface, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"updateOsrSurfaceGeometry", nullptr, NAPI_Global_updateOsrSurfaceGeometry, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"detachOsrSurface", nullptr, NAPI_Global_detachOsrSurface, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefOsrResize", nullptr, NAPI_Global_cefOsrResize, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefOsrSetScale", nullptr, NAPI_Global_cefOsrSetScale, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSetComponentOffset", nullptr, NAPI_Global_cefSetComponentOffset, nullptr, nullptr, nullptr, napi_default, nullptr},
