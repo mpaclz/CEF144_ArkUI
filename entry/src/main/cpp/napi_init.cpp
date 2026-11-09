@@ -2558,6 +2558,29 @@ static napi_value NAPI_Global_cefImeCDetach(napi_env env, napi_callback_info inf
     return nullptr;
 }
 
+// Panel show/hide on the persistent session (no Attach/Detach churn).
+// Returns false when the session is detached/dead — the ArkTS layer
+// self-heals by re-attaching.
+static napi_value NAPI_Global_cefImeCShowKeyboard(napi_env env, napi_callback_info info) {
+    bool ok = false;
+    if (g_imeCApi) {
+        ok = g_imeCApi->showKeyboard();
+    }
+    napi_value result;
+    napi_get_boolean(env, ok, &result);
+    return result;
+}
+
+static napi_value NAPI_Global_cefImeCHideKeyboard(napi_env env, napi_callback_info info) {
+    bool ok = false;
+    if (g_imeCApi) {
+        ok = g_imeCApi->hideKeyboard();
+    }
+    napi_value result;
+    napi_get_boolean(env, ok, &result);
+    return result;
+}
+
 static napi_value NAPI_Global_cefDragTargetDragEnter(napi_env env, napi_callback_info info) {
     size_t argc = 8;
     napi_value args[8] = { nullptr };
@@ -2779,6 +2802,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"cefImeCAttach", nullptr, NAPI_Global_cefImeCAttach, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefImeCUpdateCursor", nullptr, NAPI_Global_cefImeCUpdateCursor, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefImeCDetach", nullptr, NAPI_Global_cefImeCDetach, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefImeCShowKeyboard", nullptr, NAPI_Global_cefImeCShowKeyboard, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefImeCHideKeyboard", nullptr, NAPI_Global_cefImeCHideKeyboard, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefDragTargetDragEnter", nullptr, NAPI_Global_cefDragTargetDragEnter, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefDragTargetDragOver", nullptr, NAPI_Global_cefDragTargetDragOver, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefDragTargetDragLeave", nullptr, NAPI_Global_cefDragTargetDragLeave, nullptr, nullptr, nullptr, napi_default, nullptr},

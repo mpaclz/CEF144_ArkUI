@@ -69,6 +69,8 @@ export const cefImeCAttach: (
 ) => boolean;
 export const cefImeCUpdateCursor: (left: number, top: number, width: number, height: number) => boolean;
 export const cefImeCDetach: () => void;
+export const cefImeCShowKeyboard: () => boolean;
+export const cefImeCHideKeyboard: () => boolean;
 export const cefDragTargetDragEnter: (browserId: number, text: string, html: string, url: string, filePaths: string, x: number, y: number, allowedOps: number) => void;
 export const cefDragTargetDragOver: (browserId: number, x: number, y: number, allowedOps: number) => void;
 export const cefDragTargetDragLeave: (browserId: number) => void;

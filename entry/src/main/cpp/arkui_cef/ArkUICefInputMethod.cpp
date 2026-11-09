@@ -195,6 +195,30 @@ void ArkUICefInputMethod::detach() {
     releaseResources();
 }
 
+bool ArkUICefInputMethod::showKeyboard() {
+    if (!is_attached_ || !input_method_proxy_) {
+        return false;
+    }
+    InputMethod_ErrorCode res = OH_InputMethodProxy_ShowKeyboard(input_method_proxy_);
+    if (res != IME_ERR_OK) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
+            "showKeyboard: err=%{public}d (IME_ERR_DETACHED means the session died — re-attach)", res);
+    }
+    return res == IME_ERR_OK;
+}
+
+bool ArkUICefInputMethod::hideKeyboard() {
+    if (!is_attached_ || !input_method_proxy_) {
+        return false;
+    }
+    InputMethod_ErrorCode res = OH_InputMethodProxy_HideKeyboard(input_method_proxy_);
+    if (res != IME_ERR_OK) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
+            "hideKeyboard: err=%{public}d", res);
+    }
+    return res == IME_ERR_OK;
+}
+
 bool ArkUICefInputMethod::updateCursor(double left, double top, double width, double height) {
     if (!is_attached_ || !input_method_proxy_) {
         return false;

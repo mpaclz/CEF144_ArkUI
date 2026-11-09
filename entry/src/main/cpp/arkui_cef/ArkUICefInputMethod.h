@@ -9,6 +9,7 @@
 #include "inputmethod/inputmethod_cursor_info_capi.h"
 #include "inputmethod/inputmethod_text_config_capi.h"
 #include "inputmethod/inputmethod_types_capi.h"
+#include "inputmethod/inputmethod_inputmethod_proxy_capi.h"
 
 namespace arkui_cef {
 
@@ -31,6 +32,18 @@ public:
                 const ImeEventCallbacks& callbacks);
 
     void detach();
+
+    // Panel control WITHOUT session churn: the documented call order is
+    // Attach → ShowKeyboard → HideKeyboard → Detach, i.e. the session is
+    // DESIGNED to persist across panel show/hide cycles. Repeated
+    // Attach/Detach raced ArkUI's own TextInput editor lifecycle at the
+    // input method service (a late ArkUI teardown can land after our fresh
+    // attach and kill it — panel disappears, input dead). Persistent
+    // session + show/hide removes that race window entirely. Returns false
+    // (IME_ERR_DETACHED) when the session died — the caller self-heals by
+    // re-attaching.
+    bool showKeyboard();
+    bool hideKeyboard();
 
     bool updateCursor(double left, double top, double width, double height);
 

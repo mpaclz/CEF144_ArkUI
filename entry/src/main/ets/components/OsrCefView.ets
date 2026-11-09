@@ -128,6 +128,13 @@ export struct OsrCefView {
   private renderAreaActive: boolean = false;
   // Set by WINDOW_INACTIVE — when true, WINDOW_ACTIVE should restore CEF focus.
   private focusLostFlag: boolean = false;
+  // True while the toolbar URL TextInput holds ArkTS focus. Drives the
+  // conditional stopEditing in stopUrlEditing().
+  private urlInputFocused: boolean = false;
+  // Controller for the URL TextInput — used to exit its edit state when
+  // the user clicks the web render area.
+  private urlInputController: TextInputController = new TextInputController();
+
   // Current render-pause state (CEF WasHidden). Transition-guarded so
   // repeated onVisibleAreaChange events are idempotent. Mirrors QCefView's
   // QEvent::Show/Hide handling — window FOCUS events deliberately do not
@@ -173,8 +180,9 @@ export struct OsrCefView {
   private lastInputY: number = 0;
   // Window ID — passed to IMF C API via TextConfig.windowId in GetTextConfigFunc.
   private cachedWindowId: number = -1;
-  // True when IMF was detached due to component becoming invisible (tab switch).
-  // Used to re-attach when the component becomes visible again.
+  // True when the IME panel was HIDDEN due to component invisibility (tab
+  // switch). The session stays attached (persistent-session design); used
+  // to restore the panel when the component becomes visible again.
   private imeDetachedByVisibility: boolean = false;
   // Drag & drop state
   // True while a system drag (initiated by dragController.executeDrag) is in progress.
@@ -265,7 +273,7 @@ export struct OsrCefView {
           .enabled(this.isCreated())
           .onClick(() => this.reload())
 
-        TextInput({ text: this.urlInput })
+        TextInput({ text: this.urlInput, controller: this.urlInputController })
           .fontSize(12)
           .height(28)
           .layoutWeight(1)
@@ -273,6 +281,8 @@ export struct OsrCefView {
           .enabled(this.isCreated())
           .onChange((val: string) => { this.urlInput = val; })
           .onSubmit(() => this.loadUrl(this.urlInput))
+          .onFocus(() => { this.urlInputFocused = true; })
+          .onBlur(() => { this.urlInputFocused = false; })
           .onClick(() => {
             this.setRenderAreaActive(false);
           })
@@ -354,8 +364,26 @@ export struct OsrCefView {
         // hover state (e.g. hovered links stop highlighting). Skip during an
         // in-progress left-button drag or a system HTML5 drag — the press
         // stream must continue.
-        if (!isHover && this.isCreated() && !this.mouseButtonPressed && !this.isDragInProgress) {
-          arkui_cef.cefSendMouseMove(this.browserId, this.lastMouseX, this.lastMouseY, true);
+        if (!isHover) {
+          // Reset the window cursor to the default arrow. The cursor style
+          // set via CursorController is WINDOW-scoped and CEF never emits a
+          // cursor change for positions outside its view — without this,
+          // the last web-page style (e.g. I-beam from the input test page)
+          // persists over the tab bar / window title bar. Skip during a
+          // system drag (the drag manager owns the cursor then).
+          if (!this.isDragInProgress) {
+            try {
+              let cursorController = this.getUIContext().getCursorController();
+              if (cursorController) {
+                cursorController.restoreDefault();
+              }
+            } catch (e) {
+              hilog.error(DOMAIN, MODULE, "restoreDefault failed: %{public}s", (e as Error).message);
+            }
+          }
+          if (this.isCreated() && !this.mouseButtonPressed && !this.isDragInProgress) {
+            arkui_cef.cefSendMouseMove(this.browserId, this.lastMouseX, this.lastMouseY, true);
+          }
         }
       })
       .gesture(
@@ -562,16 +590,16 @@ export struct OsrCefView {
       this.setOsrHidden(!isVisible || currentRatio === 0);
       if (!isVisible && currentRatio === 0) {
         if (this.imeAttached) {
-          hilog.info(DOMAIN, MODULE, "onVisibleAreaChange: invisible, detaching IME");
+          hilog.info(DOMAIN, MODULE, "onVisibleAreaChange: invisible, hiding IME panel");
           this.imeDetachedByVisibility = true;
-          this.detachInputMethod();
+          this.hideImeKeyboard();
         }
       } else if (isVisible && this.imeDetachedByVisibility) {
         hilog.info(DOMAIN, MODULE, "onVisibleAreaChange: visible again, kbVisible=%{public}s",
           this.keyboardVisible ? "true" : "false");
         this.imeDetachedByVisibility = false;
         if (this.keyboardVisible) {
-          this.attachInputMethod();
+          this.showImeKeyboardWithHeal();
         }
       }
     })
@@ -836,7 +864,10 @@ export struct OsrCefView {
         hilog.info(DOMAIN, MODULE, "windowEvent: %{public}d", event);
         if (event === window.WindowEventType.WINDOW_INACTIVE) {
           this.focusLostFlag = true;
-          this.detachInputMethod();
+          // Hide the panel but KEEP the session attached (Attach → Show →
+          // Hide → Detach lifecycle; re-attaching on every window cycle
+          // raced the ArkTS editor at the input method service).
+          this.hideImeKeyboard();
           if (this.isCreated() && this.renderAreaActive) {
             arkui_cef.cefSendFocusEvent(this.browserId, false);
           }
@@ -856,7 +887,7 @@ export struct OsrCefView {
               arkui_cef.cefSendFocusEvent(this.browserId, true);
             }
             if (this.keyboardVisible) {
-              this.attachInputMethod();
+              this.showImeKeyboardWithHeal();
             }
           }
         }
@@ -1072,11 +1103,27 @@ export struct OsrCefView {
     hilog.info(DOMAIN, MODULE, "OSR virtual keyboard: %{public}s", show ? "show" : "hide");
     this.keyboardVisible = show;
     if (show) {
+      // Web input gained focus: ensure the session exists, then show the
+      // panel. NO Attach/Detach churn — repeated attach/detach raced the
+      // ArkTS TextInput editor lifecycle at the input method service (a
+      // late teardown could kill our fresh attach). The session persists;
+      // only the panel toggles.
       if (!this.imeAttached) {
         this.attachInputMethod();
+      } else {
+        this.showImeKeyboardWithHeal();
       }
     } else {
-      this.detachInputMethod();
+      // Web input lost focus. When the URL TextInput is taking over
+      // (urlInputFocused), leave the panel alone — ArkUI owns its state
+      // now and our HideKeyboard could close what the URL bar just
+      // opened. Otherwise (blank area / Tab to a button) hide our panel,
+      // keeping the session attached.
+      if (this.urlInputFocused) {
+        hilog.info(DOMAIN, MODULE, "OSR virtual keyboard hide skipped — URL input owns the panel");
+      } else {
+        this.hideImeKeyboard();
+      }
     }
   }
 
@@ -1494,6 +1541,7 @@ export struct OsrCefView {
       this.lastInputX = touch0.x;
       this.lastInputY = touch0.y;
       this.setRenderAreaActive(true);
+      this.stopUrlEditing();
       this.handleImeFocus();
       arkui_cef.cefSendFocusEvent(this.browserId, true);
     }
@@ -1590,6 +1638,7 @@ export struct OsrCefView {
         this.lastInputX = event.x;
         this.lastInputY = event.y;
         this.setRenderAreaActive(true);
+        this.stopUrlEditing();
         this.handleImeFocus();
         arkui_cef.cefSendFocusEvent(this.browserId, true);
 
@@ -1710,10 +1759,65 @@ export struct OsrCefView {
   // ==================== Input Method Framework (IME) ====================
 
   private handleImeFocus(): void {
-    // Only attach if CEF has a focused input field (keyboardVisible=true).
-    // If not, wait for CEF's OnVirtualKeyboardRequested to drive the attach.
-    if (!this.imeAttached && this.keyboardVisible) {
+    // Only drive the panel when CEF has a focused input field
+    // (keyboardVisible=true). Attach on first need; afterwards restore the
+    // panel (e.g. after a URL-bar interlude hid it) with self-heal.
+    if (!this.keyboardVisible) {
+      return;
+    }
+    if (!this.imeAttached) {
       this.attachInputMethod();
+    } else {
+      this.showImeKeyboardWithHeal();
+    }
+  }
+
+  // Shows the IME panel on the persistent session. If the show fails
+  // (IME_ERR_DETACHED — the session was killed by an external race),
+  // re-attach and retry once: self-healing instead of dead input.
+  private showImeKeyboardWithHeal(): void {
+    if (!this.imeAttached) {
+      return;
+    }
+    let ok = arkui_cef.cefImeCShowKeyboard();
+    if (!ok) {
+      hilog.warn(DOMAIN, MODULE, "IME show failed — session dead, re-attaching");
+      this.detachInputMethod();
+      this.attachInputMethod();
+    } else {
+      this.refreshImeCursor();
+    }
+  }
+
+  // Hides the IME panel WITHOUT detaching the session (the documented
+  // Attach → Show → Hide → Detach lifecycle).
+  private hideImeKeyboard(): void {
+    if (!this.imeAttached) {
+      return;
+    }
+    arkui_cef.cefImeCHideKeyboard();
+  }
+
+  // Called when the user clicks the web render area: exit the URL
+  // TextInput's edit state so its caret stops blinking and its IME editor
+  // binding is released (via the component's OWN lifecycle —
+  // TextInputController.stopEditing, API 10, "退出编辑态"), letting letters
+  // and IME input route to the web page's IMF C session.
+  //
+  // NOTE: FocusController.clearFocus() was tried here first and REGRESSED
+  // the IMF C session: clearing the ArkTS focus chain races the C session
+  // attach at the input method service (the ArkTS editor teardown can land
+  // AFTER our attach and tear it down — IME panel disappears, letters stop
+  // routing). stopEditing keeps the transition inside the TextInput's
+  // well-defined edit-state lifecycle instead of the global focus chain.
+  private stopUrlEditing(): void {
+    if (!this.urlInputFocused) {
+      return;
+    }
+    try {
+      this.urlInputController.stopEditing();
+    } catch (e) {
+      hilog.error(DOMAIN, MODULE, "stopEditing failed: %{public}s", (e as Error).message);
     }
   }
 
