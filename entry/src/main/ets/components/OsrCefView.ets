@@ -160,7 +160,7 @@ export struct OsrCefView {
   // synchronous (dirty-region writePixelsSync, no per-frame createPixelMap),
   // so the historical 10fps cap is no longer required to keep the JS thread
   // healthy. 20 is a safe default; profile and raise on capable devices.
-  @Prop osrFrameRate: number = 20;
+  @Prop osrFrameRate: number = 60;
 
    aboutToAppear(): void {
     this.urlInput = this.viewUrl;
@@ -502,7 +502,10 @@ export struct OsrCefView {
   destroy(): void {
     this.detachInputMethod();
     if (this.isCreated()) {
-      hilog.info(DOMAIN, MODULE, "Destroying OSR browser, id=%{public}d", this.browserId);
+      hilog.info(DOMAIN, MODULE, "Destroying OSR browser, id: %{public}d", this.browserId);
+      // Release native pixelmap handles BEFORE the ArkTS PixelMaps below —
+      // the handles must never outlive the memory they point to.
+      arkui_cef.unregisterOsrPixelmaps(this.browserId);
       arkui_cef.destroyOsrCefView(this.browserId);
       this.browserId = -1;
     }
@@ -578,7 +581,7 @@ export struct OsrCefView {
     this.cefCreating = true;
 
     let id = arkui_cef.createOsrCefView(url, width, height,
-      (regionData: ArrayBuffer, x: number, y: number, w: number, h: number,
+      (regionData: ArrayBuffer | undefined, x: number, y: number, w: number, h: number,
         fullFrame: boolean, viewW: number, viewH: number) => {
         this.onOsrPaint(regionData, x, y, w, h, fullFrame, viewW, viewH);
       },
@@ -610,11 +613,12 @@ export struct OsrCefView {
     this.cachedDsf = dsf;
     arkui_cef.cefOsrSetScale(this.browserId, dsf);
     arkui_cef.cefOsrResize(this.browserId, this.viewWidth, this.viewHeight);
-    // Raise the frame rate above the initial 10fps set at browser creation.
-    // SetWindowlessFrameRate takes effect on the CEF UI thread; static
-    // pages emit no extra frames regardless of the cap, so raising it only
-    // affects pages with dynamic content.
-    if (this.osrFrameRate > 10) {
+    // Apply the requested frame rate (creation default is 60; this allows
+    // callers to lower it via the osrFrameRate prop). SetWindowlessFrameRate
+    // takes effect on the CEF UI thread; static pages emit no extra frames
+    // regardless of the cap, so the value only affects pages with dynamic
+    // content.
+    if (this.osrFrameRate >= 1) {
       arkui_cef.cefSetFrameRate(this.browserId, this.osrFrameRate);
     }
     // Register window-level key event filter for non-text keys (digits, symbols, etc.)
@@ -670,11 +674,14 @@ export struct OsrCefView {
     }
   }
 
-  onOsrPaint(regionData: ArrayBuffer, x: number, y: number, w: number, h: number,
+  onOsrPaint(regionData: ArrayBuffer | undefined, x: number, y: number, w: number, h: number,
              fullFrame: boolean, viewW: number, viewH: number): void {
     if (fullFrame) {
       // First frame or resize: the PixelMap must be (re)created at the new
-      // size. Low-frequency path.
+      // size. Low-frequency path. Always carries pixel data.
+      if (regionData === undefined) {
+        return;
+      }
       this.rebuildPixelMap(regionData, viewW, viewH);
       return;
     }
@@ -691,15 +698,27 @@ export struct OsrCefView {
       return;
     }
 
-    // Incremental frame: write the dirty region into BOTH persistent buffers
-    // (API 12+, keeps their content identical) and swap the displayed
-    // reference. regionData holds compact BGRA rows (w * 4 bytes per row),
-    // so stride = w * 4 and offset = 0.
     let pmFront = this.showA ? this.pmA : this.pmB;
     let pmBack = this.showA ? this.pmB : this.pmA;
     if (!pmFront || !pmBack || w <= 0 || h <= 0) {
       return;
     }
+
+    if (regionData === undefined) {
+      // Native fast path: the NAPI layer already wrote the dirty region into
+      // BOTH persistent PixelMaps (they stay identical) — just swap the
+      // displayed reference. The Image component reloads and keeps showing
+      // the old (identical) image until the new src is ready, so there is no
+      // black flash window.
+      this.pixelMap = pmBack;
+      this.showA = !this.showA;
+      return;
+    }
+
+    // Fallback path: pixel data arrived via ArrayBuffer (native write path
+    // unavailable or failed) — write it into both buffers ourselves.
+    // regionData holds compact BGRA rows (w * 4 bytes per row),
+    // so stride = w * 4 and offset = 0.
     try {
       let area: image.PositionArea = {
         pixels: regionData,
@@ -752,6 +771,12 @@ export struct OsrCefView {
           this.pixelMap = this.pmA;
           this.pmWidth = viewW;
           this.pmHeight = viewH;
+          // Register the new pair for native dirty-region writes BEFORE
+          // retiring the old ArkTS PixelMaps — the NAPI registry must never
+          // hold handles into released memory.
+          if (this.isCreated()) {
+            arkui_cef.registerOsrPixelmaps(this.browserId, pm, pm2);
+          }
           if (oldA && oldA !== oldB) {
             this.retirePixelMap(oldA);
           }

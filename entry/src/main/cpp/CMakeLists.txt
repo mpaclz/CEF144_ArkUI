@@ -71,6 +71,11 @@ find_library(
     ohinputmethod
 )
 
+find_library(
+    pixelmap-lib
+    pixelmap
+)
+
 add_library(arkui_cef_core SHARED
     arkui_cef/ArkUICefApp.cpp
     arkui_cef/ArkUICefClient.cpp
@@ -120,6 +125,7 @@ target_link_libraries(arkui_cef PUBLIC
     ${window-manager-lib}
     ${input-lib}
     ${inputmethod-lib}
+    ${pixelmap-lib}
 )
 
 # cefsimple 共享库：OHOS 子进程入口

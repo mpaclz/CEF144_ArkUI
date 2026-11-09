@@ -3,12 +3,15 @@
 #include <vector>
 #include <memory>
 #include <atomic>
+#include <mutex>
+#include <unordered_map>
 #include <hilog/log.h>
 #include <string>
 #include <arkui/native_interface.h>
 #include <arkui/native_node_napi.h>
 #include "window_manager/oh_window_event_filter.h"
 #include "multimodalinput/oh_input_manager.h"
+#include <multimedia/image_framework/image/pixelmap_native.h>
 
 #include "JsThreadSafeCallback.h"
 #include "napi/native_api.h"
@@ -21,6 +24,114 @@
 
 namespace {
 constexpr unsigned int LOG_PRINT_DOMAIN = 0xFF00;
+
+// ---------------------------------------------------------------------------
+// OSR native PixelMap registry (Step 1 of the software-render pipeline
+// optimization).
+//
+// ArkTS registers its double-buffered PixelMaps (pmA/pmB) here after each
+// rebuild. The paint tsfn then blits dirty regions directly into the
+// PixelMap memory via OH_PixelmapNative_AccessPixels on the JS thread, so
+// incremental frames carry no pixel data across the NAPI boundary — the
+// JS callback only receives the region metadata and swaps the displayed
+// PixelMap reference.
+//
+// Ownership: the ArkTS PixelMap objects are owned by OsrCefView (released
+// via pmA.release()/pmB.release()). The OH_PixelmapNative handles below
+// alias the same pixelmaps and are released with OH_PixelmapNative_Release
+// on re-registration / unregistration — always BEFORE the ArkTS objects
+// are released, so the handles never outlive the memory they point to.
+// All registry access happens on the JS thread (tsfn CallJs and the NAPI
+// entry points); the mutex guards against future multi-instance use.
+// ---------------------------------------------------------------------------
+struct OsrNativePixelmaps {
+    OH_PixelmapNative* pmA = nullptr;
+    OH_PixelmapNative* pmB = nullptr;
+    uint32_t rowStride = 0;  // destination bytes per row (may exceed w*4)
+    int32_t width = 0;
+    int32_t height = 0;
+};
+
+std::mutex g_osrPixelmapsMutex;
+std::unordered_map<int64_t, OsrNativePixelmaps> g_osrPixelmaps;
+
+void ReleaseOsrNativePixelmaps(OsrNativePixelmaps& pms) {
+    if (pms.pmA) {
+        OH_PixelmapNative_Release(pms.pmA);
+        pms.pmA = nullptr;
+    }
+    if (pms.pmB) {
+        OH_PixelmapNative_Release(pms.pmB);
+        pms.pmB = nullptr;
+    }
+}
+
+// Queries stride/size and validates BGRA_8888 (the format CEF paints in).
+// NOTE: the SDK header declares GetWidth/GetHeight with uint32_t* (the
+// online docs' int32_t* is outdated) — verified against the compile error.
+bool QueryPixelmapInfo(OH_PixelmapNative* pm, uint32_t* stride,
+                       int32_t* w, int32_t* h) {
+    if (!pm || !stride || !w || !h) {
+        return false;
+    }
+    OH_Pixelmap_ImageInfo* info = nullptr;
+    if (OH_PixelmapImageInfo_Create(&info) != IMAGE_SUCCESS || !info) {
+        return false;
+    }
+    bool ok = false;
+    int32_t format = 0;
+    uint32_t rs = 0;
+    uint32_t widthU = 0;
+    uint32_t heightU = 0;
+    if (OH_PixelmapNative_GetImageInfo(pm, info) == IMAGE_SUCCESS &&
+        OH_PixelmapImageInfo_GetPixelFormat(info, &format) == IMAGE_SUCCESS &&
+        OH_PixelmapImageInfo_GetRowStride(info, &rs) == IMAGE_SUCCESS &&
+        OH_PixelmapImageInfo_GetWidth(info, &widthU) == IMAGE_SUCCESS &&
+        OH_PixelmapImageInfo_GetHeight(info, &heightU) == IMAGE_SUCCESS &&
+        format == PIXEL_FORMAT_BGRA_8888 &&
+        rs >= widthU * 4 &&
+        widthU <= static_cast<uint32_t>(INT32_MAX) &&
+        heightU <= static_cast<uint32_t>(INT32_MAX)) {
+        *stride = rs;
+        *w = static_cast<int32_t>(widthU);
+        *h = static_cast<int32_t>(heightU);
+        ok = true;
+    }
+    OH_PixelmapImageInfo_Release(info);
+    return ok;
+}
+
+// Blits one dirty region (compact BGRA rows, w*4 bytes per row) into a
+// registered pixelmap. Returns false on any failure so the caller can fall
+// back to the ArrayBuffer path (both buffers are then re-written by the
+// ArkTS side, so a partial failure between pmA/pmB converges).
+bool WriteRegionToPixelmap(OH_PixelmapNative* pm, uint32_t rowStride,
+                           int32_t pmW, int32_t pmH,
+                           const uint8_t* pixels, int32_t x, int32_t y,
+                           int32_t w, int32_t h) {
+    if (!pm || !pixels || w <= 0 || h <= 0 || rowStride == 0) {
+        return false;
+    }
+    if (x < 0 || y < 0 || x + w > pmW || y + h > pmH) {
+        return false;
+    }
+    void* addr = nullptr;
+    if (OH_PixelmapNative_AccessPixels(pm, &addr) != IMAGE_SUCCESS || !addr) {
+        return false;
+    }
+    const size_t rowBytes = static_cast<size_t>(w) * 4;
+    auto* dstBase = static_cast<uint8_t*>(addr);
+    const uint8_t* src = pixels;
+    for (int32_t row = 0; row < h; row++) {
+        uint8_t* dst = dstBase + static_cast<size_t>(y + row) * rowStride +
+                       static_cast<size_t>(x) * 4;
+        memcpy(dst, src, rowBytes);
+        src += rowBytes;
+    }
+    OH_PixelmapNative_UnaccessPixels(pm);
+    return true;
+}
+
 using arkui_cef::ArkUICefBrowser;
 using arkui_cef::ArkUICefApp;
 using arkui_cef::PaintCallback;
@@ -356,35 +467,83 @@ struct OsrPaintTsfn {
         }
 
         if (env && jsCallback && hasRegion && !region.pixels.empty()) {
-            // Copy into a real ArrayBuffer. A zero-copy external wrapper was
-            // tried here, but full-frame payloads feed the ASYNC
-            // createPixelMap, which may read the buffer after this CallJs
-            // returns — by then the next frame's ConsumePendingRegion has
-            // already reused/overwritten the shared region_ buffer. Revert
-            // to copying for ALL payloads (incremental writePixelsSync is
-            // synchronous and could take an external buffer, but keep one
-            // well-understood path until that is separately verified).
-            napi_value arrayBuffer;
-            void* bufferData = nullptr;
-            napi_status status = napi_create_arraybuffer(
-                env, region.pixels.size(), &bufferData, &arrayBuffer);
-            if (status == napi_ok) {
-                memcpy(bufferData, region.pixels.data(), region.pixels.size());
-                napi_value xVal, yVal, wVal, hVal, fullFrameVal, viewWVal, viewHVal;
-                napi_create_int32(env, region.x, &xVal);
-                napi_create_int32(env, region.y, &yVal);
-                napi_create_int32(env, region.w, &wVal);
-                napi_create_int32(env, region.h, &hVal);
-                napi_get_boolean(env, region.fullFrame, &fullFrameVal);
-                napi_create_int32(env, region.viewW, &viewWVal);
-                napi_create_int32(env, region.viewH, &viewHVal);
+            // Fast path for incremental frames: write the dirty region
+            // directly into the registered PixelMaps (native memory access)
+            // and hand only the region metadata to JS — no pixel data
+            // crosses the NAPI boundary, no ArrayBuffer allocation, no GC
+            // pressure. Both buffers are written to keep them identical
+            // (required by the dirty-region protocol). If anything fails
+            // (no registration / size mismatch / access failure) fall back
+            // to the ArrayBuffer path below — the ArkTS side re-writes both
+            // buffers via writePixelsSync, so a partial native failure
+            // converges.
+            bool nativeWritten = false;
+            if (!region.fullFrame) {
+                OsrNativePixelmaps pms;
+                bool registered = false;
+                {
+                    std::lock_guard<std::mutex> lock(g_osrPixelmapsMutex);
+                    auto it = g_osrPixelmaps.find(browserId);
+                    if (it != g_osrPixelmaps.end()) {
+                        pms = it->second;
+                        registered = true;
+                    }
+                }
+                if (registered && pms.pmA && pms.pmB &&
+                    pms.width == region.viewW && pms.height == region.viewH) {
+                    nativeWritten =
+                        WriteRegionToPixelmap(pms.pmA, pms.rowStride, pms.width,
+                                              pms.height, region.pixels.data(),
+                                              region.x, region.y, region.w, region.h) &&
+                        WriteRegionToPixelmap(pms.pmB, pms.rowStride, pms.width,
+                                              pms.height, region.pixels.data(),
+                                              region.x, region.y, region.w, region.h);
+                    if (!nativeWritten) {
+                        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
+                            "OSR "
+                            "native pixelmap write failed, falling back to ArrayBuffer");
+                    }
+                }
+            }
 
-                napi_value argv[8] = { arrayBuffer, xVal, yVal, wVal, hVal,
+            // Region metadata (shared by both paths).
+            napi_value xVal, yVal, wVal, hVal, fullFrameVal, viewWVal, viewHVal;
+            napi_create_int32(env, region.x, &xVal);
+            napi_create_int32(env, region.y, &yVal);
+            napi_create_int32(env, region.w, &wVal);
+            napi_create_int32(env, region.h, &hVal);
+            napi_get_boolean(env, region.fullFrame, &fullFrameVal);
+            napi_create_int32(env, region.viewW, &viewWVal);
+            napi_create_int32(env, region.viewH, &viewHVal);
+            napi_value global;
+            napi_get_global(env, &global);
+
+            if (nativeWritten) {
+                // Metadata-only call: regionData is undefined — the pixels
+                // were already written natively; JS just swaps the display.
+                napi_value undefined;
+                napi_get_undefined(env, &undefined);
+                napi_value argv[8] = { undefined, xVal, yVal, wVal, hVal,
                                        fullFrameVal, viewWVal, viewHVal };
-                napi_value global;
-                napi_get_global(env, &global);
                 napi_value result;
                 napi_call_function(env, global, jsCallback, 8, argv, &result);
+            } else {
+                // Copy into a real ArrayBuffer. full-frame payloads feed the
+                // ASYNC createPixelMap, which may read the buffer after this
+                // CallJs returns — by then the next frame's
+                // ConsumePendingRegion has already reused/overwritten the
+                // shared region_ buffer, so a copy is required.
+                napi_value arrayBuffer;
+                void* bufferData = nullptr;
+                napi_status status = napi_create_arraybuffer(
+                    env, region.pixels.size(), &bufferData, &arrayBuffer);
+                if (status == napi_ok) {
+                    memcpy(bufferData, region.pixels.data(), region.pixels.size());
+                    napi_value argv[8] = { arrayBuffer, xVal, yVal, wVal, hVal,
+                                           fullFrameVal, viewWVal, viewHVal };
+                    napi_value result;
+                    napi_call_function(env, global, jsCallback, 8, argv, &result);
+                }
             }
         }
 
@@ -1164,7 +1323,110 @@ static napi_value NAPI_Global_destroyOsrCefView(napi_env env, napi_callback_info
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
         "destroyOsrCefView id: %{public}ld", browserId);
 
+    // Release native pixelmap handles before the browser teardown — the
+    // ArkTS side releases the PixelMap objects after this call.
+    {
+        std::lock_guard<std::mutex> lock(g_osrPixelmapsMutex);
+        auto it = g_osrPixelmaps.find(browserId);
+        if (it != g_osrPixelmaps.end()) {
+            ReleaseOsrNativePixelmaps(it->second);
+            g_osrPixelmaps.erase(it);
+        }
+    }
+
     arkui_cef::ArkUICefManager::getInstance().destroyBrowser(browserId);
+    return nullptr;
+}
+
+// Registers the ArkTS double-buffered PixelMaps for native dirty-region
+// writes. Call after every rebuildPixelMap (the old pair is replaced) and
+// BEFORE releasing the old ArkTS PixelMap objects.
+static napi_value NAPI_Global_registerOsrPixelmaps(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 3) {
+        napi_throw_error(env, nullptr, "Expected 3 arguments: browserId, pmA, pmB");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    OH_PixelmapNative* nativeA = nullptr;
+    OH_PixelmapNative* nativeB = nullptr;
+    bool ok =
+        OH_PixelmapNative_ConvertPixelmapNativeFromNapi(env, args[1], &nativeA) == IMAGE_SUCCESS &&
+        nativeA;
+    ok = ok &&
+         OH_PixelmapNative_ConvertPixelmapNativeFromNapi(env, args[2], &nativeB) == IMAGE_SUCCESS &&
+         nativeB;
+
+    uint32_t strideA = 0, strideB = 0;
+    int32_t wA = 0, hA = 0, wB = 0, hB = 0;
+    ok = ok && QueryPixelmapInfo(nativeA, &strideA, &wA, &hA) &&
+         QueryPixelmapInfo(nativeB, &strideB, &wB, &hB) &&
+         wA == wB && hA == hB && strideA == strideB;
+
+    if (!ok) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
+            "registerOsrPixelmaps: rejected (format/size mismatch), browserId=%{public}ld",
+            browserId);
+        if (nativeA) {
+            OH_PixelmapNative_Release(nativeA);
+        }
+        if (nativeB) {
+            OH_PixelmapNative_Release(nativeB);
+        }
+        return nullptr;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_osrPixelmapsMutex);
+        auto it = g_osrPixelmaps.find(browserId);
+        if (it != g_osrPixelmaps.end()) {
+            ReleaseOsrNativePixelmaps(it->second);
+        }
+        OsrNativePixelmaps& pms = g_osrPixelmaps[browserId];
+        pms.pmA = nativeA;
+        pms.pmB = nativeB;
+        pms.rowStride = strideA;
+        pms.width = wA;
+        pms.height = hA;
+    }
+
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+        "registerOsrPixelmaps: browserId=%{public}ld, %{public}dx%{public}d, stride=%{public}u",
+        browserId, wA, hA, strideA);
+    return nullptr;
+}
+
+// Releases the native pixelmap handles for a browser (the ArkTS PixelMap
+// objects are released separately by OsrCefView).
+static napi_value NAPI_Global_unregisterOsrPixelmaps(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "Expected 1 argument: browserId");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    {
+        std::lock_guard<std::mutex> lock(g_osrPixelmapsMutex);
+        auto it = g_osrPixelmaps.find(browserId);
+        if (it != g_osrPixelmaps.end()) {
+            ReleaseOsrNativePixelmaps(it->second);
+            g_osrPixelmaps.erase(it);
+            OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+                "unregisterOsrPixelmaps: browserId=%{public}ld", browserId);
+        }
+    }
     return nullptr;
 }
 
@@ -1987,6 +2249,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"cefSendKeyEvent", nullptr, NAPI_Global_cefSendKeyEvent, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"createOsrCefView", nullptr, NAPI_Global_createOsrCefView, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"destroyOsrCefView", nullptr, NAPI_Global_destroyOsrCefView, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"registerOsrPixelmaps", nullptr, NAPI_Global_registerOsrPixelmaps, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"unregisterOsrPixelmaps", nullptr, NAPI_Global_unregisterOsrPixelmaps, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefOsrResize", nullptr, NAPI_Global_cefOsrResize, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefOsrSetScale", nullptr, NAPI_Global_cefOsrSetScale, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSetComponentOffset", nullptr, NAPI_Global_cefSetComponentOffset, nullptr, nullptr, nullptr, napi_default, nullptr},

@@ -1,4 +1,5 @@
 import { NodeContent } from "@kit.ArkUI";
+import { image } from "@kit.ImageKit";
 
 export const startCef: () => void;
 export const isCefRunning: () => boolean;
@@ -21,7 +22,7 @@ export const unregisterPopupTitleCallback: (cefBrowserId: number) => void;
 export const setPopupBrowserCreatedCallback: (callback: (cefBrowserId: number) => void) => void;
 export const cefSendKeyEvent: (browserId: number, keyCode: number, keyType: number, modifiers: number, charCode?: number) => void;
 export const createOsrCefView: (url: string, width: number, height: number,
-                                 onPaint: (regionData: ArrayBuffer, x: number, y: number, w: number, h: number,
+                                 onPaint: (regionData: ArrayBuffer | undefined, x: number, y: number, w: number, h: number,
                                            fullFrame: boolean, viewW: number, viewH: number) => void,
                                  onCreated: (browserId: number) => void,
                                  onTitleChange: (title: string) => void,
@@ -34,6 +35,8 @@ export const createOsrCefView: (url: string, width: number, height: number,
                                   onStartDrag?: (text: string, html: string, url: string, urlTitle: string, fileName: string, fileData: ArrayBuffer, x: number, y: number) => void,
                                  onUpdateDragCursor?: (operation: number) => void) => number;
 export const destroyOsrCefView: (browserId: number) => void;
+export const registerOsrPixelmaps: (browserId: number, pmA: image.PixelMap, pmB: image.PixelMap) => void;
+export const unregisterOsrPixelmaps: (browserId: number) => void;
 export const cefOsrResize: (browserId: number, width: number, height: number) => void;
 export const cefOsrSetScale: (browserId: number, scaleFactor: number) => void;
 export const cefSetComponentOffset: (browserId: number, offsetX: number, offsetY: number) => void;

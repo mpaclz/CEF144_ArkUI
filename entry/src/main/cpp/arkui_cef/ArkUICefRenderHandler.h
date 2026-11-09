@@ -53,7 +53,7 @@ public:
     void OnImeCompositionRangeChanged(CefRefPtr<CefBrowser> browser,
                                        const CefRange& selected_range,
                                        const RectList& character_bounds) override;
-    void OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintEleme   ntType type,
+    void OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
                             const RectList& dirtyRects,
                             const CefAcceleratedPaintInfo& info) override;
     void OnTextSelectionChanged(CefRefPtr<CefBrowser> browser,

@@ -74,11 +74,12 @@ void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* pare
     CefBrowserSettings browserSettings;
     // Initial cap during startup; the ArkTS layer raises this after creation
     // (see OsrCefView onOsrCreated -> cefSetFrameRate). The render pipeline
-    // is now synchronous dirty-region updates (no per-frame createPixelMap),
-    // so 20-30fps no longer floods the JS thread the way the old full-frame
-    // ArrayBuffer path did at 30fps.
+    // is now synchronous dirty-region updates with native PixelMap writes
+    // (no per-frame createPixelMap, no per-frame ArrayBuffer allocation), so
+    // 60fps no longer floods the JS thread. CEF has no upper clamp on
+    // windowless_frame_rate (osr_util::ClampFrameRate only enforces >= 1).
     if (use_osr_) {
-        browserSettings.windowless_frame_rate = 10;
+        browserSettings.windowless_frame_rate = 60;
     }
 
     bool success = CefBrowserHost::CreateBrowser(
