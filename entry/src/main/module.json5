@@ -74,6 +74,17 @@
             ]
           }
         ]
+      },
+      {
+        "name": "CefTearOffAbility",
+        "srcEntry": "./ets/CefTearOffAbility/CefTearOffAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:startIcon",
+        "startWindowBackground": "$color:start_window_background",
+        "launchType": "specified",
+        "exported": true
       }
     ],
     "requestPermissions": [

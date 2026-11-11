@@ -1,5 +1,6 @@
 import { CefView } from './CefView'
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { getDragOutSession, DragOutInfo } from '../common/DragOutSession'
 
 const DOMAIN = 0xFF01;
 const MODULE = 'BrowserView'
@@ -125,6 +126,11 @@ export struct BrowserView {
           CefView({viewUrl: this.defaultUrl, onCreatedCallback: (view) => {
             hilog.info(DOMAIN, MODULE, "CefView created, id: %{public}d", view.getBrowserId())
             this.cefView = view;
+            // 拖出支持：触发后视图自行完成 capture-lost/hide/占位，
+            // 会话负责拉起新窗（adopt/跟随/恢复均由 session 驱动）
+            view.enableDragOut((info: DragOutInfo) => {
+              getDragOutSession().startDragOut(info);
+            });
           }}).width('100%').height('100%')
         }
 

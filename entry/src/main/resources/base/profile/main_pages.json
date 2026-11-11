@@ -4,6 +4,7 @@
     "pages/IndexPopup",
     "pages/SubWindow",
     "pages/NodeHandleWindow",
-    "pages/NodeHandleSubWindow"
+    "pages/NodeHandleSubWindow",
+    "pages/TearOffPage"
   ]
 }

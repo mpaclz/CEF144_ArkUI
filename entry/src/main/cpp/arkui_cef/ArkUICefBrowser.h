@@ -168,6 +168,19 @@ public:
     void wasHidden(bool hidden);
 
     /**
+     * @brief 把当前浏览器宿主窗口迁移到新的父容器（网页拖出成新主窗）。
+     *        windowed 模式专用；转发给 cef_ohos_reparent_browser_host（CEF 侧
+     *        重建 Widget/宿主节点，同一 WebContents/页面状态保留）。
+     * @param newParent 新的父容器节点（napi 侧创建的 STACK 节点）
+     * @param width 新宿主窗口宽度（px）
+     * @param height 新宿主窗口高度（px）
+     * @return 转发 cef_ohos_reparent_browser_host 返回码（0 成功；-3 为结果
+     *         未知——迁移任务可能晚到并成功；其余负数为失败）
+     * @thread 任意线程可调（内部同步阻塞等待 CEF UI 线程，勿在 CEF UI 线程调用）
+     */
+    int reparent(Node* newParent, int width, int height);
+
+    /**
      * @brief 向浏览器发送触摸事件 (OSR 模式)
      * @param x 触摸 X 坐标
      * @param y 触摸 Y 坐标
@@ -238,6 +251,8 @@ public:
     void SetUseOsr(bool use_osr) { use_osr_ = use_osr; }
     /** @brief 是否使用离屏渲染模式 */
     bool IsOsr() const { return use_osr_; }
+    /** @brief 是否 windowed（非 OSR）模式 */
+    bool isWindowed() const { return !use_osr_; }
 
     /**
      * @brief 设置OSR设备缩放因子
@@ -289,6 +304,12 @@ private:
     CursorChangeCallback cursorChangeCallback_; ///< 光标变更回调
 
     bool use_osr_ = false;            ///< 是否使用离屏渲染模式
+
+    // 缓存的宿主窗口节点（onBrowserCreated 时于 CEF UI 线程记录；reparent
+    // 迁移时跨线程读取 —— 直接实时调 GetWindowHandle() 需要 CEF UI 线程，
+    // 缓存一份指针最稳）。reparent 成功后由导出函数的出参刷新为新宿主
+    // 句柄（旧宿主已销毁）；失败/超时保持不动。show()/hide() 优先用它。
+    Node* hostWindowHandle_ = nullptr;
 };
 } // namespace arkui_cef
 #endif // ARKUI_CEF_BROWSER_H

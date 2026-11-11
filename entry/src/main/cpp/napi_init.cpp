@@ -7,6 +7,10 @@
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
+#include <chrono>
+#include <thread>
+#include <pthread.h>
 #include <hilog/log.h>
 #include <string>
 #include <arkui/native_interface.h>
@@ -28,6 +32,7 @@
 #include "arkui_cef/ArkUICefManager.h"
 #include "arkui_cef/ArkUICefRenderHandler.h"
 #include "arkui_cef/ArkUICefInputMethod.h"
+#include "arkui_cef/NodeHandle.h"
 #include "include/base/cef_callback.h"
 
 namespace {
@@ -590,9 +595,11 @@ struct OsrKeyFilterContext {
 };
 
 static OsrKeyFilterContext* g_keyFilterCtx = nullptr;
-// The system filter is registered once per window; later registerOsrKeyFilter
-// calls (multi-instance) only refresh the routing target.
-static bool g_keyFilterRegistered = false;
+// The system filter is registered per WINDOW (multi-window safe: a torn-off
+// OSR view in a new window registers its own windowId). Later
+// registerOsrKeyFilter calls for an already-registered window only refresh
+// the routing target.
+static std::unordered_set<int32_t> g_keyFilterWindows;
 
 static bool OsrKeyFilterCallback(Input_KeyEvent* keyEvent) {
     if (!keyEvent || !g_keyFilterCtx) return false;
@@ -776,10 +783,12 @@ struct OsrPaintTsfn {
             // success the JS callback is skipped entirely (there is nothing
             // to swap or rebuild).
             bool surfaceWritten = false;
+            bool hasSurface = false;
             {
                 std::lock_guard<std::mutex> lock(g_osrSurfaceMutex);
                 auto it = g_osrSurfaces.find(browserId);
                 if (it != g_osrSurfaces.end() && handler) {
+                    hasSurface = true;
                     surfaceWritten = WriteRegionToSurface(
                         it->second, handler, browserId,
                         region.x, region.y, region.w, region.h,
@@ -791,12 +800,37 @@ struct OsrPaintTsfn {
                 return;
             }
 
+            // [tear-off fix] No display consumer at all: surface absent AND
+            // no PixelMap fallback registered. This is the normal state
+            // during tear-off/restore windows (the old surface was detached
+            // while the new XComponent has not created its surface yet —
+            // possibly for seconds, or until the user switches back to the
+            // tab). Compacting an ~11MB full-frame payload on THIS (main)
+            // thread — plus a same-size ArrayBuffer copy — while holding the
+            // handler mutex (which also blocks the CEF render thread's
+            // OnPaint) is what produced THREAD_BLOCK_6S appfreezes under
+            // migration stress. The frame is unobservable: the meta was
+            // already consumed above, the staging frame buffer keeps the
+            // latest full content, and the attach path's cefInvalidate()
+            // re-delivers a fresh frame onto the new surface.
+            if (!hasSurface) {
+                bool hasPixelmaps = false;
+                {
+                    std::lock_guard<std::mutex> lock(g_osrPixelmapsMutex);
+                    hasPixelmaps = g_osrPixelmaps.find(browserId) != g_osrPixelmaps.end();
+                }
+                if (!hasPixelmaps) {
+                    self->framePending_.store(false);
+                    return;
+                }
+            }
+
             // Priority 2 / 3: PixelMap native write / ArrayBuffer path.
-            // Only reached when no surface is attached or the surface write
-            // failed (format mismatch, resize window, queue error...).
-            // Compact the pixel rows on demand (the fallback paths need the
-            // actual data). If a resize raced the meta consume, |pixels| is
-            // empty and this frame is dropped (a fresh full frame follows).
+            // Only reached when a PixelMap fallback is registered (or the
+            // surface write failed). Compact the pixel rows on demand (the
+            // fallback paths need the actual data). If a resize raced the
+            // meta consume, |pixels| is empty and this frame is dropped (a
+            // fresh full frame follows).
             if (handler) {
                 handler->CompactRegionPixels(region);
             }
@@ -995,7 +1029,7 @@ void destroyNode(Node* node) {
     if (!node) {
         return;
     }
-    
+
     ArkUI_NativeNodeAPI_1* api = reinterpret_cast<ArkUI_NativeNodeAPI_1*>(
         OH_ArkUI_QueryModuleInterfaceByName(ARKUI_NATIVE_NODE, "ArkUI_NativeNodeAPI_1"));
     if (api) {
@@ -1008,6 +1042,354 @@ void destroyNode(Node* node) {
     }
     delete node;
 }
+
+// ---------------------------------------------------------------------------
+// Windowed drag-out tear-off detection.
+//
+// Per-browser state machine mirroring the design doc §3:
+//   Idle --Press(Left)--> Armed --move > minDragPx--> Dragging(activated)
+//   Dragging --windowX/Y inside content rect, within edgePx of a border--> Tearing
+//     -> fire onDragOut (once per session), stop until Release resets
+//   Release / non-left press / no-left-button move -> Idle
+//   activated && no Move for 500ms (cursor flung out of the window, events
+//   stop) -> Idle (+ SendCaptureLostEvent to clean up the web-side drag).
+//
+// The event receiver is registered on the napi parent Stack (NODE_ON_MOUSE).
+// It only OBSERVES — OH_ArkUI_NodeEvent_SetConsumed is never called — so the
+// events keep flowing into CEF's XComponent and in-window dragging/text
+// selection/HTML5 drag remain untouched.
+//
+// Coordinates: the parent Stack is switched to ARKUI_LENGTH_METRIC_UNIT_PX,
+// so GetWindowX/GetDisplayX/GetX report px directly (see ui_input_event.h —
+// pointer coordinates follow the receiving node's length metric unit).
+// winLeft/winTop therefore carry the CONTENT area origin relative to the
+// window top-left (= drawableRect.left/top - windowRect.left/top, i.e. the
+// title-bar offset on 2in1 free windows), winW/winH the content size.
+//
+// All receivers/watch state are touched on the ArkUI main thread (receiver)
+// and the JS thread (napi entries); g_dragOutMutex serializes them. The
+// watchdog thread scans for stale sessions every 250ms.
+// ---------------------------------------------------------------------------
+struct DragOutWatch {
+    int64_t browserId = -1;
+    ArkUI_NodeHandle node = nullptr;   // parent Stack container handle
+    int32_t edgePx = 4;                // border trigger band (px)
+    int32_t minDragPx = 20;            // drag activation threshold (px)
+    // Content rect (px): origin relative to window top-left + size.
+    int32_t winLeft = 0;
+    int32_t winTop = 0;
+    int32_t winW = 0;
+    int32_t winH = 0;
+    int32_t viewW = 0;
+    int32_t viewH = 0;
+    // Session state.
+    bool armed = false;       // left button pressed
+    bool activated = false;   // displacement threshold passed
+    bool triggered = false;   // tear-off fired for this press
+    bool proximityLogged = false;  // one-shot "cursor approaching edge" log
+    float pressLocalX = 0.f;
+    float pressLocalY = 0.f;
+    float pressScreenX = 0.f;
+    float pressScreenY = 0.f;
+    int64_t lastMoveMs = 0;
+    std::shared_ptr<JsThreadSafeCallback<int64_t, int32_t, int32_t, int32_t,
+                                          int32_t, int32_t, int32_t>> onDragOut;
+};
+
+std::mutex g_dragOutMutex;
+std::unordered_map<int64_t, std::unique_ptr<DragOutWatch>> g_dragOutWatches;
+std::atomic<bool> g_dragOutWatchdogRunning{false};
+constexpr int64_t DRAG_OUT_STALE_MS = 500;
+
+// browserId -> current napi parent Node* registry. Populated in
+// createCefView, updated in adoptCefView, cleared in destroyCefView. Lets
+// cefWatchDragOut/adoptCefView resolve the parent Stack without going
+// through the NodeContent handle.
+std::mutex g_cefParentNodesMutex;
+std::unordered_map<int64_t, Node*> g_cefParentNodes;
+
+// In-flight adoptCefView workers (browserId inserted before the worker
+// spawns, erased as the FIRST action of the completion callback), plus the
+// set of browsers whose destroyCefView arrived while an adopt worker was
+// still running ("interrupted" adoption — node cleanup is deferred to the
+// completion callback; the browser teardown itself proceeds normally).
+// Both guarded by g_cefParentNodesMutex.
+std::unordered_set<int64_t> g_cefAdopting;
+std::unordered_set<int64_t> g_cefAdoptInterrupted;
+
+int64_t DragOutNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void DragOutNodeEventReceiver(ArkUI_NodeEvent* event);
+
+void ResetDragOutSession(DragOutWatch* w) {
+    w->armed = false;
+    w->activated = false;
+    w->triggered = false;
+    w->proximityLogged = false;
+    w->lastMoveMs = 0;
+}
+
+// Map-only variant: erases the watch entry WITHOUT touching any ArkUI node.
+// Used by interrupted-adopt paths (destroy raced an in-flight adopt): the
+// related nodes may already be freed or owned by a destroyed page, so no
+// node API (unregister/remove receiver) may be called on them.
+void CleanupDragOutWatchMapOnly(int64_t browserId) {
+    std::lock_guard<std::mutex> lock(g_dragOutMutex);
+    g_dragOutWatches.erase(browserId);
+}
+
+void CleanupDragOutWatchForNode(int64_t browserId, ArkUI_NodeHandle node) {
+    CleanupDragOutWatchMapOnly(browserId);
+    if (node) {
+        ArkUI_NativeNodeAPI_1* api = reinterpret_cast<ArkUI_NativeNodeAPI_1*>(
+            OH_ArkUI_QueryModuleInterfaceByName(ARKUI_NATIVE_NODE, "ArkUI_NativeNodeAPI_1"));
+        if (api) {
+            api->unregisterNodeEvent(node, NODE_ON_MOUSE);
+            api->removeNodeEventReceiver(node, DragOutNodeEventReceiver);
+        }
+    }
+}
+
+void DragOutWatchdogMain() {
+    pthread_setname_np(pthread_self(), "DragOutWatch");
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        std::vector<int64_t> staleBrowsers;
+        {
+            std::lock_guard<std::mutex> lock(g_dragOutMutex);
+            if (g_dragOutWatches.empty()) {
+                // Store the not-running flag FIRST (under the lock), then
+                // re-check: a registration that raced in between will either
+                // see running==false and start a fresh watchdog, or be
+                // picked up by our re-check below.
+                g_dragOutWatchdogRunning.store(false, std::memory_order_relaxed);
+                if (g_dragOutWatches.empty()) {
+                    return;
+                }
+                g_dragOutWatchdogRunning.store(true, std::memory_order_relaxed);
+            }
+            int64_t now = DragOutNowMs();
+            for (auto& entry : g_dragOutWatches) {
+                DragOutWatch* w = entry.second.get();
+                if (!w) {
+                    continue;
+                }
+                // Only ACTIVATED sessions can go stale: an armed-but-still
+                // session (button pressed, cursor parked) MUST NOT be reset
+                // by the 500ms sweep — the press is simply idle, not lost.
+                // The "flung outside the window" signature is: activated,
+                // then events STOP arriving (no Move for 500ms).
+                if (w->activated &&
+                    w->lastMoveMs > 0 &&
+                    now - w->lastMoveMs > DRAG_OUT_STALE_MS) {
+                    // Cursor flung outside the window (events stopped) or the
+                    // Release was swallowed. Reset the session; for an
+                    // in-progress (activated, not yet triggered) web drag,
+                    // also clean the web-side press state.
+                    if (!w->triggered) {
+                        staleBrowsers.push_back(entry.first);
+                    }
+                    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+                        "dragOut watchdog: reset stale session browserId=%{public}ld",
+                        entry.first);
+                    ResetDragOutSession(w);
+                }
+            }
+        }
+        // Capture-lost posts happen OUTSIDE the lock.
+        for (int64_t id : staleBrowsers) {
+            auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(id);
+            if (browser) {
+                CefPostTask(TID_UI, CefCreateClosureTask(
+                    base::BindOnce(&ArkUICefBrowser::sendCaptureLostEvent, browser)));
+            }
+        }
+    }
+}
+
+void EnsureDragOutWatchdog() {
+    bool expected = false;
+    if (g_dragOutWatchdogRunning.compare_exchange_strong(expected, true)) {
+        std::thread(DragOutWatchdogMain).detach();
+    }
+}
+
+// The receiver runs on the ArkUI main thread. Never consumes events.
+void DragOutNodeEventReceiver(ArkUI_NodeEvent* event) {
+    if (!event) {
+        return;
+    }
+    int32_t targetId = OH_ArkUI_NodeEvent_GetTargetId(event);
+    ArkUI_UIInputEvent* input = OH_ArkUI_NodeEvent_GetInputEvent(event);
+    if (!input || targetId <= 0) {
+        return;
+    }
+    if (OH_ArkUI_UIInputEvent_GetType(input) != ARKUI_UIINPUTEVENT_TYPE_MOUSE) {
+        return;
+    }
+    int64_t browserId = static_cast<int64_t>(targetId);
+
+    // Mouse action codes (ui_input_event.h): 1=Press 2=Release 3=Move.
+    int32_t action = OH_ArkUI_MouseEvent_GetMouseAction(input);
+    // Mouse button codes (ui_input_event.h): 1=Left 2=Right 3=Middle.
+    int32_t button = OH_ArkUI_MouseEvent_GetMouseButton(input);
+
+    // Decide + mutate under the lock; the JS callback fires outside it.
+    bool fire = false;
+    float fireLocalX = 0.f, fireLocalY = 0.f;
+    float fireScreenX = 0.f, fireScreenY = 0.f;
+    float fireCurX = 0.f, fireCurY = 0.f;
+    std::shared_ptr<JsThreadSafeCallback<int64_t, int32_t, int32_t, int32_t,
+                                          int32_t, int32_t, int32_t>> cb;
+    {
+        std::lock_guard<std::mutex> lock(g_dragOutMutex);
+        auto it = g_dragOutWatches.find(browserId);
+        if (it == g_dragOutWatches.end()) {
+            return;
+        }
+        DragOutWatch* w = it->second.get();
+        if (!w) {
+            return;
+        }
+        switch (action) {
+            case UI_MOUSE_EVENT_ACTION_PRESS: {
+                if (button != UI_MOUSE_EVENT_BUTTON_LEFT) {
+                    // Non-left press cancels any pending session.
+                    ResetDragOutSession(w);
+                    return;
+                }
+                w->armed = true;
+                w->activated = false;
+                w->triggered = false;
+                w->proximityLogged = false;
+                w->pressLocalX = OH_ArkUI_PointerEvent_GetX(input);
+                w->pressLocalY = OH_ArkUI_PointerEvent_GetY(input);
+                w->pressScreenX = OH_ArkUI_PointerEvent_GetDisplayX(input);
+                w->pressScreenY = OH_ArkUI_PointerEvent_GetDisplayY(input);
+                w->lastMoveMs = DragOutNowMs();
+                // Diagnostic: proves NODE_ON_MOUSE events bubble up from the
+                // CEF XComponent area to our parent-Stack receiver. One line
+                // per left press — low noise, high diagnostic value.
+                OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+                    "dragOut press: browserId=%{public}ld, win=(%{public}f,%{public}f), "
+                    "local=(%{public}f,%{public}f)",
+                    browserId, OH_ArkUI_PointerEvent_GetWindowX(input),
+                    OH_ArkUI_PointerEvent_GetWindowY(input),
+                    w->pressLocalX, w->pressLocalY);
+                return;
+            }
+            case UI_MOUSE_EVENT_ACTION_RELEASE: {
+                ResetDragOutSession(w);
+                return;
+            }
+            case UI_MOUSE_EVENT_ACTION_CANCEL: {
+                // System-initiated cancel (UI_MOUSE_EVENT_ACTION_CANCEL = 13,
+                // see ui_input_event.h): treat like Release — drop the
+                // pending session without firing drag-out.
+                ResetDragOutSession(w);
+                return;
+            }
+            case UI_MOUSE_EVENT_ACTION_MOVE: {
+                if (!w->armed || w->triggered) {
+                    return;
+                }
+                // Hover moves carry no buttons — a stale "armed" session
+                // (Release lost outside the component) self-heals here.
+                int32_t pressed[8] = {0};
+                int32_t pressedCount = 8;
+                if (OH_ArkUI_MouseEvent_GetPressedButtons(input, pressed, &pressedCount) ==
+                        ARKUI_ERROR_CODE_NO_ERROR) {
+                    bool leftHeld = false;
+                    for (int32_t i = 0; i < pressedCount; i++) {
+                        if (pressed[i] == UI_MOUSE_EVENT_BUTTON_LEFT) {
+                            leftHeld = true;
+                            break;
+                        }
+                    }
+                    if (!leftHeld) {
+                        ResetDragOutSession(w);
+                        return;
+                    }
+                }
+                float winX = OH_ArkUI_PointerEvent_GetWindowX(input);
+                float winY = OH_ArkUI_PointerEvent_GetWindowY(input);
+                float scrX = OH_ArkUI_PointerEvent_GetDisplayX(input);
+                float scrY = OH_ArkUI_PointerEvent_GetDisplayY(input);
+                w->lastMoveMs = DragOutNowMs();
+                if (!w->activated) {
+                    double dx = static_cast<double>(scrX) - w->pressScreenX;
+                    double dy = static_cast<double>(scrY) - w->pressScreenY;
+                    double minDrag = static_cast<double>(w->minDragPx);
+                    if (dx * dx + dy * dy < minDrag * minDrag) {
+                        return;
+                    }
+                    w->activated = true;
+                    // Diagnostic: displacement threshold passed (session live).
+                    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+                        "dragOut activated: browserId=%{public}ld, win=(%{public}f,%{public}f)",
+                        browserId, winX, winY);
+                }
+                // Content-relative coordinates (winLeft/Top = content origin
+                // within the window; 0 on platforms where drawableRect is
+                // window-relative). Trigger band: within edgePx of any
+                // content-area boundary. Coordinates BEYOND a boundary (fast
+                // flick overshoot — if the OS still delivers events under
+                // implicit pointer capture) also trigger, so the band cannot
+                // be jumped over.
+                float contentX = winX - static_cast<float>(w->winLeft);
+                float contentY = winY - static_cast<float>(w->winTop);
+                float edge = static_cast<float>(w->edgePx);
+                bool nearEdge = contentX <= edge || contentY <= edge ||
+                    contentX >= static_cast<float>(w->winW - w->edgePx) ||
+                    contentY >= static_cast<float>(w->winH - w->edgePx);
+                if (!nearEdge) {
+                    // Diagnostic (one-shot per session): cursor came within
+                    // 60px of an edge but not into the trigger band yet.
+                    if (!w->proximityLogged &&
+                        (contentX <= 60.f || contentY <= 60.f ||
+                         contentX >= static_cast<float>(w->winW - 60) ||
+                         contentY >= static_cast<float>(w->winH - 60))) {
+                        w->proximityLogged = true;
+                        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+                            "dragOut near edge: browserId=%{public}ld, content=(%{public}f,%{public}f), "
+                            "win=%{public}dx%{public}d, edgeBand=%{public}d",
+                            browserId, contentX, contentY, w->winW, w->winH, w->edgePx);
+                    }
+                    return;
+                }
+                w->triggered = true;
+                fire = true;
+                fireLocalX = w->pressLocalX;
+                fireLocalY = w->pressLocalY;
+                fireScreenX = w->pressScreenX;
+                fireScreenY = w->pressScreenY;
+                fireCurX = scrX;
+                fireCurY = scrY;
+                cb = w->onDragOut;
+                break;
+            }
+            default:
+                return;
+        }
+    }
+
+    if (fire && cb) {
+        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+            "dragOut triggered: browserId=%{public}ld, cur=(%{public}f,%{public}f)",
+            browserId, fireCurX, fireCurY);
+        cb->Call(browserId,
+                 static_cast<int32_t>(fireLocalX + 0.5f),
+                 static_cast<int32_t>(fireLocalY + 0.5f),
+                 static_cast<int32_t>(fireScreenX + 0.5f),
+                 static_cast<int32_t>(fireScreenY + 0.5f),
+                 static_cast<int32_t>(fireCurX + 0.5f),
+                 static_cast<int32_t>(fireCurY + 0.5f));
+    }
+}
+
 
 } // namespace
 
@@ -1096,7 +1478,13 @@ static napi_value NAPI_Global_createCefView(napi_env env, napi_callback_info inf
        [jsFocusTakeCallback](bool next) {
         jsFocusTakeCallback->Call(next);
        });
-    
+
+    // Register the parent node for drag-out watch / adopt lookups.
+    {
+        std::lock_guard<std::mutex> lock(g_cefParentNodesMutex);
+        g_cefParentNodes[browserId] = parentNode;
+    }
+
     napi_value result;
     napi_create_int64(env, browserId, &result);
     return result;
@@ -1125,17 +1513,47 @@ static napi_value NAPI_Global_destroyCefView(napi_env env, napi_callback_info in
     }
     
     arkui_cef::ArkUICefManager::getInstance().destroyBrowser(browserId);
-    
+
+    // adoptCefView worker in flight for this browser? Mark it interrupted and
+    // SKIP all node cleanup (no RemoveNode / destroyNode / userData clear):
+    // the old and new parent Stacks may be mid-migration on the CEF UI
+    // thread — the adopt completion callback owns the final node handling
+    // (or nodes leak as a safe fallback). The browser teardown above has
+    // already proceeded normally.
+    bool adopting = false;
+    {
+        std::lock_guard<std::mutex> lock(g_cefParentNodesMutex);
+        g_cefParentNodes.erase(browserId);
+        if (g_cefAdopting.count(browserId) > 0) {
+            g_cefAdoptInterrupted.insert(browserId);
+            adopting = true;
+        }
+    }
+    if (adopting) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
+            "destroyCefView: browserId=%{public}ld destroyed while adopt in "
+            "flight; node cleanup deferred to adopt completion", browserId);
+        // Map-only watch cleanup — nodes must not be touched here.
+        CleanupDragOutWatchMapOnly(browserId);
+        return nullptr;
+    }
+
+    // Drop the drag-out watch (state + node event registration) and the
+    // parent-node registry entry BEFORE disposing the node.
     Node* parentNode = static_cast<Node*>(OH_ArkUI_NodeContent_GetUserData(contentHandle));
     if (parentNode) {
+        CleanupDragOutWatchForNode(browserId, parentNode->container);
         int32_t err = OH_ArkUI_NodeContent_RemoveNode(contentHandle, parentNode->container);
         if (err != ARKUI_ERROR_CODE_NO_ERROR) {
-            OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi", 
+            OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
             "destroyCefView: removeNode failed");
         }
         destroyNode(parentNode);
+        // Clear the (now dangling) user data so a later destroyCefView on the
+        // same NodeContent cannot resurrect the freed pointer.
+        OH_ArkUI_NodeContent_SetUserData(contentHandle, nullptr);
     }
-    
+
     return nullptr;
 }
 
@@ -2318,7 +2736,7 @@ static napi_value NAPI_Global_registerOsrKeyFilter(napi_env env, napi_callback_i
         g_keyFilterCtx->browserId.store(browserId);
     }
 
-    if (!g_keyFilterRegistered) {
+    if (g_keyFilterWindows.find(windowId) == g_keyFilterWindows.end()) {
         WindowManager_ErrorCode ret = OH_NativeWindowManager_RegisterKeyEventFilter(
             windowId, OsrKeyFilterCallback);
         if (ret != WindowManager_ErrorCode::OK) {
@@ -2326,16 +2744,17 @@ static napi_value NAPI_Global_registerOsrKeyFilter(napi_env env, napi_callback_i
                 "register: FAILED windowId=%{public}d ret=%{public}d",
                 windowId, static_cast<int>(ret));
         } else {
-            g_keyFilterRegistered = true;
+            g_keyFilterWindows.insert(windowId);
             OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "OSRKEY",
-                "register: ok windowId=%{public}d target=%{public}ld",
-                windowId, browserId);
-            // Warm up the IMS connection. Physical keys are routed through
-            // the input method service, which drops events for apps that
-            // never established a connection (the first IMF attach). A
-            // one-shot attach+detach (panel NOT shown) here makes key
-            // routing work from the very first key press after startup.
-            {
+                "register: ok windowId=%{public}d target=%{public}ld (windows=%{public}zu)",
+                windowId, browserId, g_keyFilterWindows.size());
+            // Warm up the IMS connection once per process (first successful
+            // registration). Physical keys are routed through the input
+            // method service, which drops events for apps that never
+            // established a connection (the first IMF attach). A one-shot
+            // attach+detach (panel NOT shown) here makes key routing work
+            // from the very first key press after startup.
+            if (g_keyFilterWindows.size() == 1) {
                 arkui_cef::ImeEventCallbacks stub{};
                 auto warmup = std::make_unique<arkui_cef::ArkUICefInputMethod>();
                 bool ok = warmup->attach(false, windowId, 0, 0, 2, 24, stub);
@@ -2346,6 +2765,10 @@ static napi_value NAPI_Global_registerOsrKeyFilter(napi_env env, napi_callback_i
                     "ims warmup: %{public}s", ok ? "ok" : "failed");
             }
         }
+    } else {
+        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "OSRKEY",
+            "register: windowId=%{public}d already registered, target=%{public}ld",
+            windowId, browserId);
     }
 
     return nullptr;
@@ -2707,7 +3130,6 @@ static napi_value NAPI_Global_cefDragSourceEndedAt(napi_env env, napi_callback_i
     }
     return nullptr;
 }
-
 static napi_value NAPI_Global_cefDragSourceSystemDragEnded(napi_env env, napi_callback_info info) {
     size_t argc = 1;
     napi_value args[1];
@@ -2726,7 +3148,662 @@ static napi_value NAPI_Global_cefDragSourceSystemDragEnded(napi_env env, napi_ca
         CefPostTask(TID_UI, CefCreateClosureTask(
             base::BindOnce(&ArkUICefBrowser::dragSourceSystemDragEnded, browser)));
     }
+
     return nullptr;
+}
+
+// ==================== Drag-out tear-off (windowed + OSR adoption) ====================
+
+// cefWatchDragOut(browserId, edgePx, minDragPx, winLeft, winTop, winW, winH,
+//                 viewW, viewH, onDragOut)
+// Registers NODE_ON_MOUSE observation on the napi parent Stack of the given
+// windowed browser. winLeft/winTop = content-area origin relative to the
+// window top-left (title-bar offset), winW/winH = content size (px);
+// viewW/viewH = CEF view size (px). onDragOut(browserId, pressLocalX,
+// pressLocalY, pressScreenX, pressScreenY, curScreenX, curScreenY) — all px.
+// Returns true when the watch is active.
+static napi_value NAPI_Global_cefWatchDragOut(napi_env env, napi_callback_info info) {
+    size_t argc = 10;
+    napi_value args[10] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 10) {
+        napi_throw_error(env, nullptr,
+            "Expected 10 arguments: browserId, edgePx, minDragPx, winLeft, winTop, winW, winH, viewW, viewH, onDragOut");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+    int32_t edgePx = 4;
+    napi_get_value_int32(env, args[1], &edgePx);
+    int32_t minDragPx = 20;
+    napi_get_value_int32(env, args[2], &minDragPx);
+    int32_t winLeft = 0, winTop = 0, winW = 0, winH = 0, viewW = 0, viewH = 0;
+    napi_get_value_int32(env, args[3], &winLeft);
+    napi_get_value_int32(env, args[4], &winTop);
+    napi_get_value_int32(env, args[5], &winW);
+    napi_get_value_int32(env, args[6], &winH);
+    napi_get_value_int32(env, args[7], &viewW);
+    napi_get_value_int32(env, args[8], &viewH);
+
+    auto onDragOut = makeJsThreadSafeCallback<int64_t, int32_t, int32_t, int32_t,
+                                               int32_t, int32_t, int32_t>(
+        env, args[9], "CefDragOutCallback");
+    if (!onDragOut) {
+        napi_throw_error(env, nullptr, "Failed to create drag-out callback");
+        return nullptr;
+    }
+
+    Node* parentNode = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_cefParentNodesMutex);
+        auto it = g_cefParentNodes.find(browserId);
+        if (it != g_cefParentNodes.end()) {
+            parentNode = it->second;
+        }
+    }
+    if (!parentNode || !parentNode->container) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+            "cefWatchDragOut: parent node not found, browserId=%{public}ld", browserId);
+        napi_value result;
+        napi_get_boolean(env, false, &result);
+        return result;
+    }
+
+    ArkUI_NativeNodeAPI_1* api = reinterpret_cast<ArkUI_NativeNodeAPI_1*>(
+        OH_ArkUI_QueryModuleInterfaceByName(ARKUI_NATIVE_NODE, "ArkUI_NativeNodeAPI_1"));
+    if (!api) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+            "cefWatchDragOut: node api unavailable");
+        napi_value result;
+        napi_get_boolean(env, false, &result);
+        return result;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_dragOutMutex);
+        auto it = g_dragOutWatches.find(browserId);
+        if (it != g_dragOutWatches.end()) {
+            // Re-enable with fresh config (no duplicate node registration).
+            DragOutWatch* w = it->second.get();
+            w->edgePx = edgePx;
+            w->minDragPx = minDragPx;
+            w->winLeft = winLeft;
+            w->winTop = winTop;
+            w->winW = winW;
+            w->winH = winH;
+            w->viewW = viewW;
+            w->viewH = viewH;
+            w->onDragOut = onDragOut;
+            ResetDragOutSession(w);
+        } else {
+            // Pointer coordinates follow the receiving node's length metric
+            // unit — switch the parent Stack to px so GetWindowX/GetDisplayX
+            // report px directly (no vp->px conversion needed).
+            api->setLengthMetricUnit(parentNode->container, ARKUI_LENGTH_METRIC_UNIT_PX);
+            int32_t err = api->registerNodeEvent(parentNode->container, NODE_ON_MOUSE,
+                                                 static_cast<int32_t>(browserId), nullptr);
+            if (err != ARKUI_ERROR_CODE_NO_ERROR) {
+                OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+                    "cefWatchDragOut: registerNodeEvent failed err=%{public}d", err);
+                napi_value result;
+                napi_get_boolean(env, false, &result);
+                return result;
+            }
+            err = api->addNodeEventReceiver(parentNode->container, DragOutNodeEventReceiver);
+            if (err != ARKUI_ERROR_CODE_NO_ERROR) {
+                OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+                    "cefWatchDragOut: addNodeEventReceiver failed err=%{public}d", err);
+                api->unregisterNodeEvent(parentNode->container, NODE_ON_MOUSE);
+                napi_value result;
+                napi_get_boolean(env, false, &result);
+                return result;
+            }
+            auto w = std::make_unique<DragOutWatch>();
+            w->browserId = browserId;
+            w->node = parentNode->container;
+            w->edgePx = edgePx;
+            w->minDragPx = minDragPx;
+            w->winLeft = winLeft;
+            w->winTop = winTop;
+            w->winW = winW;
+            w->winH = winH;
+            w->viewW = viewW;
+            w->viewH = viewH;
+            w->onDragOut = onDragOut;
+            g_dragOutWatches.emplace(browserId, std::move(w));
+        }
+    }
+
+    EnsureDragOutWatchdog();
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+        "cefWatchDragOut: browserId=%{public}ld edge=%{public}d minDrag=%{public}d "
+        "content=(%{public}d,%{public}d,%{public}d,%{public}d) view=%{public}dx%{public}d",
+        browserId, edgePx, minDragPx, winLeft, winTop, winW, winH, viewW, viewH);
+
+    napi_value result;
+    napi_get_boolean(env, true, &result);
+    return result;
+}
+
+// cefUpdateDragOutRect(browserId, winLeft, winTop, winW, winH, viewW, viewH)
+// Refreshes the detection rects after a window move/resize or a view
+// onAreaChange. Same coordinate semantics as cefWatchDragOut.
+static napi_value NAPI_Global_cefUpdateDragOutRect(napi_env env, napi_callback_info info) {
+    size_t argc = 7;
+    napi_value args[7] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 7) {
+        napi_throw_error(env, nullptr,
+            "Expected 7 arguments: browserId, winLeft, winTop, winW, winH, viewW, viewH");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+    int32_t winLeft = 0, winTop = 0, winW = 0, winH = 0, viewW = 0, viewH = 0;
+    napi_get_value_int32(env, args[1], &winLeft);
+    napi_get_value_int32(env, args[2], &winTop);
+    napi_get_value_int32(env, args[3], &winW);
+    napi_get_value_int32(env, args[4], &winH);
+    napi_get_value_int32(env, args[5], &viewW);
+    napi_get_value_int32(env, args[6], &viewH);
+
+    std::lock_guard<std::mutex> lock(g_dragOutMutex);
+    auto it = g_dragOutWatches.find(browserId);
+    if (it == g_dragOutWatches.end()) {
+        return nullptr;
+    }
+    DragOutWatch* w = it->second.get();
+    if (w) {
+        w->winLeft = winLeft;
+        w->winTop = winTop;
+        w->winW = winW;
+        w->winH = winH;
+        w->viewW = viewW;
+        w->viewH = viewH;
+    }
+    return nullptr;
+}
+
+// cefUnwatchDragOut(browserId)
+static napi_value NAPI_Global_cefUnwatchDragOut(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "Expected 1 argument: browserId");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    Node* parentNode = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_cefParentNodesMutex);
+        auto it = g_cefParentNodes.find(browserId);
+        if (it != g_cefParentNodes.end()) {
+            parentNode = it->second;
+        }
+    }
+    CleanupDragOutWatchForNode(browserId, parentNode ? parentNode->container : nullptr);
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+        "cefUnwatchDragOut: browserId=%{public}ld", browserId);
+    return nullptr;
+}
+
+// adoptCefView(browserId, oldNodeContent, newNodeContent, width, height,
+//              onAdopted(ok: boolean))
+// Windowed migration, fully ASYNC:
+//  1. JS main thread: validate args, build the new parent Stack and attach it
+//     to newNodeContent (fast node ops), mark the adoption in flight
+//     (g_cefAdopting), then return immediately.
+//  2. Worker thread: browser->reparent() — blocks up to ~3s waiting for the
+//     CEF UI thread. NEVER call this on the ArkUI main thread: the CEF UI
+//     thread's new-widget creation waits (WaitForSurface, no timeout) for the
+//     surface-created callback which is delivered ON the ArkUI main thread —
+//     a synchronous call from main would deadlock both threads.
+//  3. Completion (main thread, via PostToMainThread): first leave
+//     g_cefAdopting / read g_cefAdoptInterrupted, then branch:
+//     - interrupted (destroyCefView raced the worker): touch NO nodes —
+//       only erase the registry/watch-map entries and notify(false).
+//     - rc == 0: retire the old parent Stack, update the registry, notify(true).
+//     - rc == -3 (outcome unknown): unmount + clear userData on the new
+//       NodeContent, intentionally LEAK the new parent Stack, notify(false).
+//     - other rc < 0: full cleanup of the new parent Stack (RemoveNode +
+//       destroyNode + userData clear), notify(false).
+static napi_value NAPI_Global_adoptCefView(napi_env env, napi_callback_info info) {
+    size_t argc = 6;
+    napi_value args[6] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 6) {
+        napi_throw_error(env, nullptr,
+            "Expected 6 arguments: browserId, oldNodeContent, newNodeContent, width, height, onAdopted");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    ArkUI_NodeContentHandle oldContent = nullptr;
+    OH_ArkUI_GetNodeContentFromNapiValue(env, args[1], &oldContent);
+    ArkUI_NodeContentHandle newContent = nullptr;
+    OH_ArkUI_GetNodeContentFromNapiValue(env, args[2], &newContent);
+
+    int32_t width = 0;
+    napi_get_value_int32(env, args[3], &width);
+    int32_t height = 0;
+    napi_get_value_int32(env, args[4], &height);
+
+    auto onAdopted = makeJsThreadSafeCallback<bool>(env, args[5], "CefAdoptedCallback");
+
+    auto notify = [onAdopted](bool ok) {
+        if (onAdopted) {
+            onAdopted->Call(ok);
+            onAdopted->Release();
+        }
+    };
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (!browser || !browser->isWindowed()) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+            "adoptCefView: browser not found or not windowed, browserId=%{public}ld", browserId);
+        notify(false);
+        return nullptr;
+    }
+    if (!oldContent || !newContent || width <= 0 || height <= 0) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+            "adoptCefView: invalid arguments, browserId=%{public}ld", browserId);
+        notify(false);
+        return nullptr;
+    }
+
+    // Old parent node: registry first, NodeContent user data as fallback.
+    Node* oldParent = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_cefParentNodesMutex);
+        auto it = g_cefParentNodes.find(browserId);
+        if (it != g_cefParentNodes.end()) {
+            oldParent = it->second;
+        }
+    }
+    if (!oldParent) {
+        oldParent = static_cast<Node*>(OH_ArkUI_NodeContent_GetUserData(oldContent));
+    }
+    if (!oldParent || !oldParent->container) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+            "adoptCefView: old parent node not found, browserId=%{public}ld", browserId);
+        notify(false);
+        return nullptr;
+    }
+
+    // Build the new parent Stack and attach it to the new NodeContent.
+    Node* newParent = createParentNode();
+    if (!newParent) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+            "adoptCefView: createParentNode failed");
+        notify(false);
+        return nullptr;
+    }
+    int32_t err = OH_ArkUI_NodeContent_AddNode(newContent, newParent->container);
+    if (err != ARKUI_ERROR_CODE_NO_ERROR) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+            "adoptCefView: AddNode failed err=%{public}d", err);
+        destroyNode(newParent);
+        notify(false);
+        return nullptr;
+    }
+    OH_ArkUI_NodeContent_SetUserData(newContent, newParent);
+
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+        "adoptCefView: begin reparent (async) browserId=%{public}ld size=%{public}dx%{public}d",
+        browserId, width, height);
+
+    // Mark the adoption as in flight so a racing destroyCefView(browserId)
+    // knows to defer node cleanup to our completion callback (interrupted
+    // adoption) instead of yanking the nodes out from under the CEF UI
+    // thread.
+    {
+        std::lock_guard<std::mutex> lock(g_cefParentNodesMutex);
+        g_cefAdopting.insert(browserId);
+    }
+
+    // Async reparent on a detached worker thread. The CefRefPtr copy keeps
+    // the browser alive across the migration; all ArkUI node cleanup and
+    // registry updates are posted back to the main thread.
+    std::thread([browser, browserId, oldParent, newParent, oldContent, newContent,
+                 width, height, notify]() {
+        int rc = browser->reparent(newParent, width, height);
+        arkui_cef::PostToMainThread([browser, browserId, oldParent, newParent,
+                                     oldContent, newContent, rc, notify]() {
+            // FIRST action: leave the adopting set and fetch + clear the
+            // interrupted flag under the same lock. Every branch below
+            // notifies exactly once.
+            bool interrupted = false;
+            {
+                std::lock_guard<std::mutex> lock(g_cefParentNodesMutex);
+                g_cefAdopting.erase(browserId);
+                interrupted = g_cefAdoptInterrupted.erase(browserId) > 0;
+            }
+
+            if (interrupted) {
+                // destroyCefView ran while the migration worker was in
+                // flight: the browser is already gone, and old/new
+                // NodeContents plus both parent Stacks may be freed or owned
+                // by a destroyed page — do NOT touch any ArkUI node here
+                // (oldParent/newParent/both NodeContents stay untouched; the
+                // nodes are intentionally leaked as the safe fallback). Only
+                // clean the maps and notify failure.
+                OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
+                    "adoptCefView: interrupted by destroyCefView, "
+                    "browserId=%{public}ld rc=%{public}d (nodes untouched)",
+                    browserId, rc);
+                {
+                    std::lock_guard<std::mutex> lock(g_cefParentNodesMutex);
+                    g_cefParentNodes.erase(browserId);
+                }
+                // Map-only cleanup: CleanupDragOutWatchForNode would call
+                // unregisterNodeEvent(oldParent->container) — nodes must not
+                // be touched in this path.
+                CleanupDragOutWatchMapOnly(browserId);
+                notify(false);
+                return;
+            }
+
+            if (rc == 0) {
+                // Success: retire the old parent Stack (drag-out watch first —
+                // unregister node events BEFORE disposing the node), update the
+                // registry, clear the stale user data on the old NodeContent.
+                CleanupDragOutWatchForNode(browserId, oldParent->container);
+                int32_t err = OH_ArkUI_NodeContent_RemoveNode(oldContent, oldParent->container);
+                if (err != ARKUI_ERROR_CODE_NO_ERROR) {
+                    OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
+                        "adoptCefView: RemoveNode old failed err=%{public}d (continuing)", err);
+                }
+                destroyNode(oldParent);
+                OH_ArkUI_NodeContent_SetUserData(oldContent, nullptr);
+                {
+                    std::lock_guard<std::mutex> lock(g_cefParentNodesMutex);
+                    g_cefParentNodes[browserId] = newParent;
+                }
+                OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+                    "adoptCefView: success browserId=%{public}ld", browserId);
+                notify(true);
+            } else if (rc == -3) {
+                // -3 = outcome unknown: the migration task may still arrive
+                // late on the CEF UI thread and succeed, re-parenting the
+                // browser under newParent->container. Only UNMOUNT the new
+                // parent Stack (RemoveNode) — the Stack node itself is
+                // intentionally leaked (destroyNode could yank a subtree the
+                // late task is building into; the leak is bounded and safer
+                // than a use-after-free).
+                OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+                    "adoptCefView: reparent rc=-3 (outcome unknown), "
+                    "browserId=%{public}ld, newParent intentionally leaked",
+                    browserId);
+                OH_ArkUI_NodeContent_RemoveNode(newContent, newParent->container);
+                OH_ArkUI_NodeContent_SetUserData(newContent, nullptr);
+                notify(false);
+            } else {
+                // Failure (definitive): dispose the fresh node, keep the
+                // registry untouched, and clear the user data so a later
+                // destroyCefView on the same NodeContent cannot resurrect
+                // the freed pointer.
+                OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+                    "adoptCefView: reparent failed rc=%{public}d browserId=%{public}ld",
+                    rc, browserId);
+                OH_ArkUI_NodeContent_RemoveNode(newContent, newParent->container);
+                destroyNode(newParent);
+                OH_ArkUI_NodeContent_SetUserData(newContent, nullptr);
+                notify(false);
+            }
+        });
+    }).detach();
+    return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// OSR adopt callback re-binding (free function + payload struct).
+//
+// The CEF binary distribution's vendored base::BindOnce (include/cef/include/
+// base/cef_bind.h) only supports stateless callables and plain function
+// pointers — capturing lambdas do NOT compile against it. Pack every value
+// into OsrAdoptRebindPayload and bind RebindOsrAdoptCallbacks (a free
+// function) with the payload as its single shared_ptr argument.
+// ---------------------------------------------------------------------------
+
+struct OsrAdoptRebindPayload {
+    CefRefPtr<arkui_cef::ArkUICefBrowser> browser;
+    CefRefPtr<arkui_cef::ArkUICefRenderHandler> handler;
+    arkui_cef::PaintCallback paintCallback;
+    arkui_cef::ScrollOffsetCallback scrollOffsetCb;
+    arkui_cef::VirtualKeyboardCallback virtualKeyboardCb;
+    arkui_cef::TextSelectionCallback textSelectionCb;
+    arkui_cef::ImeCursorCallback imeCursorCb;
+    arkui_cef::StartDragCallback startDragCb;
+    arkui_cef::UpdateDragCursorCallback updateDragCursorCb;
+    std::function<void(const std::string&)> titleCb;
+    std::function<void(bool)> focusTakeCb;
+    std::function<void(int)> cursorChangeCb;
+};
+
+// Runs on the CEF UI thread (posted via CefPostTask): the Set* callbacks are
+// invoked there, so the assignment must also happen there to avoid racing an
+// in-flight invocation.
+static void RebindOsrAdoptCallbacks(std::shared_ptr<OsrAdoptRebindPayload> payload) {
+    if (!payload || !payload->browser || !payload->handler) {
+        return;
+    }
+    payload->handler->SetPaintCallback(payload->paintCallback);
+    payload->handler->SetScrollOffsetCallback(payload->scrollOffsetCb);
+    payload->handler->SetVirtualKeyboardCallback(payload->virtualKeyboardCb);
+    payload->handler->SetTextSelectionCallback(payload->textSelectionCb);
+    payload->handler->SetImeCursorCallback(payload->imeCursorCb);
+    payload->handler->SetStartDragCallback(payload->startDragCb);
+    payload->handler->SetUpdateDragCursorCallback(payload->updateDragCursorCb);
+    payload->browser->SetTitleCallback(payload->titleCb);
+    payload->browser->SetFocusTakeCallback(payload->focusTakeCb);
+    payload->browser->SetCursorChangeCallback(payload->cursorChangeCb);
+}
+
+// adoptOsrCefView(browserId, onPaint, onTitleChange, onFocusTake,
+//                 onScrollOffset, onVirtualKeyboard, onTextSelection,
+//                 onCursorChange, onImeCursor, onStartDrag, onUpdateDragCursor)
+// OSR migration callback re-binding: rebinds every createOsrCefView callback
+// (except onCreated — the browser already exists) onto the new window's
+// OsrCefView instance. No browser is created or destroyed. The Set* calls
+// are posted to the CEF UI thread because that is where every callback is
+// invoked — assigning anywhere else would race an in-flight invocation.
+// Returns true when the rebind was posted.
+static napi_value NAPI_Global_adoptOsrCefView(napi_env env, napi_callback_info info) {
+    size_t argc = 11;
+    napi_value args[11] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 4) {
+        napi_throw_error(env, nullptr,
+            "Expected 4-11 arguments: browserId, onPaint, onTitleChange, onFocusTake "
+            "[, onScrollOffset, onVirtualKeyboard, onTextSelection, onCursorChange, "
+            "onImeCursor, onStartDrag, onUpdateDragCursor]");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto handler = arkui_cef::ArkUICefManager::getInstance().getRenderHandler(browserId);
+    if (!browser || !browser->IsOsr() || !handler) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+            "adoptOsrCefView: browser/render handler not found or not OSR, browserId=%{public}ld",
+            browserId);
+        napi_value result;
+        napi_get_boolean(env, false, &result);
+        return result;
+    }
+
+    // onPaint — dedicated tsfn (staging-buffer pull path), same as create.
+    auto paintTsfn = std::make_shared<OsrPaintTsfn>();
+    if (!paintTsfn->Init(env, args[1], "OsrPaintCallback")) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
+            "adoptOsrCefView: failed to init paint tsfn");
+        napi_value result;
+        napi_get_boolean(env, false, &result);
+        return result;
+    }
+    paintTsfn->SetBrowserId(browserId);
+    auto paintHolder = std::make_shared<OsrPaintCallbackHolder>(paintTsfn);
+    PaintCallback paintCallback = [paintHolder]() {
+        paintHolder->tsfn->Notify();
+    };
+
+    auto jsTitleChangeCallback = makeJsThreadSafeCallback<std::string>(env, args[2], "OsrTitleChangeCallback");
+    auto jsFocusTakeCallback = makeJsThreadSafeCallback<bool>(env, args[3], "OsrFocusTakeCallback");
+    if (!jsTitleChangeCallback || !jsFocusTakeCallback) {
+        napi_throw_error(env, nullptr, "Failed to create adopt callbacks");
+        return nullptr;
+    }
+    std::function<void(const std::string&)> titleCb =
+        [jsTitleChangeCallback](const std::string& title) { jsTitleChangeCallback->Call(title); };
+    std::function<void(bool)> focusTakeCb =
+        [jsFocusTakeCallback](bool next) { jsFocusTakeCallback->Call(next); };
+
+    // Optional callbacks — identical wrapping to createOsrCefView.
+    std::function<void(double, double)> scrollOffsetCb;
+    std::function<void(bool)> virtualKeyboardCb;
+    std::function<void(const std::string&)> textSelectionCb;
+    std::function<void(int)> cursorChangeCb;
+    std::function<void(int, int, int, int)> imeCursorCb;
+    std::function<void(const std::string&, const std::string&, const std::string&,
+                       const std::string&, const std::string&, const std::vector<uint8_t>&, int, int)> startDragCb;
+    std::function<void(int)> updateDragCursorCb;
+
+    if (argc >= 5) {
+        napi_valuetype vt;
+        napi_typeof(env, args[4], &vt);
+        if (vt == napi_function) {
+            auto jsScrollCb = makeJsThreadSafeCallback<std::string>(env, args[4], "OsrScrollOffsetCallback");
+            if (jsScrollCb) {
+                scrollOffsetCb = [jsScrollCb](double x, double y) {
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "%.2f,%.2f", x, y);
+                    jsScrollCb->Call(std::string(buf));
+                };
+            }
+        }
+    }
+    if (argc >= 6) {
+        napi_valuetype vt;
+        napi_typeof(env, args[5], &vt);
+        if (vt == napi_function) {
+            auto jsVkCb = makeJsThreadSafeCallback<bool>(env, args[5], "OsrVirtualKeyboardCallback");
+            if (jsVkCb) {
+                virtualKeyboardCb = [jsVkCb](bool show) { jsVkCb->Call(show); };
+            }
+        }
+    }
+    if (argc >= 7) {
+        napi_valuetype vt;
+        napi_typeof(env, args[6], &vt);
+        if (vt == napi_function) {
+            auto jsTextCb = makeJsThreadSafeCallback<std::string>(env, args[6], "OsrTextSelectionCallback");
+            if (jsTextCb) {
+                textSelectionCb = [jsTextCb](const std::string& text) { jsTextCb->Call(text); };
+            }
+        }
+    }
+    if (argc >= 8) {
+        napi_valuetype vt;
+        napi_typeof(env, args[7], &vt);
+        if (vt == napi_function) {
+            auto jsCursorCb = makeJsThreadSafeCallback<int32_t>(env, args[7], "OsrCursorChangeCallback");
+            if (jsCursorCb) {
+                cursorChangeCb = [jsCursorCb](int cursorType) {
+                    jsCursorCb->Call(static_cast<int32_t>(cursorType));
+                };
+            }
+        }
+    }
+    if (argc >= 9) {
+        napi_valuetype vt;
+        napi_typeof(env, args[8], &vt);
+        if (vt == napi_function) {
+            auto jsImeCursorCb = makeJsThreadSafeCallback<int32_t, int32_t, int32_t, int32_t>(
+                env, args[8], "OsrImeCursorCallback");
+            if (jsImeCursorCb) {
+                imeCursorCb = [jsImeCursorCb](int left, int top, int width, int height) {
+                    jsImeCursorCb->Call(static_cast<int32_t>(left), static_cast<int32_t>(top),
+                                        static_cast<int32_t>(width), static_cast<int32_t>(height));
+                };
+            }
+        }
+    }
+    if (argc >= 10) {
+        napi_valuetype vt;
+        napi_typeof(env, args[9], &vt);
+        if (vt == napi_function) {
+            auto startDragTsfn = std::make_shared<OsrStartDragTsfn>();
+            if (startDragTsfn->Init(env, args[9], "OsrStartDragCallback")) {
+                startDragCb = [startDragTsfn](const std::string& text, const std::string& html,
+                                              const std::string& url, const std::string& urlTitle,
+                                              const std::string& fileName, const std::vector<uint8_t>& fileData,
+                                              int x, int y) {
+                    startDragTsfn->Call(text, html, url, urlTitle, fileName, fileData, x, y);
+                };
+            }
+        }
+    }
+    if (argc >= 11) {
+        napi_valuetype vt;
+        napi_typeof(env, args[10], &vt);
+        if (vt == napi_function) {
+            auto jsUpdateDragCursorCb = makeJsThreadSafeCallback<int32_t>(
+                env, args[10], "OsrUpdateDragCursorCallback");
+            if (jsUpdateDragCursorCb) {
+                updateDragCursorCb = [jsUpdateDragCursorCb](int operation) {
+                    jsUpdateDragCursorCb->Call(static_cast<int32_t>(operation));
+                };
+            }
+        }
+    }
+
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
+        "adoptOsrCefView: rebinding callbacks, browserId=%{public}ld", browserId);
+
+    // Rebind on the CEF UI thread (callback invocation thread — no race).
+    // NOTE: the CEF binary distribution's vendored base::BindOnce (include/cef/
+    // include/base/cef_bind.h) supports only stateless callables and plain
+    // function pointers — a capturing lambda does NOT compile. Pack all values
+    // into a single payload and bind a free function taking it by shared_ptr.
+    auto payload = std::make_shared<OsrAdoptRebindPayload>();
+    payload->browser = browser;
+    payload->handler = handler;
+    payload->paintCallback = paintCallback;
+    payload->scrollOffsetCb = scrollOffsetCb;
+    payload->virtualKeyboardCb = virtualKeyboardCb;
+    payload->textSelectionCb = textSelectionCb;
+    payload->imeCursorCb = imeCursorCb;
+    payload->startDragCb = startDragCb;
+    payload->updateDragCursorCb = updateDragCursorCb;
+    payload->titleCb = titleCb;
+    payload->focusTakeCb = focusTakeCb;
+    payload->cursorChangeCb = cursorChangeCb;
+    CefPostTask(TID_UI, CefCreateClosureTask(
+        base::BindOnce(&RebindOsrAdoptCallbacks, payload)));
+
+    // Force a full repaint so the freshly attached surface (and the fallback
+    // PixelMap path) receives a complete frame immediately.
+    CefPostTask(TID_UI, CefCreateClosureTask(
+        base::BindOnce(&ArkUICefBrowser::invalidate, browser)));
+
+    napi_value result;
+    napi_get_boolean(env, true, &result);
+    return result;
 }
 
 EXTERN_C_START
@@ -2784,6 +3861,11 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"cefDragTargetDrop", nullptr, NAPI_Global_cefDragTargetDrop, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefDragSourceEndedAt", nullptr, NAPI_Global_cefDragSourceEndedAt, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefDragSourceSystemDragEnded", nullptr, NAPI_Global_cefDragSourceSystemDragEnded, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefWatchDragOut", nullptr, NAPI_Global_cefWatchDragOut, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefUpdateDragOutRect", nullptr, NAPI_Global_cefUpdateDragOutRect, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefUnwatchDragOut", nullptr, NAPI_Global_cefUnwatchDragOut, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"adoptCefView", nullptr, NAPI_Global_adoptCefView, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"adoptOsrCefView", nullptr, NAPI_Global_adoptOsrCefView, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     

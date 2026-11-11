@@ -86,6 +86,10 @@ void releaseNode(ArkUI_NodeHandle handle) {
 
 namespace arkui_cef {
 
+void PostToMainThread(std::function<void()> task) {
+    ohos::adapter::taskRunner::MainThreadTaskRunner::PostTask(std::move(task));
+}
+
 void show(ArkUI_NodeHandle handle) {
     ohos::adapter::taskRunner::MainThreadTaskRunner::PostTask([handle]() {
         setNodeVisibility(handle, true);

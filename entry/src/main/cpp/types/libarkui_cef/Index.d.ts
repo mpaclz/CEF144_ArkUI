@@ -77,3 +77,32 @@ export const cefDragTargetDragLeave: (browserId: number) => void;
 export const cefDragTargetDrop: (browserId: number, x: number, y: number) => void;
 export const cefDragSourceEndedAt: (browserId: number, x: number, y: number, op: number) => void;
 export const cefDragSourceSystemDragEnded: (browserId: number) => void;
+// 拖出检测（windowed）：对 createCefView 的父 Stack 注册 NODE_ON_MOUSE 观察。
+// winLeft/winTop 为内容区原点相对窗口左上角的偏移（= drawableRect.left/top -
+// windowRect.left/top，2in1 自由窗即标题栏高度），winW/winH 为内容区尺寸，均 px。
+// 坐标回调参数全 px。
+export const cefWatchDragOut: (browserId: number, edgePx: number, minDragPx: number,
+  winLeft: number, winTop: number, winW: number, winH: number, viewW: number, viewH: number,
+  onDragOut: (browserId: number, pressLocalX: number, pressLocalY: number,
+    pressScreenX: number, pressScreenY: number, curScreenX: number, curScreenY: number) => void) => boolean;
+export const cefUpdateDragOutRect: (browserId: number, winLeft: number, winTop: number,
+  winW: number, winH: number, viewW: number, viewH: number) => void;
+export const cefUnwatchDragOut: (browserId: number) => void;
+// windowed 迁移：把 browser 宿主窗口迁到 newNodeContent 下的新父 Stack，成功后
+// 移除并销毁 oldNodeContent 中的旧父 Stack。同步阻塞（≤3s 等待 CEF UI 线程）。
+export const adoptCefView: (browserId: number, oldNodeContent: NodeContent, newNodeContent: NodeContent,
+  width: number, height: number, onAdopted: (ok: boolean) => void) => void;
+// OSR 迁移：把 createOsrCefView 的各回调（无 url/onCreated）重绑到新窗口视图，
+// 不创建/销毁 browser。Set* 在 CEF UI 线程执行，避免与回调调用竞争。
+export const adoptOsrCefView: (browserId: number,
+  onPaint: (regionData: ArrayBuffer | undefined, x: number, y: number, w: number, h: number,
+    fullFrame: boolean, viewW: number, viewH: number) => void,
+  onTitleChange: (title: string) => void,
+  onFocusTake: (next: boolean) => void,
+  onScrollOffset?: (offset: string) => void,
+  onVirtualKeyboard?: (show: boolean) => void,
+  onTextSelection?: (selectedText: string) => void,
+  onCursorChange?: (cursorType: number) => void,
+  onImeCursor?: (left: number, top: number, width: number, height: number) => void,
+  onStartDrag?: (text: string, html: string, url: string, urlTitle: string, fileName: string, fileData: ArrayBuffer, x: number, y: number) => void,
+  onUpdateDragCursor?: (operation: number) => void) => boolean;

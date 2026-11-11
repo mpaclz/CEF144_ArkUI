@@ -2,6 +2,7 @@
 #include "arkui_cef/ArkUICefClient.h"
 #include "arkui_cef/ArkUICefRenderHandler.h"
 #include "arkui_cef/NodeHandle.h"
+#include "arkui_cef/CefOhosReparentApi.h"
 
 #include <hilog/log.h>
 #include "include/cef_drag_data.h"
@@ -186,13 +187,17 @@ void ArkUICefBrowser::setFrameRate(int frameRate) {
 }
 
 void ArkUICefBrowser::show() {
-    Node* node = getWindowHandle();
+    // 优先用缓存句柄：reparent 迁移后实时 getWindowHandle() 需要 CEF UI
+    // 线程，且迁移瞬间可能返回 CEF 侧已换/已 free 的旧句柄（悬垂）；缓存
+    // 由 onBrowserCreated / reparent 成功后维护，仅缓存缺失才兜底查询。
+    Node* node = hostWindowHandle_ != nullptr ? hostWindowHandle_ : getWindowHandle();
     if (node)
         arkui_cef::show(node->container);
 }
 
 void ArkUICefBrowser::hide() {
-    Node* node = getWindowHandle();
+    // 同 show()：优先缓存句柄，防迁移后实时查询拿到已 free 的旧句柄。
+    Node* node = hostWindowHandle_ != nullptr ? hostWindowHandle_ : getWindowHandle();
     if (node)
         arkui_cef::hide(node->container);
 }
@@ -465,11 +470,55 @@ ArkUICefBrowser::Node* ArkUICefBrowser::getWindowHandle() const {
     return reinterpret_cast<Node*>(browser_->GetHost()->GetWindowHandle());
 }
 
+int ArkUICefBrowser::reparent(Node* newParent, int width, int height) {
+    if (!browser_ || !browserCreated_ || browserClosing_) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+            "reparent: browser not ready, id=%{public}ld", id_);
+        return -2;
+    }
+    if (!newParent || width <= 0 || height <= 0) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+            "reparent: invalid args, id=%{public}ld, size=%{public}dx%{public}d",
+            id_, width, height);
+        return -1;
+    }
+    // 优先用 onBrowserCreated 缓存的宿主句柄（跨线程读取安全）；
+    // 兜底实时查询（仅在缓存缺失时）。
+    Node* host = hostWindowHandle_ != nullptr ? hostWindowHandle_ : getWindowHandle();
+    if (host == nullptr) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+            "reparent: no host window handle, id=%{public}ld", id_);
+        return -1;
+    }
+    // 出参：rc==0 时 CEF 侧写入新宿主句柄（旧句柄在 CEF 侧已销毁）。
+    void* newHandle = nullptr;
+    int rc = cef_ohos_reparent_browser_host(reinterpret_cast<void*>(host),
+                                            reinterpret_cast<void*>(newParent),
+                                            width, height, &newHandle);
+    OH_LOG_Print(LOG_APP, rc == 0 ? LOG_INFO : LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "reparent: id=%{public}ld rc=%{public}d size=%{public}dx%{public}d",
+        id_, rc, width, height);
+    if (rc == 0) {
+        // 迁移成功：把缓存刷新为新宿主句柄（旧宿主节点已由 CEF 侧销毁，
+        // 实时 GetWindowHandle() 需要 CEF UI 线程且可能拿到换/释放中的旧
+        // 值；后续 show/hide/reparent 直接用这份缓存）。
+        if (newHandle != nullptr) {
+            hostWindowHandle_ = reinterpret_cast<Node*>(newHandle);
+        } else {
+            // 理论不可达（CEF 侧成功必写出参）；兜底置空走实时查询。
+            hostWindowHandle_ = nullptr;
+        }
+    }
+    // rc != 0（含 -3 结果未知）：保持缓存不动——未观测到句柄被换出。
+    return rc;
+}
+
 void ArkUICefBrowser::onBrowserCreated(CefRefPtr<CefBrowser> browser) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
         "onBrowserCreated: id=%{public}ld, identifier=%{public}d", id_, browser->GetIdentifier());
     browser_ = browser;
     browserCreated_ = true;
+    hostWindowHandle_ = reinterpret_cast<Node*>(browser->GetHost()->GetWindowHandle());
     if (createCallback_) {
         createCallback_(id_);
     }

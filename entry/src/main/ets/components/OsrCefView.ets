@@ -2,10 +2,11 @@ import arkui_cef from 'libarkui_cef.so';
 import { image } from '@kit.ImageKit';
 import { hilog } from "@kit.PerformanceAnalysisKit";
 import { pointer } from '@kit.InputKit';
-import { window, dragController } from "@kit.ArkUI";
+import { window, dragController, NodeContent } from "@kit.ArkUI";
 import { common } from '@kit.AbilityKit';
 import { unifiedDataChannel, uniformTypeDescriptor } from '@kit.ArkData';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
+import { getDragOutSession, DragOutInfo, DragOutSourceRegistration } from '../common/DragOutSession';
 
 const DOMAIN = 0xFF01;
 const MODULE = 'OsrCefView'
@@ -222,6 +223,12 @@ export struct OsrCefView {
   @State private dragPreviewText: string = '';
 
   @Prop viewUrl: string = '';
+  // 迁移模式（>0 时）：复用既有 OSR browser（拖出成新主窗后的新窗视图），
+  // aboutToAppear 跳过 createOsrCefView，改调 adoptOsrCefView 重绑回调。
+  @Prop adoptBrowserId: number = -1;
+  // browser 已被拖出（拉到新窗口）的占位态：条件渲染移除 XComponent，
+  // destroy() 跳过 destroyOsrCefView（browser 归新窗所有）。
+  @State private releasedBrowser: boolean = false;
   // Maximum OSR frame rate (fps). The render pipeline now runs fully
   // synchronous (dirty-region writePixelsSync, no per-frame createPixelMap),
   // so the historical 10fps cap is no longer required to keep the JS thread
@@ -244,6 +251,23 @@ export struct OsrCefView {
   // TabContent's component tree is attached for the first time.
   @Prop @Watch('onActiveTabChanged') activeTabIndex: number = -1;
 
+  // ==================== 拖出（tear-off）支持 ====================
+  // 拖出检测状态（ArkTS 侧实现，检测嵌在 handleMouseEvent 的 Move 分支，
+  // 与 windowed 的 napi NODE_ON_MOUSE 检测互不影响）
+  // 公开字段：BrowserTabsPage 以构造参数赋值（与 CefView.onCreatedCallback
+  // 同款模式）；也可创建后调用 enableDragOut。
+  onDragOutCallback: ((info: DragOutInfo) => void) | undefined = undefined;
+  // session 源登记令牌（0=未登记）
+  private sessionSourceKey: number = 0;
+  // 本次按压会话去重（Press 置 false，触发后置 true，Release 复位）
+  private dragOutSessionTriggered: boolean = false;
+  private dragOutPressX: number = 0;      // vp，相对渲染区
+  private dragOutPressY: number = 0;
+  private dragOutPressScreenX: number = 0; // px，屏幕系
+  private dragOutPressScreenY: number = 0;
+  private static readonly DRAG_OUT_MIN_DRAG_VP: number = 10;
+  private static readonly DRAG_OUT_EDGE_PX: number = 24;
+
   private onActiveTabChanged(propName: string): void {
     let active = this.activeTabIndex === this.myTabIndex;
     if (active) {
@@ -263,6 +287,27 @@ export struct OsrCefView {
       (surfaceId: string) => { this.onXcSurfaceCreated(surfaceId); },
       (surfaceId: string, w: number, h: number) => { this.onXcSurfaceChanged(surfaceId, w, h); },
       (surfaceId: string) => { this.onXcSurfaceDestroyed(surfaceId); });
+    if (this.adoptBrowserId > 0) {
+      // 迁移模式：复用既有 browser，重绑回调到本实例（新窗口视图），
+      // surface 生命周期走原路径（onXcSurfaceCreated → attachSurfaceIfPossible）。
+      // 注意：不在此处登记 session 源（仍由源视图持有该 browserId 的登记，
+      // 保证 adopt 失败/超时时 abort 能恢复源视图）。
+      this.browserId = this.adoptBrowserId;
+      this.cefCreating = false;
+      this.cachedDsf = this.getUIContext().vp2px(1);
+      this.adoptCallbacksToExistingBrowser();
+      this.registerKeyFilter();
+      // 迁回前置钩子：关闭本窗时由会话先解除本实例的 surface（必须先于
+      // 源视图重挂——detachOsrSurface 无条件删除 map 项，顺序颠倒会误删
+      // 源视图随后的新绑定）。
+      getDragOutSession().setTearOffHooks({
+        releaseBrowser: () => { this.releaseBrowser(); }
+      });
+      if (this.activeTabIndex === this.myTabIndex) {
+        this.setTabActive(true);
+      }
+      return;
+    }
     if (this.browserId <= 0) {
       // Use physical pixels for CEF buffer size (OnPaint outputs physical pixels).
       // DSF is set to the actual device scale factor so CEF's GetViewRect returns
@@ -348,7 +393,18 @@ export struct OsrCefView {
 
       // Render area — all events are captured and forwarded to CEF
       Column() {
-        if (this.useSurfaceMode) {
+        if (this.releasedBrowser) {
+          // 拖出占位：browser 已迁往新窗口（XComponent 卸载触发
+          // onXcSurfaceDestroyed → 现有 detach 链路）
+          Column() {
+            Text('网页已拖出至新窗口')
+              .fontSize(14)
+              .fontColor(Color.White)
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+        } else if (this.useSurfaceMode) {
           // Direct-display mode: the NAPI layer writes CEF dirty regions
           // straight into the XComponent's window buffer queue (damage-
           // aware, vsync-aligned). No PixelMap, no per-frame @State churn.
@@ -783,8 +839,12 @@ export struct OsrCefView {
 
   // Pause/resume the CEF render pipeline (WasHidden). Called from visibility
   // transitions only — the osrHidden guard makes repeated events idempotent.
+  // [tear-off fix] 当 browser 已被交还（releasedBrowser=true，含迁回源视图
+  // 或拖出后交予新窗实例）时本实例不得再暂停其渲染：关闭新窗瞬间 TearOff
+  // 实例随窗口转后台触发的 onVisibleAreaChange(false) 会把刚迁回源视图
+  // 的浏览器 WasHidden(true)——表现为恢复后黑屏、必须切 TAB 才显示。
   private setOsrHidden(hidden: boolean): void {
-    if (!this.isCreated() || this.osrHidden === hidden) {
+    if (!this.isCreated() || this.osrHidden === hidden || this.releasedBrowser) {
       return;
     }
     this.osrHidden = hidden;
@@ -826,6 +886,11 @@ export struct OsrCefView {
     if (this.surfaceAttached && this.isCreated()) {
       arkui_cef.updateOsrSurfaceGeometry(this.browserId, w, h);
     }
+    // [tear-off fix] attach 可能因"surface 尺寸未知"被暂缓——尺寸现已
+    // 到达，立即重试（否则要等到下一次 surface 事件才 attach，期间黑屏）。
+    if (!this.surfaceAttached) {
+      this.attachSurfaceIfPossible();
+    }
   }
 
   private onXcSurfaceDestroyed(surfaceId: string): void {
@@ -850,8 +915,18 @@ export struct OsrCefView {
     if (!this.isCreated() || this.surfaceAttached || surfaceId === undefined) {
       return;
     }
-    let w = this.pendingSurfaceW > 0 ? this.pendingSurfaceW : this.viewWidth;
-    let h = this.pendingSurfaceH > 0 ? this.pendingSurfaceH : this.viewHeight;
+    let w = this.pendingSurfaceW;
+    let h = this.pendingSurfaceH;
+    // [tear-off fix] 严格要求 XComponent 上报的真实 surface 尺寸
+    // （onSurfaceChanged 提供），不用 viewWidth 兜底（其默认值 800x600 会
+    // 注册错误几何，引发一串尺寸不匹配丢帧——见 TearOff 日志
+    // "attachOsrSurface: 800x600" 后的 mismatch 自愈）。onSurfaceChanged
+    // 必然跟随 onSurfaceCreated 到达，其末尾会重试本方法。
+    if (w <= 0 || h <= 0) {
+      hilog.info(DOMAIN, MODULE,
+        "attachSurfaceIfPossible: defer (surface size unknown), browserId=%{public}d", this.browserId);
+      return;
+    }
     // Pass the DSF so the native layer derives the size tolerance from it
     // (max frame/surface drift = physical mod dsf, bounded by ceil(dsf)).
     let ok = arkui_cef.attachOsrSurface(this.browserId, surfaceId, w, h, this.cachedDsf);
@@ -867,15 +942,47 @@ export struct OsrCefView {
       if (this.pendingSurfaceW > 0) {
         arkui_cef.updateOsrSurfaceGeometry(this.browserId, this.pendingSurfaceW, this.pendingSurfaceH);
       }
+      // [tear-off fix] 任何模式 attach 成功后都强制全量重绘：无 surface
+      // 期间 paint 事件的帧元数据已被消费丢弃（napi 侧丢弃不可观测帧），
+      // 静态内容的 surface 首帧必须由 invalidate 重新产生——否则黑屏
+      // 直到用户点击/滚动/切 TAB 触发重绘（实测三种现象的根因）。
+      arkui_cef.cefInvalidate(this.browserId);
+      if (this.adoptBrowserId > 0) {
+        // 迁移模式：surface 接管成功即 adopt 完成，通知会话开始跟随。
+        getDragOutSession().onAdoptResult(true);
+      }
     } else {
       hilog.error(DOMAIN, MODULE, "attachOsrSurface failed — falling back to PixelMap display");
       this.useSurfaceMode = false;
       this.pendingSurfaceId = undefined;
+      if (this.adoptBrowserId > 0) {
+        // 迁移模式：回退显示路径同样视作 adopt 完成（回调已重绑到本实例，
+        // 帧数据走 PixelMap 重建链路）。
+        getDragOutSession().onAdoptResult(true);
+      }
     }
   }
 
   destroy(): void {
     this.detachInputMethod();
+    if (this.releasedBrowser) {
+      // browser 已迁往新窗口：只做本地清理，不销毁 browser，也不解除
+      // pixelmap 原生登记（新视图 rebuildPixelMap 时会整体替换登记；
+      // 此处释放 ArkTS PixelMap 对象会让原生句柄悬垂）——占位对象留待
+      // 进程回收（仅回退显示路径会走到，surface 主路径无 PixelMap）。
+      hilog.info(DOMAIN, MODULE,
+        "Destroy released OSR view (browser kept alive), id: %{public}d", this.browserId);
+      if (this.surfaceAttached) {
+        this.surfaceAttached = false;
+        this.surfaceReady = false;
+        arkui_cef.detachOsrSurface(this.browserId);
+      }
+      this.pendingSurfaceId = undefined;
+      getDragOutSession().unregisterSource(this.browserId, this.sessionSourceKey);
+      this.sessionSourceKey = 0;
+      this.browserId = -1;
+      return;
+    }
     if (this.surfaceAttached) {
       // Release the window handle before browser teardown (the NAPI layer
       // also cleans it up defensively in destroyOsrCefView).
@@ -887,11 +994,24 @@ export struct OsrCefView {
     }
     this.pendingSurfaceId = undefined;
     if (this.isCreated()) {
+      if (this.adoptBrowserId > 0 && getDragOutSession().shouldKeepBrowserAlive(this.browserId)) {
+        // 迁移模式且 browser 已回源视图存活（abort 恢复 / 关闭迁回成功）：
+        // 保活 browser，仅做本视图清理。surface 已 detach；PixelMap 对象不
+        // 释放（原生登记仍指向它们，与上方 releasedBrowser 分支同理，留待
+        // 源视图/下次 attach 整体替换）。
+        hilog.info(DOMAIN, MODULE,
+          "Destroy adopt OSR view without browser teardown (browser returned to source), id: %{public}d",
+          this.browserId);
+        this.browserId = -1;
+        return;
+      }
       hilog.info(DOMAIN, MODULE, "Destroying OSR browser, id: %{public}d", this.browserId);
       // Release native pixelmap handles BEFORE the ArkTS PixelMaps below —
       // the handles must never outlive the memory they point to.
       arkui_cef.unregisterOsrPixelmaps(this.browserId);
       arkui_cef.destroyOsrCefView(this.browserId);
+      getDragOutSession().unregisterSource(this.browserId, this.sessionSourceKey);
+      this.sessionSourceKey = 0;
       this.browserId = -1;
     }
     // this.pixelMap aliases pmA/pmB — release the owners only.
@@ -1021,6 +1141,10 @@ export struct OsrCefView {
     // tab (e.g. the user switched here while CEF was still initializing).
     if (this.visibleNow || this.activeTabIndex === this.myTabIndex) {
       this.setTabActive(true);
+    }
+    // 构造参数已传 onDragOutCallback（BrowserTabsPage 场景）时补登记会话源
+    if (this.onDragOutCallback !== undefined) {
+      this.registerSessionSource();
     }
   }
 
@@ -1773,6 +1897,26 @@ export struct OsrCefView {
     return this.mouseButtonPressed ? 0x10 : 0;
   }
 
+  /**
+   * 系统报告的按键状态里是否按住左键（P2-3）：与 heldButtonMods 同源的
+   * pressedButtons 判定（含判空回退）。Move 分支的拖出检测用它校验左键
+   * 仍按住，防止"Release 在窗外丢失"后残留的本地 mouseButtonPressed 触发
+   * 误拖出。
+   */
+  private leftButtonHeld(event: MouseEvent): boolean {
+    let pb = event.pressedButtons;
+    if (pb !== undefined) {
+      for (let i = 0; i < pb.length; i++) {
+        if (pb[i] === MouseButton.Left) {
+          return true;
+        }
+      }
+      return false;
+    }
+    // Fallback（pressedButtons 不可用）：按本地跟踪。
+    return this.mouseButtonPressed;
+  }
+
   handleMouseEvent(event: MouseEvent): void {
     if (!this.isCreated()) {
       return;
@@ -1826,6 +1970,14 @@ export struct OsrCefView {
           this.lastClickY = y;
           clickCount = this.clickCount;
           this.mouseButtonPressed = true;
+
+          // 拖出检测会话起点（左键按下）
+          this.dragOutSessionTriggered = false;
+          this.dragOutPressX = event.x;
+          this.dragOutPressY = event.y;
+          let dsf = this.getUIContext().vp2px(1);
+          this.dragOutPressScreenX = Math.round(event.displayX * dsf);
+          this.dragOutPressScreenY = Math.round(event.displayY * dsf);
         }
 
         // Modifiers: the pressed button's own flag + Shift/Ctrl/Alt
@@ -1841,6 +1993,7 @@ export struct OsrCefView {
           // Only LEFT clears the flag — releasing RIGHT/MIDDLE while LEFT is
           // held must not break an in-progress left-drag.
           this.mouseButtonPressed = false;
+          this.dragOutSessionTriggered = false;
         }
         break;
       case MouseAction.Move: {
@@ -1851,6 +2004,19 @@ export struct OsrCefView {
         arkui_cef.cefSendMouseMove(this.browserId, x, y, false, moveMods);
         this.lastMouseX = x;
         this.lastMouseY = y;
+        // 窗口内拖出检测（左键按住 + 位移超阈值 + 进入内容区边缘带）。
+        // 左键校验用系统按键状态（leftButtonHeld）：本地 mouseButtonPressed
+        // 为 true 但系统报告无左键 = Release 在窗外丢失（P2-3），自愈复位
+        // 本地状态并跳过本次检测。
+        if (this.onDragOutCallback !== undefined && !this.dragOutSessionTriggered &&
+            this.mouseButtonPressed && !this.releasedBrowser) {
+          if (!this.leftButtonHeld(event)) {
+            this.mouseButtonPressed = false;
+            this.dragOutSessionTriggered = false;
+            return;
+          }
+          this.checkDragOut(event);
+        }
         break;
       }
       default:
@@ -1858,8 +2024,200 @@ export struct OsrCefView {
     }
   }
 
-  // ==================== Axis Event (鼠标滚轮 / 触摸板双指滚动) ====================
+  // ==================== 拖出（tear-off）支持 ====================
 
+  /**
+   * 启用拖出检测。与 CefView 的 enableDragOut(cb) 对应；由于 OSR 检测
+   * 内嵌在 handleMouseEvent（无需 napi 侧注册），本方法只需记录回调并
+   * 登记 session 源信息，可在创建前后任意时机调用（BrowserTabsPage 直接
+   * 以构造参数 onDragOutCallback 赋值，效果等同）。
+   */
+  enableDragOut(cb: (info: DragOutInfo) => void): void {
+    this.onDragOutCallback = cb;
+    this.registerSessionSource();
+  }
+
+  /** 向会话登记本视图为源视图（mode='osr'，无 NodeContent）。 */
+  private registerSessionSource(): void {
+    if (!this.isCreated()) {
+      return;
+    }
+    let ctx = this.getUIContext().getHostContext();
+    if (ctx === undefined) {
+      hilog.error(DOMAIN, MODULE, "registerSessionSource: no host context");
+      return;
+    }
+    let registration: DragOutSourceRegistration = {
+      browserId: this.browserId,
+      mode: 'osr',
+      context: ctx as common.UIAbilityContext,
+      callbacks: {
+        onRestore: () => { this.restoreReleasedBrowser(); },
+        onSettled: () => {
+          hilog.info(DOMAIN, MODULE, "drag-out settled, browserId=%{public}d", this.browserId);
+        },
+        onTakeBack: (tearOffContent: NodeContent | undefined, done: (ok: boolean) => void) => {
+          // OSR 迁回不使用 NodeContent（surface 已由会话先解除）
+          this.takeBackFromTearOff(done);
+        }
+      }
+    };
+    this.sessionSourceKey = getDragOutSession().registerSource(registration);
+  }
+
+  /** 迁移模式：把既有 browser 的回调重绑到本实例（照抄 createOsrCefView 调用处）。 */
+  private adoptCallbacksToExistingBrowser(): void {
+    hilog.info(DOMAIN, MODULE,
+      "adoptOsrCefView: rebinding callbacks, browserId=%{public}d", this.browserId);
+    arkui_cef.adoptOsrCefView(this.browserId,
+      (regionData: ArrayBuffer | undefined, x: number, y: number, w: number, h: number,
+        fullFrame: boolean, viewW: number, viewH: number) => {
+        this.onOsrPaint(regionData, x, y, w, h, fullFrame, viewW, viewH);
+      },
+      (title: string) => { this.onOsrTitleChanged(title); },
+      (next: boolean) => { this.onOsrFocusTake(next); },
+      (offset: string) => { this.onOsrScrollOffset(offset); },
+      (show: boolean) => { this.onOsrVirtualKeyboard(show); },
+      (text: string) => { this.onOsrTextSelection(text); },
+      (cursorType: number) => { this.onOsrCursorChange(cursorType); },
+      (left: number, top: number, w: number, h: number) => { this.onOsrImeCursor(left, top, w, h); },
+      (text: string, html: string, durl: string, urlTitle: string, fileName: string, fileData: ArrayBuffer, x: number, y: number) => {
+        this.onOsrStartDrag(text, html, durl, urlTitle, fileName, fileData, x, y);
+      },
+      (operation: number) => { this.onOsrUpdateDragCursor(operation); });
+  }
+
+  /**
+   * Move 分支的拖出检测（设计 §5.2 T1'）：
+   * 左键按住 + 位移 > 10vp + 光标进入窗口内容区边缘 4px 带（仍在窗内）。
+   * windowX/displayX 为 vp，乘 vp2px(1) 换算为 px 后与 drawableRect 比较
+   * （含标题栏偏移换算为内容区坐标）。
+   */
+  private checkDragOut(event: MouseEvent): void {
+    let dx = event.x - this.dragOutPressX;
+    let dy = event.y - this.dragOutPressY;
+    if (dx * dx + dy * dy < OsrCefView.DRAG_OUT_MIN_DRAG_VP * OsrCefView.DRAG_OUT_MIN_DRAG_VP) {
+      return;
+    }
+    let win = this.cachedWin;
+    if (win === null) {
+      return;
+    }
+    let dsf = this.getUIContext().vp2px(1);
+    let props = win.getWindowProperties();
+    let drawable = props.drawableRect;
+    let winRect = props.windowRect;
+    // 内容区原点（窗口坐标）。实测 drawableRect.left/top 恒为 (0,0)（窗口
+    // 相对）而 windowRect.left/top 为屏幕绝对坐标，差值可能为负——钳到
+    // >=0 防止边缘触发带错位（与 CefView.refreshDragOutRectFromWindow 同因）。
+    let contentOffX = Math.max(0, drawable.left - winRect.left);
+    let contentOffY = Math.max(0, drawable.top - winRect.top);
+    let contentX = event.windowX * dsf - contentOffX;
+    let contentY = event.windowY * dsf - contentOffY;
+    // 触发带：距内容区任一边界 edgePx 以内（含越界——快速甩出时不丢触发）。
+    let edge = OsrCefView.DRAG_OUT_EDGE_PX;
+    let nearEdge = contentX <= edge || contentY <= edge ||
+      contentX >= drawable.width - edge || contentY >= drawable.height - edge;
+    if (!nearEdge) {
+      return;
+    }
+    this.dragOutSessionTriggered = true;
+    hilog.info(DOMAIN, MODULE,
+      "onDragOut: browserId=%{public}d, cur=(%{public}d,%{public}d)",
+      this.browserId, Math.round(event.displayX * dsf), Math.round(event.displayY * dsf));
+    // 终止网页内拖拽态 + 释放 browser（表面/IME/焦点，browser 保留）
+    arkui_cef.cefSendCaptureLost(this.browserId);
+    this.releaseBrowser();
+    let info: DragOutInfo = {
+      browserId: this.browserId,
+      mode: 'osr',
+      pressLocalX: Math.round(this.dragOutPressX * dsf),
+      pressLocalY: Math.round(this.dragOutPressY * dsf),
+      pressScreenX: this.dragOutPressScreenX,
+      pressScreenY: this.dragOutPressScreenY,
+      curScreenX: Math.round(event.displayX * dsf),
+      curScreenY: Math.round(event.displayY * dsf),
+      viewW: this.viewWidth > 0 ? this.viewWidth : 0,
+      viewH: this.viewHeight > 0 ? this.viewHeight : 0,
+      sourceWindowId: props.id
+    };
+    let cb = this.onDragOutCallback;
+    if (cb) {
+      cb(info);
+    }
+  }
+
+  /**
+   * 释放 browser：解除 IME 会话/键盘路由/表面挂接并切占位渲染。
+   * browser 与渲染管线（handler/staging buffer）均存活 —— 新窗视图
+   * attachOsrSurface 后帧数据直接续接。
+   */
+  private releaseBrowser(): void {
+    if (this.releasedBrowser) {
+      return;
+    }
+    this.releasedBrowser = true;
+    hilog.info(DOMAIN, MODULE, "releaseBrowser: browserId=%{public}d", this.browserId);
+    this.setRenderAreaActive(false);
+    this.detachInputMethod();
+    if (this.surfaceAttached) {
+      // 先显式解除（幂等），随后 releasedBrowser 条件渲染卸载 XComponent
+      // 触发的 onXcSurfaceDestroyed 会因 surfaceAttached 已为 false 跳过重复解除。
+      this.surfaceAttached = false;
+      this.surfaceReady = false;
+      arkui_cef.detachOsrSurface(this.browserId);
+    }
+    this.pendingSurfaceId = undefined;
+  }
+
+  /** 会话 abort/关闭迁回时恢复：重新挂载 XComponent（现有链路重接表面）并恢复渲染与焦点。 */
+  private restoreReleasedBrowser(): void {
+    if (!this.releasedBrowser) {
+      return;
+    }
+    hilog.info(DOMAIN, MODULE, "restoreReleasedBrowser: browserId=%{public}d", this.browserId);
+    this.releasedBrowser = false;
+    if (this.isCreated()) {
+      // [tear-off fix] 浏览器级 WasHidden 可能仍为 true（交还前的 TearOff
+      // 实例随窗口转后台时暂停过渲染）——显式恢复，不依赖
+      // onVisibleAreaChange 的事件时序（源窗此刻可能仍在后台）。
+      arkui_cef.cefWasHidden(this.browserId, false);
+      this.osrHidden = false;
+      // 走完整激活路径（setOsrHidden(false) 幂等 + 键盘路由 + 焦点）；
+      // tabActive 已为 true 时被幂等跳过，渲染已由上面显式恢复
+      this.setTabActive(true);
+      arkui_cef.cefInvalidate(this.browserId);
+    }
+    if (this.visibleNow || this.activeTabIndex === this.myTabIndex) {
+      this.setRenderAreaActive(true);
+      if (this.isCreated()) {
+        arkui_cef.cefSendFocusEvent(this.browserId, true);
+      }
+      this.requestFocusToRenderArea();
+    }
+  }
+
+  /**
+   * 关闭新窗时迁回（会话已先解除本实例 surface）：把回调重绑回本实例
+   * （TearOff 实例即将销毁，其闭包不可继续持有），再取消 releasedBrowser
+   * 触发条件渲染重新挂载 XComponent —— 现有链路 onXcSurfaceCreated →
+   * attachOsrSurface(源 surface) → 帧续接，页面状态全保留。
+   */
+  private takeBackFromTearOff(done: (ok: boolean) => void): void {
+    if (!this.isCreated() || !this.releasedBrowser) {
+      hilog.warn(DOMAIN, MODULE,
+        "takeBackFromTearOff: invalid state, id=%{public}d, released=%{public}s",
+        this.browserId, this.releasedBrowser ? "true" : "false");
+      done(false);
+      return;
+    }
+    hilog.info(DOMAIN, MODULE, "takeBackFromTearOff: browserId=%{public}d", this.browserId);
+    this.adoptCallbacksToExistingBrowser();
+    this.restoreReleasedBrowser();
+    done(true);
+  }
+
+  // ==================== Axis Event (鼠标滚轮 / 触摸板双指滚动) ====================
   // Wheel translation: axis values are forwarded event-by-event with a
   // per-source gain — NO threshold batching (the old batching caused the
   // "two-stage scroll": sub-threshold deltas waited, then jumped). The gain

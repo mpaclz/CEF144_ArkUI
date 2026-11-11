@@ -1,6 +1,7 @@
 import { BrowserView } from '../components/BrowserView'
 import { CefView } from '../components/CefView';
 import { OsrCefView } from '../components/OsrCefView';
+import { getDragOutSession, DragOutInfo } from '../common/DragOutSession';
 
 @Entry
 @Component
@@ -46,7 +47,13 @@ struct MultiTabPage {
         )
         TabContent() {
           Column() {
-            CefView({viewUrl: 'https://developer.huawei.com/consumer/cn/develop/'})
+            CefView({viewUrl: 'https://developer.huawei.com/consumer/cn/develop/',
+              onCreatedCallback: (view: CefView) => {
+                // 拖出支持：BrowserView 标签页同款接线
+                view.enableDragOut((info: DragOutInfo) => {
+                  getDragOutSession().startDragOut(info);
+                });
+              }})
           }
         }.tabBar(
           SubTabBarStyle.of('CefView')
@@ -74,10 +81,16 @@ struct MultiTabPage {
         )
         TabContent() {
           Column() {
+            // OSR 拖出：以构造参数 onDragOutCallback 接入（OsrCefView 的检测
+            // 内嵌于 handleMouseEvent，无需创建后调用 enableDragOut；传字段与
+            // CefView 的回调风格一致）
             OsrCefView({
               viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_display_test.html',
               myTabIndex: 6,
-              activeTabIndex: this.osrActiveTabIndex
+              activeTabIndex: this.osrActiveTabIndex,
+              onDragOutCallback: (info: DragOutInfo) => {
+                getDragOutSession().startDragOut(info);
+              }
             })
           }
           .width('100%')
@@ -91,7 +104,10 @@ struct MultiTabPage {
             OsrCefView({
               viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_input_test.html',
               myTabIndex: 7,
-              activeTabIndex: this.osrActiveTabIndex
+              activeTabIndex: this.osrActiveTabIndex,
+              onDragOutCallback: (info: DragOutInfo) => {
+                getDragOutSession().startDragOut(info);
+              }
             })
           }
           .width('100%')
@@ -105,7 +121,10 @@ struct MultiTabPage {
             OsrCefView({
               viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_drag_test.html',
               myTabIndex: 8,
-              activeTabIndex: this.osrActiveTabIndex
+              activeTabIndex: this.osrActiveTabIndex,
+              onDragOutCallback: (info: DragOutInfo) => {
+                getDragOutSession().startDragOut(info);
+              }
             })
           }
           .width('100%')
