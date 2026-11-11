@@ -1,0 +1,24 @@
+entry/src/main/cpp/CMakeLists.txt
+  h_68854496d881b1 79-83,134-135
+entry/src/main/cpp/arkui_cef/ArkUICefRenderHandler.cpp
+  h_68854496d881b1 199,227-231,233-250,252-254,256,258-285
+entry/src/main/cpp/arkui_cef/ArkUICefRenderHandler.h
+  h_68854496d881b1 14,82-107
+entry/src/main/cpp/napi_init.cpp
+  h_68854496d881b1 2,4,17-22,143-429,750-755,759,761,763,767-806,860,1007,1560-1562,1664-1672,1770-1936,2758-2760
+entry/src/main/cpp/types/libarkui_cef/Index.d.ts
+  h_68854496d881b1 40-42
+entry/src/main/ets/components/OsrCefView.ets
+  h_68854496d881b1 20-51,136-151,218,220-223,307-326,426-432,599-680,683-692,797-800,809-811
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.8",
+  "base_commit_sha": "bc6b20af88efba1a37bb42d66d0a176394255a41",
+  "prompts": {},
+  "humans": {
+    "h_68854496d881b1": {
+      "author": "zhangmeiping <zhangmeiping1@huawei.com>"
+    }
+  }
+}

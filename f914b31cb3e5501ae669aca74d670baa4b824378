@@ -1,0 +1,22 @@
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.cpp
+  h_68854496d881b1 313,317-334,336
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.h
+  h_68854496d881b1 164-166,168
+entry/src/main/cpp/napi_init.cpp
+  h_68854496d881b1 503,1719,1725,1731-1732,1737,2264
+entry/src/main/cpp/types/libarkui_cef/Index.d.ts
+  h_68854496d881b1 51
+entry/src/main/ets/components/OsrCefView.ets
+  h_68854496d881b1 99-103,482-485,511-521,667-673
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.8",
+  "base_commit_sha": "f914b31cb3e5501ae669aca74d670baa4b824378",
+  "prompts": {},
+  "humans": {
+    "h_68854496d881b1": {
+      "author": "zhangmeiping <zhangmeiping1@huawei.com>"
+    }
+  }
+}
