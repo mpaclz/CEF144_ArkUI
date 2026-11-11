@@ -1,0 +1,328 @@
+ohos_tools/cdp_test3.js
+  s_fd97b9caba606f::t_147ead9bc8119a 1-2,5-122
+  s_fd97b9caba606f::t_e6a832ac503974 3-4
+ohos_tools/cdp_test_devtools.js
+  s_856c6e2d1d2fab::t_d2d973d8fa1315 5,7
+  s_856c6e2d1d2fab::t_7c9931b9111682 1-4,6,8-66
+entry/src/main/ets/pages/BrowserTabsPage.ets
+  s_fd97b9caba606f::t_4d1af91389e11b 82-96
+CONTINUE_WORK.md
+  s_fd97b9caba606f::t_4c5d5abd339cc7 1-306
+handler_logs.txt
+  s_fd97b9caba606f::t_c4cd78a2b10d57 1,9-10,12-13,15-16
+  s_fd97b9caba606f::t_ba2503c8dd7218 2-8,11,14,17-24
+entry/src/main/ets/components/OsrCefView.ets
+  s_fd97b9caba606f::t_822930ccc10905 125-132
+  s_fd97b9caba606f::t_7a2fd0e1b4f1cf 286-322
+entry/src/main/cpp/arkui_cef/ArkUICefClient.h
+  s_fd97b9caba606f::t_e8383baaf4284c 317-410
+  s_fd97b9caba606f::t_2248a8576d372b 455
+  s_fd97b9caba606f::t_ab2d165d1213ba 111-120
+  s_fd97b9caba606f::t_a2dfdc96a0f67b 64-73
+  s_fd97b9caba606f::t_7aa9ce3029d45d 74-75
+  s_fd97b9caba606f::t_08526a87b53aaa 23
+  s_fd97b9caba606f::t_70c44912aac616 6-9,11-12,14-15,17-18,20,22
+  s_fd97b9caba606f::t_9f30de8875c67f 24
+  s_fd97b9caba606f::t_59effffdcdf6d0 411-417
+final_test_logs.txt
+  s_fd97b9caba606f::t_922cc4d0288525 1,2478-2479,2481-2482,2484-2485,2489-2490,2492-2493,2498,9077,9140-9141
+  s_fd97b9caba606f::t_80df65bf096d6f 2-2477,2480,2483,2486-2488,2491,2494-2497,2499-9076,9078-9139
+ohos_tools/cdp_test.js
+  s_fd97b9caba606f::t_4ed3ef0e2cb7d5 3,6,8-16,18-19,22,32,37-41,45-63,65-79,83-86,91-93,95,97,99-106,109
+  s_fd97b9caba606f::t_0a6ed06bc82683 1-2,5,17,20-21,23-31,33-36,42-44,64,80-82,87-90,94,96,98,107-108,110-112
+  s_fd97b9caba606f::t_e4e197d288f898 4,7
+entry/src/main/cpp/arkui_cef/TestRequestContextHandler.cpp
+  s_bfd5498e80ef70::t_add5b5b046aef4 1-25
+entry/src/main/cpp/arkui_cef/TestRequestContextHandler.h
+  s_bfd5498e80ef70::t_de1ccc61c824e3 1-13
+cdp_test_logs.txt
+  s_fd97b9caba606f::t_a6cf3bd336aa93 1-5077
+entry/src/main/cpp/types/libarkui_cef/Index.d.ts
+  s_856c6e2d1d2fab::t_ee9ec3a6ef9dba 58-60
+  s_fd97b9caba606f::t_393708e098d244 49-53,55-57
+  s_fd97b9caba606f::t_51a8d1e45a42fb 54
+targeted2_logs.txt
+  s_fd97b9caba606f::t_584d62bb3958f1 1-7637
+targeted_logs.txt
+  s_fd97b9caba606f::t_84a68458dd451c 1-3063
+test2_logs.txt
+  s_fd97b9caba606f::t_c3c6cde54cd386 1-3339
+entry/src/main/cpp/arkui_cef/TestResourceHandlers.cpp
+  s_fd97b9caba606f::t_84f8635e81ba80 202-225
+  s_856c6e2d1d2fab::t_15c3edbfeb6b82 98-112,117-133,139-140,145-146,151-165,167-170,175-189,191-194
+  s_fd97b9caba606f::t_8f0322167fde3f 1-12,14-57,59-97,113-116,134-138,141-144,147-150,166,171-174,190,195-201,226
+  s_fd97b9caba606f::t_baf653d695d4df 13
+  s_fd97b9caba606f::t_a280297c971c42 58
+napi_test_logs.txt
+  s_fd97b9caba606f::t_99603334ec898b 1-11987
+build_output.txt
+  s_fd97b9caba606f::t_8dffbcce1269e4 21,24,34,38-936,938-946
+  s_fd97b9caba606f::t_b2fd8b4adaa493 1-20,22-23,25-33,35-37,937
+layout2.json
+  s_fd97b9caba606f::t_da0cf015e1bd2b 1
+ohos_tools/cdp_targeted.js
+  s_fd97b9caba606f::t_e59cb20f67456f 1-98
+entry/src/main/cpp/arkui_cef/TestAccessibilityHandler.h
+  s_bfd5498e80ef70::t_ba03080241f6fb 1-12
+ohos_tools/cdp_test_skip.js
+  s_856c6e2d1d2fab::t_80f8572ded663d 1-91
+entry/src/main/cpp/arkui_cef/TestAccessibilityHandler.cpp
+  s_bfd5498e80ef70::t_31952848c22d5f 1-18
+entry/src/main/cpp/CMakeLists.txt
+  s_fd97b9caba606f::t_14100b47ec8d24 75
+  s_fd97b9caba606f::t_45d7ac9ef6b913 76-79
+ui_test_logs.txt
+  s_fd97b9caba606f::t_b3ee59b1285901 1-9306
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.cpp
+  s_856c6e2d1d2fab::t_1ad9222d1f3e83 82
+entry/src/main/cpp/napi_init.cpp
+  s_fd97b9caba606f::t_5f0eb1b5e91781 1535-1538,1556,1558-1575,1577-1578
+  s_856c6e2d1d2fab::t_a414849d1df38e 1630-1682
+  s_fd97b9caba606f::t_0678b90f7bfb0f 1727
+  s_856c6e2d1d2fab::t_9e962e62d182fe 1731-1733
+  s_fd97b9caba606f::t_bd08c7929f2ca8 19-20,22
+  s_fd97b9caba606f::t_8a1dcb19a266ef 1466-1534,1539-1555,1557,1579-1608,1610-1629
+  s_fd97b9caba606f::t_a6371fd9cda2cc 1576
+  s_fd97b9caba606f::t_6c35e09c4319da 1722-1726,1728-1730
+  s_fd97b9caba606f::t_a90ad966bf5443 1609
+layout_t.json
+  s_fd97b9caba606f::t_086e9957b6b8a8 1
+entry/src/main/cpp/CefProcessEntry.cpp
+  s_fd97b9caba606f::t_9f3e3dc14a6510 25
+  s_fd97b9caba606f::t_073a441e00a5f4 26
+ohos_tools/cdp_test2.js
+  s_fd97b9caba606f::t_20b4ba889fca13 1-138
+build_output2.txt
+  s_fd97b9caba606f::t_4128ea661bf3f6 1-898
+layout_osr.json
+  s_fd97b9caba606f::t_466c7e37834494 1
+entry/src/main/ets/components/BrowserView.ets
+  s_fd97b9caba606f::t_a779d87b5e6637 2
+  s_fd97b9caba606f::t_d704ef42c10d15 117-131,133-137
+  s_fd97b9caba606f::t_2555afd38648de 132
+entry/src/main/cpp/arkui_cef/TestMenuModelDelegate.h
+  s_fd97b9caba606f::t_beac92fc474bac 16
+  s_bfd5498e80ef70::t_fb2a150e565130 1-15,17-20
+test_logs.txt
+  s_fd97b9caba606f::t_8967ee0ee37dca 1-731
+ohos_tools/cdp_test4.js
+  s_fd97b9caba606f::t_f29da1f5c2d595 1-79
+entry/src/main/cpp/arkui_cef/ArkUICefManager.cpp
+  s_856c6e2d1d2fab::t_63f3c913eb66cc 150-180
+  s_856c6e2d1d2fab::t_82edcbcb43efa1 14,16
+filtered_logs.txt
+  s_fd97b9caba606f::t_de900fb2b1aae4 1-312
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.h
+  s_856c6e2d1d2fab::t_66877367a696fa 7
+  s_fd97b9caba606f::t_4a76de372842ed 189-190
+  s_856c6e2d1d2fab::t_9d20afcd180fd0 274
+  s_856c6e2d1d2fab::t_1c2d37cbe58227 230-232
+entry/src/main/resources/resfile/handler_test.html
+  s_856c6e2d1d2fab::t_47753876d68a54 108,111
+  s_fd97b9caba606f::t_a85878c01db083 1-107,109-110,112-226,232-294
+  s_856c6e2d1d2fab::t_caa53a4d76d156 227-231
+CEF144_Handler_Test_Report.html
+  s_fd97b9caba606f::t_9fa8aa8e44dc94 1-576
+entry/src/main/cpp/arkui_cef/ArkUICefRenderHandler.h
+  s_fd97b9caba606f::t_2e61c8fd91a0b7 46-52
+ohos_tools/package.json
+  s_fd97b9caba606f::t_c316aaabb2a199 1-5
+entry/src/main/cpp/arkui_cef/ArkUICefClient.cpp
+  s_fd97b9caba606f::t_fedf69fad5dbb6 237-240,243-246,249-256
+  s_fd97b9caba606f::t_4b29200ad621bf 389-390
+  s_856c6e2d1d2fab::t_05af17d70061af 437-439
+  s_fd97b9caba606f::t_fe3aa9f92c6a7a 229-232
+  s_856c6e2d1d2fab::t_77878dda053e4b 417-419,425-428,434-436,440-441
+  s_fd97b9caba606f::t_4c65011970f781 5
+  s_fd97b9caba606f::t_9f8e5e74f43436 756-785
+  s_fd97b9caba606f::t_1b9bed9d8ffc7b 10
+  s_fd97b9caba606f::t_b37df7736617c6 492
+  s_fd97b9caba606f::t_7e2a653b0669bf 44-45
+  s_fd97b9caba606f::t_74fd423aea37a2 276-278,288-388,391-416,420-424,429-433,442-491,493-615,618-755,786
+  s_fd97b9caba606f::t_4c2bbb71f5ed93 616-617
+  s_fd97b9caba606f::t_afd66d86726304 166-168,170-172
+  s_fd97b9caba606f::t_c887a53a45bb89 61-67
+  s_fd97b9caba606f::t_038918f35241cf 157-163
+CEF144_Handler_Test_Report_v2.html
+  s_5e21c7637d76e8::t_bbc5cd48c2b1e4 1-1110
+CEF144_Handler_Final_Report.html
+  s_856c6e2d1d2fab::t_bdc0d913efa667 454
+  s_856c6e2d1d2fab::t_34f5bb4155478c 152
+  s_1f42637fe57623::t_7193ca661d4b7b 1-8,16,30-35,39,41-44,47,49-50,52,55,57-58,64,69-73,75-77,83-86,88,93-99,104-113,121-124,126-130,132-134,136-143,149-151,153-165,168-170,172-173,176-177,185-187,189-190,193-194,196-198,200-201,204-205,209-211,213-214,217-218,228-230,232-233,236-237,240-242,244-245,248-249,261-263,265-266,269-270,279-281,283-284,287-288,296-298,300-301,304-305,308-310,312-313,315-317,320-322,324-325,328-329,337-339,341-342,345-346,371-395,400-418,420-421,428-448,450-451,453,455-457,459-460,463-464,468-470,472-473,476-477,481-483,485-486,489-490,504-506,508-509,512-513,519-521,523-524,527-528,531-533,535-536,539-540,547-549,551-552,555-556,574-576,578-579,582-583,589-591,593-594,597-598,606-608,611-617,619-621,623-625,627-629,631-633,635-645,647-649,651-653,655-656,659-661,663-665,668,671,675,704-706,708-709,722-724,726-729
+  s_856c6e2d1d2fab::t_376b7759bb5109 120
+  s_856c6e2d1d2fab::t_33684cd459e0d5 449
+  s_856c6e2d1d2fab::t_54c9e790595470 9-15,17-29,36-38,40,45-46,48,51,53-54,56,59-63,65-68,74,78-82,87,89-92,100-103,114-119,125,131,135,144-148,166-167,171,174-175,178-184,188,191-192,195,199,202-203,206-208,212,215-216,219-227,231,234-235,238-239,243,246-247,250-260,264,267-268,271-278,282,285-286,289-295,299,302-303,306-307,311,314,318-319,323,326-327,330-336,340,343-344,347-370,396-399,419,422-427,452,458,461-462,465-467,471,474-475,478-480,484,487-488,491-503,507,510-511,514-518,522,525-526,529-530,534,537-538,541-546,550,553-554,557-573,577,580-581,584-588,592,595-596,599-605,610,618,622,626,630,634,646,650,654,657-658,662,666-667,669,672-674,676-677,679-684,686-703,707,710-721,725
+  s_856c6e2d1d2fab::t_86e80ead8dc9bb 670,678,685
+  s_856c6e2d1d2fab::t_1a291bb95de6ca 609
+entry/src/main/cpp/arkui_cef/ArkUICefApp.cpp
+  s_fd97b9caba606f::t_042cd2bd651d09 39
+  s_fd97b9caba606f::t_b5f4d8d072922e 79
+  s_fd97b9caba606f::t_2320ccb0eef358 24
+  s_856c6e2d1d2fab::t_8d31d5bc3f502c 4
+  s_fd97b9caba606f::t_2b373853973108 70-78,80-111,134-178,190
+  s_856c6e2d1d2fab::t_2e19f5b4339dab 179-189
+  s_fd97b9caba606f::t_b7863705ee6024 35-37
+  s_fd97b9caba606f::t_da9a473343b1cb 112-131
+  s_fd97b9caba606f::t_21fd835fa223f7 132-133
+entry/src/main/cpp/arkui_cef/ArkUICefRenderHandler.cpp
+  s_fd97b9caba606f::t_442be38d6cfbca 3
+  s_fd97b9caba606f::t_238f35961b461a 2
+  s_fd97b9caba606f::t_4aa2de051a1baf 222-226,228-251
+  s_fd97b9caba606f::t_f334134857e97b 227
+ohos_tools/cdp_test_conditional.js
+  s_856c6e2d1d2fab::t_189815105be322 1-230
+entry/src/main/cpp/arkui_cef/ArkUICefApp.h
+  s_fd97b9caba606f::t_323ef1b1534f39 6,9-16
+  s_fd97b9caba606f::t_39fd56cd43df43 81
+  s_fd97b9caba606f::t_83492047d9efae 5,18-34,51,56-72,74-75,77-78,80
+  s_fd97b9caba606f::t_364ab0a11003f4 17
+cdp3_logs.txt
+  s_fd97b9caba606f::t_a92a30ef0cc1d0 1-6705
+entry/src/main/cpp/arkui_cef/ArkUICefManager.h
+  s_856c6e2d1d2fab::t_414d370d784359 95-105
+entry/src/main/cpp/arkui_cef/TestMenuModelDelegate.cpp
+  s_bfd5498e80ef70::t_ac6f97a9786629 1,6-7,35-80
+  s_fd97b9caba606f::t_c2c98d949ee0f6 5,10-11,33
+  s_fd97b9caba606f::t_d02c466c4a7d8d 2-4,8-9,12-32,34
+layout3.json
+  s_fd97b9caba606f::t_c4d1920f2a2cc6 1
+all_test_logs.txt
+  s_fd97b9caba606f::t_110373fee9da9e 1-98
+entry/src/main/cpp/arkui_cef/TestResourceHandlers.h
+  s_fd97b9caba606f::t_06578ac7d15222 1-19,21-84,88-89,98-99
+  s_fd97b9caba606f::t_47ae639ec0cab0 20
+  s_856c6e2d1d2fab::t_2725b2063e816a 85-87
+  s_fd97b9caba606f::t_a94e20d74e143d 90-97
+ohos_tools/cdp_targeted2.js
+  s_fd97b9caba606f::t_9bb617ca1f9f0e 1-82
+cdp4_logs.txt
+  s_fd97b9caba606f::t_779fa350c6a007 1-6135
+cef_logs.txt
+  s_fd97b9caba606f::t_e635ff691e7255 1-8462
+layout.json
+  s_fd97b9caba606f::t_0f6291e75bd9d5 1
+ohos_tools/node_modules/.package-lock.json
+  s_fd97b9caba606f::t_dcb1bd6e27dd69 1-27
+ohos_tools/node_modules/ws/LICENSE
+  s_fd97b9caba606f::t_5cda7125aadee8 1-20
+ohos_tools/node_modules/ws/README.md
+  s_fd97b9caba606f::t_73504ba28ceaeb 1-548
+ohos_tools/node_modules/ws/browser.js
+  s_fd97b9caba606f::t_3a15b92a07c86c 1-8
+ohos_tools/node_modules/ws/index.js
+  s_fd97b9caba606f::t_64aef3662baa03 1-22
+ohos_tools/node_modules/ws/lib/buffer-util.js
+  s_fd97b9caba606f::t_999b59ed8d8c65 1-131
+ohos_tools/node_modules/ws/lib/constants.js
+  s_fd97b9caba606f::t_8f2d063fc1fe60 1-19
+ohos_tools/node_modules/ws/lib/event-target.js
+  s_fd97b9caba606f::t_8d839d096c99f1 1-292
+ohos_tools/node_modules/ws/lib/extension.js
+  s_fd97b9caba606f::t_9a6ca2ca6f605b 1-203
+ohos_tools/node_modules/ws/lib/limiter.js
+  s_fd97b9caba606f::t_6e6243e95c7e36 1-55
+ohos_tools/node_modules/ws/lib/permessage-deflate.js
+  s_fd97b9caba606f::t_f2152d0e55b0fd 1-530
+ohos_tools/node_modules/ws/lib/receiver.js
+  s_fd97b9caba606f::t_d801db2aad1cb7 1-743
+ohos_tools/node_modules/ws/lib/sender.js
+  s_fd97b9caba606f::t_6753e181b8e8f2 1-607
+ohos_tools/node_modules/ws/lib/stream.js
+  s_fd97b9caba606f::t_e841805a1b94d9 1-161
+ohos_tools/node_modules/ws/lib/subprotocol.js
+  s_fd97b9caba606f::t_d9a684e466d98b 1-62
+ohos_tools/node_modules/ws/lib/validation.js
+  s_fd97b9caba606f::t_8042506b08f02a 1-152
+ohos_tools/node_modules/ws/lib/websocket-server.js
+  s_fd97b9caba606f::t_f17747e0d4661b 1-562
+ohos_tools/node_modules/ws/lib/websocket.js
+  s_fd97b9caba606f::t_0802312f4349fb 1-1421
+ohos_tools/node_modules/ws/package.json
+  s_fd97b9caba606f::t_3b8133915f06b3 1-74
+ohos_tools/node_modules/ws/wrapper.mjs
+  s_fd97b9caba606f::t_267bfb522d8c95 1-21
+ohos_tools/package-lock.json
+  s_fd97b9caba606f::t_30cf1d5fee8482 1-32
+parallel_logs.txt
+  s_fd97b9caba606f::t_b49a0eb9e94ce9 1-34277
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.7",
+  "base_commit_sha": "d4ab1f3184a18174104c087c33e39523c4d9e812",
+  "prompts": {},
+  "humans": {
+    "h_68854496d881b1": {
+      "author": "zhangmeiping <zhangmeiping1@huawei.com>"
+    }
+  },
+  "sessions": {
+    "s_1f42637fe57623": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_e6f1b5ba7ffeJvpgjNUVaDYR9x",
+        "model": "glm-5.2"
+      },
+      "human_author": "zhangmeiping <zhangmeiping1@huawei.com>",
+      "custom_attributes": {
+        "stats_model_totals": "{\"glm-5.2\":{\"additions\":1004,\"deletions\":0}}",
+        "stats_total_additions": "1004",
+        "stats_turn_models": "{\"t_7193ca661d4b7b\":\"glm-5.2\"}"
+      }
+    },
+    "s_5e21c7637d76e8": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_e6fe569e9ffec5d9sKW3Tzrg6b",
+        "model": "glm-5.2"
+      },
+      "human_author": "zhangmeiping <zhangmeiping1@huawei.com>",
+      "custom_attributes": {
+        "stats_model_totals": "{\"glm-5.2\":{\"additions\":1110,\"deletions\":0}}",
+        "stats_total_additions": "1110",
+        "stats_turn_models": "{\"t_bbc5cd48c2b1e4\":\"glm-5.2\"}"
+      }
+    },
+    "s_856c6e2d1d2fab": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_e6f0eb6b7ffemprU8ZVr1uHzW4",
+        "model": "glm-5.2"
+      },
+      "human_author": "zhangmeiping <zhangmeiping1@huawei.com>",
+      "custom_attributes": {
+        "stats_model_totals": "{\"glm-5.2\":{\"additions\":1086,\"deletions\":767}}",
+        "stats_total_additions": "1086",
+        "stats_total_deletions": "767",
+        "stats_turn_models": "{\"t_01f64719daa177\":\"glm-5.2\",\"t_05af17d70061af\":\"glm-5.2\",\"t_136aafb632f711\":\"glm-5.2\",\"t_15c3edbfeb6b82\":\"glm-5.2\",\"t_189815105be322\":\"glm-5.2\",\"t_1a291bb95de6ca\":\"glm-5.2\",\"t_1ad9222d1f3e83\":\"glm-5.2\",\"t_1c2d37cbe58227\":\"glm-5.2\",\"t_2725b2063e816a\":\"glm-5.2\",\"t_2e19f5b4339dab\":\"glm-5.2\",\"t_33684cd459e0d5\":\"glm-5.2\",\"t_34f5bb4155478c\":\"glm-5.2\",\"t_376b7759bb5109\":\"glm-5.2\",\"t_414d370d784359\":\"glm-5.2\",\"t_47753876d68a54\":\"glm-5.2\",\"t_4c2be97d4623d3\":\"glm-5.2\",\"t_4e2b6dea78ddce\":\"glm-5.2\",\"t_5184bdce70fa4c\":\"glm-5.2\",\"t_54c9e790595470\":\"glm-5.2\",\"t_63f3c913eb66cc\":\"glm-5.2\",\"t_66877367a696fa\":\"glm-5.2\",\"t_6b45150a8c1001\":\"glm-5.2\",\"t_70c5de5b120ba3\":\"glm-5.2\",\"t_722f3c0071fb92\":\"glm-5.2\",\"t_77878dda053e4b\":\"glm-5.2\",\"t_7c9931b9111682\":\"glm-5.2\",\"t_80f8572ded663d\":\"glm-5.2\",\"t_82edcbcb43efa1\":\"glm-5.2\",\"t_86e80ead8dc9bb\":\"glm-5.2\",\"t_8d31d5bc3f502c\":\"glm-5.2\",\"t_9d20afcd180fd0\":\"glm-5.2\",\"t_9e2a63487710e6\":\"glm-5.2\",\"t_9e962e62d182fe\":\"glm-5.2\",\"t_a414849d1df38e\":\"glm-5.2\",\"t_aedb5c28da7909\":\"glm-5.2\",\"t_bbb6d4b4f6227b\":\"glm-5.2\",\"t_bdc0d913efa667\":\"glm-5.2\",\"t_caa53a4d76d156\":\"glm-5.2\",\"t_cd6a1665cf245c\":\"glm-5.2\",\"t_d1b85f30d072ed\":\"glm-5.2\",\"t_d2d973d8fa1315\":\"glm-5.2\",\"t_daf9b9742300fb\":\"glm-5.2\",\"t_e86db1c1f093f3\":\"glm-5.2\",\"t_ee9ec3a6ef9dba\":\"glm-5.2\",\"t_f53cb35c10ef45\":\"glm-5.2\"}"
+      }
+    },
+    "s_bfd5498e80ef70": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_e6f3dff80ffeUisOrVkVr2Wlfz",
+        "model": "glm-5.2"
+      },
+      "human_author": "zhangmeiping <zhangmeiping1@huawei.com>",
+      "custom_attributes": {
+        "stats_model_totals": "{\"glm-5.2\":{\"additions\":136,\"deletions\":0}}",
+        "stats_total_additions": "136",
+        "stats_turn_models": "{\"t_31952848c22d5f\":\"glm-5.2\",\"t_ac6f97a9786629\":\"glm-5.2\",\"t_add5b5b046aef4\":\"glm-5.2\",\"t_ba03080241f6fb\":\"glm-5.2\",\"t_de1ccc61c824e3\":\"glm-5.2\",\"t_fb2a150e565130\":\"glm-5.2\"}"
+      }
+    },
+    "s_fd97b9caba606f": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_e7049d588ffe77CmLXuinmm5hu",
+        "model": "glm-5.2"
+      },
+      "human_author": "zhangmeiping <zhangmeiping1@huawei.com>",
+      "custom_attributes": {
+        "stats_model_totals": "{\"glm-5.2\":{\"additions\":78319,\"deletions\":1245}}",
+        "stats_total_additions": "78319",
+        "stats_total_deletions": "1245",
+        "stats_turn_models": "{\"t_038918f35241cf\":\"glm-5.2\",\"t_042cd2bd651d09\":\"glm-5.2\",\"t_06578ac7d15222\":\"glm-5.2\",\"t_0678b90f7bfb0f\":\"glm-5.2\",\"t_073a441e00a5f4\":\"glm-5.2\",\"t_08526a87b53aaa\":\"glm-5.2\",\"t_086e9957b6b8a8\":\"glm-5.2\",\"t_0a6ed06bc82683\":\"glm-5.2\",\"t_0c2adca7a1700c\":\"glm-5.2\",\"t_0f6291e75bd9d5\":\"glm-5.2\",\"t_110373fee9da9e\":\"glm-5.2\",\"t_14100b47ec8d24\":\"glm-5.2\",\"t_147ead9bc8119a\":\"glm-5.2\",\"t_1b9bed9d8ffc7b\":\"glm-5.2\",\"t_20b4ba889fca13\":\"glm-5.2\",\"t_21fd835fa223f7\":\"glm-5.2\",\"t_2248a8576d372b\":\"glm-5.2\",\"t_2320ccb0eef358\":\"glm-5.2\",\"t_238f35961b461a\":\"glm-5.2\",\"t_2555afd38648de\":\"glm-5.2\",\"t_2b373853973108\":\"glm-5.2\",\"t_2e61c8fd91a0b7\":\"glm-5.2\",\"t_323ef1b1534f39\":\"glm-5.2\",\"t_32a93b156fa877\":\"glm-5.2\",\"t_3629468a7c0a07\":\"glm-5.2\",\"t_393708e098d244\":\"glm-5.2\",\"t_39fd56cd43df43\":\"glm-5.2\",\"t_4128ea661bf3f6\":\"glm-5.2\",\"t_442be38d6cfbca\":\"glm-5.2\",\"t_45d7ac9ef6b913\":\"glm-5.2\",\"t_466c7e37834494\":\"glm-5.2\",\"t_47ae639ec0cab0\":\"glm-5.2\",\"t_4a76de372842ed\":\"glm-5.2\",\"t_4aa2de051a1baf\":\"glm-5.2\",\"t_4b29200ad621bf\":\"glm-5.2\",\"t_4c2bbb71f5ed93\":\"glm-5.2\",\"t_4c5d5abd339cc7\":\"glm-5.2\",\"t_4c65011970f781\":\"glm-5.2\",\"t_4d1af91389e11b\":\"glm-5.2\",\"t_4dd5cc598afefe\":\"glm-5.2\",\"t_4ed3ef0e2cb7d5\":\"glm-5.2\",\"t_51a8d1e45a42fb\":\"glm-5.2\",\"t_584d62bb3958f1\":\"glm-5.2\",\"t_59effffdcdf6d0\":\"glm-5.2\",\"t_5f0eb1b5e91781\":\"glm-5.2\",\"t_64aaabbbf841f0\":\"glm-5.2\",\"t_6c35e09c4319da\":\"glm-5.2\",\"t_70c44912aac616\":\"glm-5.2\",\"t_74fd423aea37a2\":\"glm-5.2\",\"t_7607dd1be2f9cf\":\"glm-5.2\",\"t_779fa350c6a007\":\"glm-5.2\",\"t_7a2fd0e1b4f1cf\":\"glm-5.2\",\"t_7aa9ce3029d45d\":\"glm-5.2\",\"t_7e2a653b0669bf\":\"glm-5.2\",\"t_80df65bf096d6f\":\"glm-5.2\",\"t_822930ccc10905\":\"glm-5.2\",\"t_83492047d9efae\":\"glm-5.2\",\"t_84a68458dd451c\":\"glm-5.2\",\"t_84f8635e81ba80\":\"glm-5.2\",\"t_8967ee0ee37dca\":\"glm-5.2\",\"t_8a1dcb19a266ef\":\"glm-5.2\",\"t_8dffbcce1269e4\":\"glm-5.2\",\"t_8f0322167fde3f\":\"glm-5.2\",\"t_922cc4d0288525\":\"glm-5.2\",\"t_99603334ec898b\":\"glm-5.2\",\"t_9bb617ca1f9f0e\":\"glm-5.2\",\"t_9f30de8875c67f\":\"glm-5.2\",\"t_9f3e3dc14a6510\":\"glm-5.2\",\"t_9f8e5e74f43436\":\"glm-5.2\",\"t_9fa8aa8e44dc94\":\"glm-5.2\",\"t_a280297c971c42\":\"glm-5.2\",\"t_a2dfdc96a0f67b\":\"glm-5.2\",\"t_a6371fd9cda2cc\":\"glm-5.2\",\"t_a6cf3bd336aa93\":\"glm-5.2\",\"t_a779d87b5e6637\":\"glm-5.2\",\"t_a85878c01db083\":\"glm-5.2\",\"t_a90ad966bf5443\":\"glm-5.2\",\"t_a92a30ef0cc1d0\":\"glm-5.2\",\"t_a94e20d74e143d\":\"glm-5.2\",\"t_ab2d165d1213ba\":\"glm-5.2\",\"t_afd66d86726304\":\"glm-5.2\",\"t_b2fd8b4adaa493\":\"glm-5.2\",\"t_b37df7736617c6\":\"glm-5.2\",\"t_b3ee59b1285901\":\"glm-5.2\",\"t_b5f4d8d072922e\":\"glm-5.2\",\"t_b7863705ee6024\":\"glm-5.2\",\"t_ba2503c8dd7218\":\"glm-5.2\",\"t_baf653d695d4df\":\"glm-5.2\",\"t_bb1e6221b29fd3\":\"glm-5.2\",\"t_bd08c7929f2ca8\":\"glm-5.2\",\"t_beac92fc474bac\":\"glm-5.2\",\"t_c2c98d949ee0f6\":\"glm-5.2\",\"t_c316aaabb2a199\":\"glm-5.2\",\"t_c3c6cde54cd386\":\"glm-5.2\",\"t_c4cd78a2b10d57\":\"glm-5.2\",\"t_c4d1920f2a2cc6\":\"glm-5.2\",\"t_c887a53a45bb89\":\"glm-5.2\",\"t_d02c466c4a7d8d\":\"glm-5.2\",\"t_d704ef42c10d15\":\"glm-5.2\",\"t_da0cf015e1bd2b\":\"glm-5.2\",\"t_da9a473343b1cb\":\"glm-5.2\",\"t_de900fb2b1aae4\":\"glm-5.2\",\"t_e4e197d288f898\":\"glm-5.2\",\"t_e59cb20f67456f\":\"glm-5.2\",\"t_e5b85c868aa25d\":\"glm-5.2\",\"t_e635ff691e7255\":\"glm-5.2\",\"t_e6a832ac503974\":\"glm-5.2\",\"t_e8383baaf4284c\":\"glm-5.2\",\"t_f29da1f5c2d595\":\"glm-5.2\",\"t_f334134857e97b\":\"glm-5.2\",\"t_fe3aa9f92c6a7a\":\"glm-5.2\",\"t_fedf69fad5dbb6\":\"glm-5.2\"}"
+      }
+    }
+  }
+}

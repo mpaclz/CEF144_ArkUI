@@ -1,0 +1,14 @@
+entry/src/main/ets/components/OsrCefView.ets
+  h_68854496d881b1 357-376
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.8",
+  "base_commit_sha": "057017525f2709bdd393376909244e32aa7a957d",
+  "prompts": {},
+  "humans": {
+    "h_68854496d881b1": {
+      "author": "zhangmeiping <zhangmeiping1@huawei.com>"
+    }
+  }
+}
