@@ -1,0 +1,78 @@
+entry/src/ohosTest/ets/test/OsrIme.test.ets
+  s_6c81538e33477c::t_9937bdb57dd9c6 8,26
+  s_6c81538e33477c::t_251b3278e271c7 1-7,9-25,27-139
+entry/src/ohosTest/resources/base/element/string.json
+  s_6c81538e33477c::t_30f594666ae6bb 1-12
+entry/src/ohosTest/ets/testability/TestAbilityStage.ets
+  s_6c81538e33477c::t_9354d64cad72ff 1-21
+entry/src/ohosTest/resources/base/profile/test_pages.json
+  s_6c81538e33477c::t_e4eb97d4fcf87e 1-5
+entry/src/ohosTest/ets/test/OsrDrag.test.ets
+  s_6c81538e33477c::t_d982187f115139 7,22
+  s_6c81538e33477c::t_53adc781c26585 1-6,8-21,23-77
+entry/src/ohosTest/resources/base/element/color.json
+  s_6c81538e33477c::t_9742e137bfe186 1-8
+entry/src/ohosTest/ets/testability/TestAbility.ets
+  s_6c81538e33477c::t_4f6ed084d4e4e5 13-18
+  s_6c81538e33477c::t_8138c50113b1b3 1-12,19-64
+entry/src/ohosTest/ets/testability/pages/Index.ets
+  s_6c81538e33477c::t_958093059e0780 1-17
+entry/src/ohosTest/ets/test/OsrInputEvent.test.ets
+  s_6c81538e33477c::t_0efd0a97ac5d25 26
+  s_6c81538e33477c::t_5bd2fbbd8e6e1c 1-6,10-25,27-59,63-66,71-73,79-81,83-144
+  s_6c81538e33477c::t_13dc9c8a32b448 60-62,67-70,74-78,82
+  s_6c81538e33477c::t_8e4352eabc112f 7-9
+entry/src/ohosTest/ets/testability/TestContextStore.ets
+  s_6c81538e33477c::t_2509eebf40e4b2 4-6,8-21,30-31
+  s_6c81538e33477c::t_118eac1700ae40 1-3,7,22-29
+entry/src/ohosTest/ets/test/List.test.ets
+  s_6c81538e33477c::t_96e3c8363be59b 2-5,9-13
+entry/src/ohosTest/ets/testrunner/OpenHarmonyTestRunner.ets
+  s_6c81538e33477c::t_f8a48059414eec 1-2,4-10,12-24,38-42
+  s_6c81538e33477c::t_7f189da651796b 3,11,25-37
+entry/src/ohosTest/module.json5
+  s_6c81538e33477c::t_7a552d1f12f57a 5
+  s_6c81538e33477c::t_3039158e9a0943 12-35
+entry/src/ohosTest/ets/test/OsrTestEnv.ets
+  s_6c81538e33477c::t_3684e8d2a6b8e7 44-47
+  s_6c81538e33477c::t_80c71c9e1b8207 123,126-129
+  s_6c81538e33477c::t_ee4722fdb2bff5 220-222,225,236-237
+  s_6c81538e33477c::t_ecf5e92ced3f31 11-12
+  s_6c81538e33477c::t_a3b30637bcf4da 88-101
+  s_6c81538e33477c::t_7ac24be2e1bc71 1-10,13-43,48-87,102-122,124-125,130-219,223-224,226-235,238-324
+entry/src/ohosTest/ets/test/OsrRenderLifecycle.test.ets
+  s_6c81538e33477c::t_b5377a4658abea 4,8,15-17,20-23
+  s_6c81538e33477c::t_791c006b0f87f8 56-64
+  s_6c81538e33477c::t_2fb17a0575c9dd 130-133,136-143
+  s_6c81538e33477c::t_309c489587d5d7 147-149,151,157-159,169-172
+  s_6c81538e33477c::t_1861d8b9645aae 67
+  s_6c81538e33477c::t_1c1e1715d3590a 153-155,161-166
+  s_6c81538e33477c::t_26878c25608aaf 1-3,5-7,9-14,18-19,24-55,65-66,68-129,134-135,144-146,150,152,156,160,167-168,173-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.8",
+  "base_commit_sha": "6162b5020889bcff584f3525398df070ff612a1d",
+  "prompts": {},
+  "humans": {
+    "h_68854496d881b1": {
+      "author": "zhangmeiping <zhangmeiping1@huawei.com>"
+    }
+  },
+  "sessions": {
+    "s_6c81538e33477c": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_e2ff5641cffeGt0jSaq8Zygxi7",
+        "model": "glm-5.3"
+      },
+      "human_author": "zhangmeiping <zhangmeiping1@huawei.com>",
+      "custom_attributes": {
+        "stats_model_totals": "{\"glm-5.3\":{\"additions\":1595,\"deletions\":62}}",
+        "stats_total_additions": "1595",
+        "stats_total_deletions": "62",
+        "stats_turn_models": "{\"t_0efd0a97ac5d25\":\"glm-5.3\",\"t_118eac1700ae40\":\"glm-5.3\",\"t_13dc9c8a32b448\":\"glm-5.3\",\"t_1861d8b9645aae\":\"glm-5.3\",\"t_1c1e1715d3590a\":\"glm-5.3\",\"t_2509eebf40e4b2\":\"glm-5.3\",\"t_251b3278e271c7\":\"glm-5.3\",\"t_26878c25608aaf\":\"glm-5.3\",\"t_2fb17a0575c9dd\":\"glm-5.3\",\"t_3039158e9a0943\":\"glm-5.3\",\"t_309c489587d5d7\":\"glm-5.3\",\"t_30f594666ae6bb\":\"glm-5.3\",\"t_3684e8d2a6b8e7\":\"glm-5.3\",\"t_4f6ed084d4e4e5\":\"glm-5.3\",\"t_53adc781c26585\":\"glm-5.3\",\"t_54992f8c4d5ea1\":\"glm-5.3\",\"t_5bd2fbbd8e6e1c\":\"glm-5.3\",\"t_6a9bc329c745ea\":\"glm-5.3\",\"t_791c006b0f87f8\":\"glm-5.3\",\"t_7a552d1f12f57a\":\"glm-5.3\",\"t_7ac24be2e1bc71\":\"glm-5.3\",\"t_7f189da651796b\":\"glm-5.3\",\"t_80c71c9e1b8207\":\"glm-5.3\",\"t_8138c50113b1b3\":\"glm-5.3\",\"t_8dcdfedeed4e40\":\"glm-5.3\",\"t_8e4352eabc112f\":\"glm-5.3\",\"t_9354d64cad72ff\":\"glm-5.3\",\"t_958093059e0780\":\"glm-5.3\",\"t_96e3c8363be59b\":\"glm-5.3\",\"t_9742e137bfe186\":\"glm-5.3\",\"t_9937bdb57dd9c6\":\"glm-5.3\",\"t_a3b30637bcf4da\":\"glm-5.3\",\"t_b5377a4658abea\":\"glm-5.3\",\"t_bdc35a4b1c864c\":\"glm-5.3\",\"t_c7b18ae073101f\":\"glm-5.3\",\"t_c8b468cc488c4a\":\"glm-5.3\",\"t_d982187f115139\":\"glm-5.3\",\"t_e381cd29a1de77\":\"glm-5.3\",\"t_e4eb97d4fcf87e\":\"glm-5.3\",\"t_ecf5e92ced3f31\":\"glm-5.3\",\"t_ee4722fdb2bff5\":\"glm-5.3\",\"t_f8a48059414eec\":\"glm-5.3\"}"
+      }
+    }
+  }
+}
