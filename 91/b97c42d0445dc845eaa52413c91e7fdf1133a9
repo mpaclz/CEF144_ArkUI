@@ -1,0 +1,89 @@
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.h
+  s_6c81538e33477c::t_c8b468cc488c4a 187-190
+entry/src/main/cpp/arkui_cef/ArkUICefManager.h
+  s_6c81538e33477c::t_8dcdfedeed4e40 188-192
+entry/src/main/ets/components/BrowserView.ets
+  s_e556eaadda0c7f::t_843af911128025 21-30
+  s_e556eaadda0c7f::t_068f2b5969d1d1 16-20
+  s_e556eaadda0c7f::t_fc34bbda47f9fc 120
+  s_e556eaadda0c7f::t_79a4bca4910f09 142-144
+entry/src/main/ets/components/CefView.ets
+  s_e556eaadda0c7f::t_06a4b96e58b7fe 143-148,170-190
+  s_e556eaadda0c7f::t_7500215fc89add 149,151-157,159-162
+  s_e556eaadda0c7f::t_dc7ed8275d2e5a 69-71,76-82,84-97,100,102
+  s_e556eaadda0c7f::t_7948fc7ec45b36 194-197
+  s_e556eaadda0c7f::t_b5924d0982af05 72-75,83,101
+  s_e556eaadda0c7f::t_ceb5d506ae80d6 37-42,45-50
+  s_e556eaadda0c7f::t_c991b9bb0860bf 35-36,43-44
+  s_e556eaadda0c7f::t_7b63a7f036c8c4 150,158
+  s_e556eaadda0c7f::t_c646fa2a447798 552-555,560,567-568,574,577
+  s_e556eaadda0c7f::t_b96c3952942508 563
+  s_e556eaadda0c7f::t_2c15e05b6217cd 556,558-559,561-562,564-566,569-573,575-576
+entry/src/main/cpp/napi_init.cpp
+  s_e556eaadda0c7f::t_de00f6c8cca14c 614,620-622,625-641
+  s_e556eaadda0c7f::t_3e556b25ee041a 592-600,613,615-619,642-646,658-677
+entry/src/main/ets/components/OsrCefView.ets
+  s_e556eaadda0c7f::t_77804ba6580047 1538-1539
+  s_e556eaadda0c7f::t_c52df581002a89 315-320
+  s_e556eaadda0c7f::t_233b3d4e084acc 883-887,894-896
+  s_e556eaadda0c7f::t_4458c36069091c 1501
+  s_e556eaadda0c7f::t_58e66a794f800a 721-723
+  s_e556eaadda0c7f::t_5bda689f26fff4 1470-1478,1481,1488-1490,1492,1499-1500,1502-1517,1519-1522,1532-1537
+  s_e556eaadda0c7f::t_f685fd63c6dd90 877-882
+  s_e556eaadda0c7f::t_8c8a8286e71b86 261
+  s_e556eaadda0c7f::t_6cd34f4a0d5f6b 1493-1496
+  s_e556eaadda0c7f::t_30a27dcfadb827 277-278
+  s_e556eaadda0c7f::t_18570d8772fb60 1458-1462
+  s_e556eaadda0c7f::t_9c93af35d9bc98 251-260
+  s_e556eaadda0c7f::t_66a933dbbddb28 409
+  s_e556eaadda0c7f::t_203224851a52f8 248-250,262-270
+  s_e556eaadda0c7f::t_88403332abfd12 494-499
+  s_e556eaadda0c7f::t_d4d26f90c2f189 511-516
+  s_e556eaadda0c7f::t_51c4191474275f 1463,1465-1469,1479-1480,1482-1487,1491,1497-1498,1518,1523-1531,1540-1560
+  s_e556eaadda0c7f::t_bbdff1c9c6eae3 779-781
+  s_e556eaadda0c7f::t_4e05f97a4eb657 271-276
+  s_e556eaadda0c7f::t_11ff09ee9b9a85 1464
+entry/src/main/cpp/arkui_cef/ArkUICefManager.cpp
+  s_6c81538e33477c::t_6a9bc329c745ea 53-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.8",
+  "base_commit_sha": "91b97c42d0445dc845eaa52413c91e7fdf1133a9",
+  "prompts": {},
+  "humans": {
+    "h_68854496d881b1": {
+      "author": "zhangmeiping <zhangmeiping1@huawei.com>"
+    }
+  },
+  "sessions": {
+    "s_6c81538e33477c": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_e2ff5641cffeGt0jSaq8Zygxi7",
+        "model": "glm-5.3"
+      },
+      "human_author": "zhangmeiping <zhangmeiping1@huawei.com>",
+      "custom_attributes": {
+        "stats_model_totals": "{\"glm-5.3\":{\"additions\":1595,\"deletions\":62}}",
+        "stats_total_additions": "1595",
+        "stats_total_deletions": "62",
+        "stats_turn_models": "{\"t_0efd0a97ac5d25\":\"glm-5.3\",\"t_118eac1700ae40\":\"glm-5.3\",\"t_13dc9c8a32b448\":\"glm-5.3\",\"t_1861d8b9645aae\":\"glm-5.3\",\"t_1c1e1715d3590a\":\"glm-5.3\",\"t_2509eebf40e4b2\":\"glm-5.3\",\"t_251b3278e271c7\":\"glm-5.3\",\"t_26878c25608aaf\":\"glm-5.3\",\"t_2fb17a0575c9dd\":\"glm-5.3\",\"t_3039158e9a0943\":\"glm-5.3\",\"t_309c489587d5d7\":\"glm-5.3\",\"t_30f594666ae6bb\":\"glm-5.3\",\"t_3684e8d2a6b8e7\":\"glm-5.3\",\"t_4f6ed084d4e4e5\":\"glm-5.3\",\"t_53adc781c26585\":\"glm-5.3\",\"t_54992f8c4d5ea1\":\"glm-5.3\",\"t_5bd2fbbd8e6e1c\":\"glm-5.3\",\"t_6a9bc329c745ea\":\"glm-5.3\",\"t_791c006b0f87f8\":\"glm-5.3\",\"t_7a552d1f12f57a\":\"glm-5.3\",\"t_7ac24be2e1bc71\":\"glm-5.3\",\"t_7f189da651796b\":\"glm-5.3\",\"t_80c71c9e1b8207\":\"glm-5.3\",\"t_8138c50113b1b3\":\"glm-5.3\",\"t_8dcdfedeed4e40\":\"glm-5.3\",\"t_8e4352eabc112f\":\"glm-5.3\",\"t_9354d64cad72ff\":\"glm-5.3\",\"t_958093059e0780\":\"glm-5.3\",\"t_96e3c8363be59b\":\"glm-5.3\",\"t_9742e137bfe186\":\"glm-5.3\",\"t_9937bdb57dd9c6\":\"glm-5.3\",\"t_a3b30637bcf4da\":\"glm-5.3\",\"t_b5377a4658abea\":\"glm-5.3\",\"t_bdc35a4b1c864c\":\"glm-5.3\",\"t_c7b18ae073101f\":\"glm-5.3\",\"t_c8b468cc488c4a\":\"glm-5.3\",\"t_d982187f115139\":\"glm-5.3\",\"t_e381cd29a1de77\":\"glm-5.3\",\"t_e4eb97d4fcf87e\":\"glm-5.3\",\"t_ecf5e92ced3f31\":\"glm-5.3\",\"t_ee4722fdb2bff5\":\"glm-5.3\",\"t_f8a48059414eec\":\"glm-5.3\"}"
+      }
+    },
+    "s_e556eaadda0c7f": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_e30040bfdffe5ScWbqdE9zUpl6",
+        "model": "glm-5.3"
+      },
+      "human_author": "zhangmeiping <zhangmeiping1@huawei.com>",
+      "custom_attributes": {
+        "stats_model_totals": "{\"glm-5.3\":{\"additions\":535,\"deletions\":193}}",
+        "stats_total_additions": "535",
+        "stats_total_deletions": "193",
+        "stats_turn_models": "{\"t_068f2b5969d1d1\":\"glm-5.3\",\"t_06a4b96e58b7fe\":\"glm-5.3\",\"t_07a0b490855e66\":\"glm-5.3\",\"t_18570d8772fb60\":\"glm-5.3\",\"t_19188d7b0a7d02\":\"glm-5.3\",\"t_203224851a52f8\":\"glm-5.3\",\"t_233b3d4e084acc\":\"glm-5.3\",\"t_263087a2e628fc\":\"glm-5.3\",\"t_2a56a9bceaae10\":\"glm-5.3\",\"t_2c15e05b6217cd\":\"glm-5.3\",\"t_2d526f3838e4c6\":\"glm-5.3\",\"t_30a27dcfadb827\":\"glm-5.3\",\"t_36526c4cfbfc0e\":\"glm-5.3\",\"t_3e556b25ee041a\":\"glm-5.3\",\"t_4458c36069091c\":\"glm-5.3\",\"t_4950590507d7b0\":\"glm-5.3\",\"t_4e05f97a4eb657\":\"glm-5.3\",\"t_51c4191474275f\":\"glm-5.3\",\"t_58e66a794f800a\":\"glm-5.3\",\"t_5b8662ceb42d4d\":\"glm-5.3\",\"t_5bda689f26fff4\":\"glm-5.3\",\"t_66a933dbbddb28\":\"glm-5.3\",\"t_6c80ce401bd588\":\"glm-5.3\",\"t_6cd34f4a0d5f6b\":\"glm-5.3\",\"t_7500215fc89add\":\"glm-5.3\",\"t_77804ba6580047\":\"glm-5.3\",\"t_791e54976232f8\":\"glm-5.3\",\"t_7948fc7ec45b36\":\"glm-5.3\",\"t_79a4bca4910f09\":\"glm-5.3\",\"t_7b63a7f036c8c4\":\"glm-5.3\",\"t_843af911128025\":\"glm-5.3\",\"t_875da585188943\":\"glm-5.3\",\"t_88403332abfd12\":\"glm-5.3\",\"t_8c8a8286e71b86\":\"glm-5.3\",\"t_9c93af35d9bc98\":\"glm-5.3\",\"t_a8a6888afb31ef\":\"glm-5.3\",\"t_ad69654655a2dd\":\"glm-5.3\",\"t_adbc9dcf154dc1\":\"glm-5.3\",\"t_b12466856c84ce\":\"glm-5.3\",\"t_b5924d0982af05\":\"glm-5.3\",\"t_b96c3952942508\":\"glm-5.3\",\"t_bbdff1c9c6eae3\":\"glm-5.3\",\"t_bcc013e299bdf8\":\"glm-5.3\",\"t_c3d9e7566e8603\":\"glm-5.3\",\"t_c52df581002a89\":\"glm-5.3\",\"t_c646fa2a447798\":\"glm-5.3\",\"t_c991b9bb0860bf\":\"glm-5.3\",\"t_ccc1f431e424f5\":\"glm-5.3\",\"t_ceb5d506ae80d6\":\"glm-5.3\",\"t_d00f30bea50697\":\"glm-5.3\",\"t_d411692afd2660\":\"glm-5.3\",\"t_d4d26f90c2f189\":\"glm-5.3\",\"t_d9c42000a98ff6\":\"glm-5.3\",\"t_dc7ed8275d2e5a\":\"glm-5.3\",\"t_de00f6c8cca14c\":\"glm-5.3\",\"t_de1f256d333a50\":\"glm-5.3\",\"t_e29fd32717e50e\":\"glm-5.3\",\"t_ec3e2fbf5bbc6d\":\"glm-5.3\",\"t_f685fd63c6dd90\":\"glm-5.3\",\"t_fc34bbda47f9fc\":\"glm-5.3\"}"
+      }
+    }
+  }
+}
