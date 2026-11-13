@@ -589,6 +589,15 @@ struct OsrKeyFilterContext {
     // not the one that most recently (re)registered the filter.
     std::atomic<int64_t> browserId{-1};
     std::atomic<bool> renderAreaActive{false};
+    // Modifier tracking from the key-event stream. Two earlier defects made
+    // Shift+Tab intermittently degrade into a plain Tab (forward focus):
+    //   1. The tracking was skipped while renderAreaActive was false (the
+    //      early return below) — every Shift/Ctrl/Alt event seen while the
+    //      web was inactive (focus on native controls after every TAB
+    //      boundary exit) was missed, leaving the state stale.
+    //   2. Only the LEFT modifier keys were tracked (2047/2072/2045) — the
+    //      RIGHT Shift (2048) etc. were invisible to the tracker.
+    // Tracking is now unconditional and covers both sides.
     std::atomic<bool> ctrlPressed{false};
     std::atomic<bool> shiftPressed{false};
     std::atomic<bool> altPressed{false};
@@ -601,13 +610,40 @@ static OsrKeyFilterContext* g_keyFilterCtx = nullptr;
 // the routing target.
 static std::unordered_set<int32_t> g_keyFilterWindows;
 
-static bool OsrKeyFilterCallback(Input_KeyEvent* keyEvent) {
-    if (!keyEvent || !g_keyFilterCtx) return false;
-
-    // Only filter when OSR render area is active (not when URL bar has focus)
-    if (!g_keyFilterCtx->renderAreaActive.load()) {
+// Live physical key-state query (mirrors Qt's QKeyEvent::modifiers(): the
+// windowing system's per-event modifier state — the model QCefView relies
+// on). Used as a cross-check OR-ed with the event-stream tracking: the
+// tracking covers injected/virtual keys (which do not register in the
+// physical key-state table — e.g. uitest-injected combos), the query covers
+// any modifier transitions the filter itself might miss. Returns the
+// pressed state of EITHER the left OR the right physical modifier key.
+static bool IsModifierKeyPressed(int32_t leftCode, int32_t rightCode) {
+    struct Input_KeyState* state = OH_Input_CreateKeyState();
+    if (!state) {
         return false;
     }
+    bool pressed = false;
+    OH_Input_SetKeyCode(state, leftCode);
+    if (OH_Input_GetKeyState(state) == INPUT_SUCCESS &&
+        OH_Input_GetKeyPressed(state) == KEY_PRESSED) {
+        pressed = true;
+    }
+    if (!pressed) {
+        OH_Input_SetKeyCode(state, rightCode);
+        if (OH_Input_GetKeyState(state) == INPUT_SUCCESS &&
+            OH_Input_GetKeyPressed(state) == KEY_PRESSED) {
+            pressed = true;
+        }
+    }
+    OH_Input_DestroyKeyState(&state);
+    return pressed;
+}
+
+// Modifier keycodes (verified from oh_key_code.h):
+// ALT_LEFT=2045, ALT_RIGHT=2046, SHIFT_LEFT=2047, SHIFT_RIGHT=2048,
+// CTRL_LEFT=2072, CTRL_RIGHT=2073.
+static bool OsrKeyFilterCallback(Input_KeyEvent* keyEvent) {
+    if (!keyEvent || !g_keyFilterCtx) return false;
 
     int32_t keyCode = OH_Input_GetKeyEventKeyCode(keyEvent);
     int32_t action = OH_Input_GetKeyEventAction(keyEvent);
@@ -619,10 +655,26 @@ static bool OsrKeyFilterCallback(Input_KeyEvent* keyEvent) {
     bool shift = g_keyFilterCtx->shiftPressed.load();
     bool alt = g_keyFilterCtx->altPressed.load();
 
-    // Update modifier tracking AFTER loading previous state
-    if (keyCode == 2072) { g_keyFilterCtx->ctrlPressed.store(action == KEY_ACTION_DOWN); }
-    else if (keyCode == 2047) { g_keyFilterCtx->shiftPressed.store(action == KEY_ACTION_DOWN); }
-    else if (keyCode == 2045) { g_keyFilterCtx->altPressed.store(action == KEY_ACTION_DOWN); }
+    // Update modifier tracking AFTER loading previous state — ALWAYS, for
+    // BOTH left and right keys, regardless of the active state below.
+    if (keyCode == 2072 || keyCode == 2073) {
+        g_keyFilterCtx->ctrlPressed.store(action == KEY_ACTION_DOWN);
+    } else if (keyCode == 2047 || keyCode == 2048) {
+        g_keyFilterCtx->shiftPressed.store(action == KEY_ACTION_DOWN);
+    } else if (keyCode == 2045 || keyCode == 2046) {
+        g_keyFilterCtx->altPressed.store(action == KEY_ACTION_DOWN);
+    }
+
+    // Only filter when OSR render area is active (not when URL bar has focus)
+    if (!g_keyFilterCtx->renderAreaActive.load()) {
+        return false;
+    }
+
+    // Cross-check with the live physical key state (short-circuited by the
+    // tracked state — the query only runs when tracking says "not pressed").
+    if (!shift) shift = IsModifierKeyPressed(2047, 2048);
+    if (!ctrl) ctrl = IsModifierKeyPressed(2072, 2073);
+    if (!alt) alt = IsModifierKeyPressed(2045, 2046);
 
     // Letters A-Z without Ctrl/Alt: let IME handle (CJK composition + English text)
     // KeyCode range: KEYCODE_A=2017 .. KEYCODE_Z=2042 (verified from oh_key_code.h)

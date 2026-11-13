@@ -13,6 +13,21 @@ export struct BrowserView {
   @State private cefView: CefView | undefined = undefined;
   @State private hint: string = BrowserView.DEFAULT_HINT;
 
+  // 实例唯一后缀：工具栏末按钮的 focus id 必须全页唯一（多实例场景），
+  // 供 CefView 在 Shift+Tab 流出网页边界时（OnTakeFocus next=false）定向
+  // 移焦（一键直达工具栏末按钮——网页视图走焦顺序上的前一个停靠点）。
+  // 正向（next=true）不接线：落到 CefView 的惰性边界锚点，下一次 Tab 由
+  // 框架遍历环绕进 TabBar，与 OSR 视图的流转语义一致。
+  private static uidCounter: number = 0;
+  private uid: number = 0;
+  private toolbarLastKey: string = '';
+
+  aboutToAppear(): void {
+    BrowserView.uidCounter += 1;
+    this.uid = BrowserView.uidCounter;
+    this.toolbarLastKey = 'bvToolbarLast_' + this.uid;
+  }
+
   build() {
     Column() {
       Row() {
@@ -102,6 +117,7 @@ export struct BrowserView {
           .height(22)
           .fontColor(Color.White)
           .backgroundColor('#F56C6C')
+          .id(this.toolbarLastKey)
           .onClick(async () => {
             hilog.info(DOMAIN, MODULE, "Start testing.");
             for (let i: number = 0; i < 50; i++) {
@@ -123,7 +139,9 @@ export struct BrowserView {
           Text(this.hint).fontSize(32).fontColor(Color.White).textAlign(TextAlign.Center)
             .width('100%').height('100%')
             .backgroundColor(Color.Gray)
-          CefView({viewUrl: this.defaultUrl, onCreatedCallback: (view) => {
+          CefView({viewUrl: this.defaultUrl,
+            focusPrevId: this.toolbarLastKey,
+            onCreatedCallback: (view) => {
             hilog.info(DOMAIN, MODULE, "CefView created, id: %{public}d", view.getBrowserId())
             this.cefView = view;
             // 拖出支持：触发后视图自行完成 capture-lost/hide/占位，

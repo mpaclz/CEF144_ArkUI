@@ -50,6 +50,15 @@ ArkUICefManager::~ArkUICefManager() {
 }
 
 void ArkUICefManager::start() {
+    // 幂等：只允许拉起一次 CEF 主线程。CEF 已在初始化中（initOk_ 尚未
+    // 置位）时 isCefRunning() 仍为 false，调用方据此重试 start() 会造成
+    // 双线程双 CefInitialize —— 用 startCalled_ 在 start() 入口直接挡住。
+    bool expected = false;
+    if (!startCalled_.compare_exchange_strong(expected, true)) {
+        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefManager",
+            "start: already called, skip duplicate CEF thread spawn");
+        return;
+    }
     cefThread_ = std::thread([this]() {
         CefThreadMain();
     });

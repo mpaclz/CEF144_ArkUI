@@ -185,6 +185,11 @@ private:
     
     std::thread cefThread_;                                      ///< CEF 主工作线程
     
+    // start() 幂等标记：start() 可能被多处调用（MyAbilityStage 与测试
+    // TestAbility 各调一次）。无保护时第二次调用会再起一个 CEF_Main
+    // 线程并二次 CefInitialize（必崩）。首次调用生效，后续为 no-op。
+    std::atomic<bool> startCalled_{false};
+    
     std::mutex mutex_;                                           ///< 保护 browsers_ 和 initOk_ 的锁
     std::unordered_map<int64_t, CefRefPtr<ArkUICefBrowser>> browsers_; ///< 浏览器注册表
     

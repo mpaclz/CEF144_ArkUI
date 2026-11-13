@@ -245,6 +245,38 @@ export struct OsrCefView {
   // in the render area (containers can't be focused, XComponent isn't
   // focusable).
   private focusAnchorKey: string = 'osrAnchor';
+  // Focus-exit targets for TAB key flow across the web-view boundary (see
+  // moveFocusOutOfWeb): when the web content tabs past its last (or before
+  // its first) focusable element, CEF calls OnTakeFocus and the host must
+  // move ArkUI focus out of the web view (QCefView: onCefWindowLostTabFocus
+  // → nextInFocusChain/previousInFocusChain).
+  // Backward default: the toolbar's last button ('Go') — the render area's
+  // traversal-previous, an addressable stop → one-press exit.
+  // Forward default: there is NO addressable stop after the render area
+  // (the traversal wraps into the built-in TabBar, whose items carry no
+  // requestFocus-able id), so the focus token is left ON the render-area
+  // stop itself with the keyboard already released — visible as the
+  // whole-view focus ring; the NEXT Tab continues the framework traversal
+  // (wrap → TabBar active item → toolbar …). The containing page can
+  // override either direction by passing explicit ids.
+  focusNextId: string = '';
+  focusPrevId: string = '';
+  // Id of the last toolbar button ('Go') — default backward exit target.
+  private toolbarLastKey: string = 'osrToolbarLast';
+  // Suppresses the render-area blur deactivation while focus is being moved
+  // INSIDE the render area (re-anchoring between the Column and the anchor
+  // leaf). requestFocus takes effect in the current frame, so a same-tick
+  // reset is sufficient.
+  private focusMoveGuard: boolean = false;
+  // True right after a web→native focus exit (moveFocusOutOfWeb). Suppresses
+  // the per-keydown focus re-anchor (its setTimeout may still be pending and
+  // would pull focus back onto the render area, undoing the exit) and the
+  // web re-activation while the exit's traversal is settling. Cleared
+  // deterministically when focus leaves the render area (the traversal
+  // proceeded), on tab (re)activation, or by the safety timeout.
+  private webExitArmed: boolean = false;
+  // Global counter for window instances without a tab index (tear-off windows).
+  private static nextWindowUid: number = 1;
   // Currently active tab index, synced from the page's Tabs.onChange. @Watch
   // routes activation: onChange fires reliably on EVERY switch including the
   // first one — unlike the visibility edge, which does not fire when a
@@ -281,8 +313,12 @@ export struct OsrCefView {
 
   aboutToAppear(): void {
     this.urlInput = this.viewUrl;
-    this.renderAreaKey = 'osrRender_' + this.myTabIndex;
-    this.focusAnchorKey = 'osrAnchor_' + this.myTabIndex;
+    // Focus target ids must be unique page-wide. Tabs pages pass myTabIndex;
+    // tear-off windows (adopt mode) have none — fall back to a global counter.
+    let uid = this.myTabIndex >= 0 ? String(this.myTabIndex) : 'w' + (OsrCefView.nextWindowUid++);
+    this.renderAreaKey = 'osrRender_' + uid;
+    this.focusAnchorKey = 'osrAnchor_' + uid;
+    this.toolbarLastKey = 'osrToolbarLast_' + uid;
     this.xcController = new OsrSurfaceController(
       (surfaceId: string) => { this.onXcSurfaceCreated(surfaceId); },
       (surfaceId: string, w: number, h: number) => { this.onXcSurfaceChanged(surfaceId, w, h); },
@@ -371,6 +407,7 @@ export struct OsrCefView {
           .height(28)
           .margin({ left: 4 })
           .enabled(this.isCreated())
+          .id(this.toolbarLastKey)
           .onClick(() => this.loadUrl(this.urlInput))
       }
       .width('100%')
@@ -455,6 +492,12 @@ export struct OsrCefView {
           .height(1)
           .opacity(0)
           .hitTestBehavior(HitTestMode.None)
+          .onFocus(() => {
+            this.onRenderAreaFocusGained();
+          })
+          .onBlur(() => {
+            this.onRenderAreaFocusLost();
+          })
           .onKeyEvent((event: KeyEvent) => {
             this.handleRenderAreaKeyEvent(event);
           })
@@ -466,6 +509,12 @@ export struct OsrCefView {
       .focusable(true)
       .tabStop(true)
       .id(this.renderAreaKey)
+      .onFocus(() => {
+        this.onRenderAreaFocusGained();
+      })
+      .onBlur(() => {
+        this.onRenderAreaFocusLost();
+      })
       .onKeyEvent((event: KeyEvent) => {
         this.handleRenderAreaKeyEvent(event);
       })
@@ -670,7 +719,9 @@ export struct OsrCefView {
         uniformTypeDescriptor.UniformDataType.IMAGE
       ])
 
-      // Status bar — shows OSR state info
+      // Status bar — shows OSR state info. NOT part of the web: ArkUI native
+      // Texts fed by CEF callbacks (scroll offset / cursor type). Deliberately
+      // NOT focusable — the status bar does not participate in TAB traversal.
       if (this.isCreated()) {
         Row() {
           Text(`Scroll: ${this.scrollOffsetText || '0,0'}`)
@@ -726,6 +777,9 @@ export struct OsrCefView {
       active ? "activate" : "deactivate", this.browserId);
     this.setOsrHidden(!active);
     if (active) {
+      // Fresh activation resets the web-exit suppression (a stale armed flag
+      // would swallow the focus anchor requests below).
+      this.webExitArmed = false;
       this.setRenderAreaActive(true);
       arkui_cef.cefSendFocusEvent(this.browserId, true);
       // Move ArkUI focus onto the render area so the onKeyEvent fallback
@@ -821,12 +875,26 @@ export struct OsrCefView {
     // Target the invisible anchor leaf — the only requestFocus-capable node:
     // the render-area Column is a container (cannot take focus directly) and
     // the XComponent reports "not focusable".
+    // Skip while a web→native exit is settling: the pending per-keydown
+    // re-anchor timer would otherwise pull focus back onto the render area
+    // right after moveFocusOutOfWeb moved it out.
+    if (this.webExitArmed) {
+      return;
+    }
+    // focusMoveGuard: re-anchoring INSIDE the render area (Column → anchor)
+    // fires the Column's onBlur; that must not release the web keyboard.
+    // requestFocus takes effect in the current frame, so the guard only needs
+    // to span this task tick.
+    this.focusMoveGuard = true;
     try {
       this.getUIContext().getFocusController().requestFocus(this.focusAnchorKey);
     } catch (e) {
       hilog.warn(DOMAIN, MODULE, "requestFocus failed: %{public}s %{public}s",
         this.focusAnchorKey, (e as Error).message);
     }
+    setTimeout(() => {
+      this.focusMoveGuard = false;
+    }, 0);
   }
 
   getBrowserId(): number {
@@ -1388,6 +1456,114 @@ export struct OsrCefView {
 
   onOsrFocusTake(next: boolean): void {
     hilog.info(DOMAIN, MODULE, "OSR CEF focus taken, next=%{public}s", next ? "true" : "false");
+    // Web content tabbed past its last (Shift+Tab: before its first) focusable
+    // element — CEF asks the host to move focus out of the web view. Move the
+    // ArkUI focus token off the render area onto the configured neighbor
+    // (mirrors QCefView's onCefWindowLostTabFocus → nextInFocusChain walk).
+    this.moveFocusOutOfWeb(next);
+  }
+
+  // ==================== 网页内外焦点流转（TAB 边界处理） ====================
+  //
+  // 焦点模型：渲染区（含隐形 anchor）是 ArkUI 走焦链中的一个"停靠点"。
+  // 焦点落在渲染区（onFocus）→ 网页接管键盘（SetFocus + 窗口级按键过滤）；
+  // TAB 在网页内部流转时被过滤层消费；流到网页边界时 CEF 回调 OnTakeFocus，
+  // 宿主在此把焦点"移出"：
+  //   逆向（Shift+Tab 流出网页开头）→ 落到 Go（渲染区走焦顺序上的前一个
+  //   停靠点，可按 id 寻址），一次按键完成转移；
+  //   正向（Tab 流出网页末尾）→ 渲染区之后没有可按 id 寻址的停靠点（走焦
+  //   环绕目标是内置 TabBar 的激活 Tab 名项，无组件 id），焦点留在渲染区
+  //   停靠点本身（整页焦点框）、键盘已交还宿主，下一次 Tab 由框架原生
+  //   遍历环绕到 TabBar 继续流转。
+  // 移出后过滤层停止消费，键盘事件回到 ArkUI 原生走焦，直到下一轮焦点
+  // 遍历再次落在渲染区（onFocus）完成闭环。
+
+  /**
+   * 网页边界退出：把键盘交还宿主，并按方向转移焦点。
+   * @param next true=正向（Tab 流出网页末尾），false=逆向（Shift+Tab 流出网页开头）
+   */
+  private moveFocusOutOfWeb(next: boolean): void {
+    if (!this.isCreated()) {
+      return;
+    }
+    let wired = next ? this.focusNextId : this.focusPrevId;
+    hilog.info(DOMAIN, MODULE, "moveFocusOutOfWeb: next=%{public}s, wired=%{public}s",
+      next ? "true" : "false", wired);
+    // 网页侧焦点已在 OnTakeFocus 链路中清空；同步释放浏览器焦点与键盘路由，
+    // 使后续按键回归 ArkUI 原生走焦。
+    this.webExitArmed = true;
+    setTimeout(() => {
+      this.webExitArmed = false;
+    }, 600);
+    this.setRenderAreaActive(false);
+    try {
+      // 进入焦点激活态：用户紧接着的 Tab 直接走焦（否则首次 Tab 仅用于
+      // 激活焦点态，不移动焦点）。
+      this.getUIContext().getFocusController().activate(true);
+      if (wired.length > 0) {
+        this.getUIContext().getFocusController().requestFocus(wired);
+        return;
+      }
+      if (!next) {
+        // 逆向默认落点：Go —— 渲染区走焦顺序上的前一个停靠点（QCefView
+        // 的 previousInFocusChain 语义），一次按键完成转移。
+        this.getUIContext().getFocusController().requestFocus(this.toolbarLastKey);
+        return;
+      }
+      // 正向默认：无可寻址的下一停靠点（环绕目标是内置 TabBar 项）。
+      // 焦点留在渲染区作用域内的隐形 anchor 上（含义="网页视图整体持焦、
+      // 键盘已交还宿主"），下一次 Tab 由框架遍历环绕出网页。直接寻址
+      // anchor（而非渲染区容器）——落点确定，不依赖框架对容器的解析
+      // 行为。requestFocus 失败也无碍：焦点本就在 anchor 上（网页流转
+      // 期间的重锚保持），遍历同样从渲染区作用域出发。
+      this.getUIContext().getFocusController().requestFocus(this.focusAnchorKey);
+    } catch (e) {
+      // 寻址可能被拒绝（如切换动画期的 unfocusable-ancestor）——焦点
+      // 留在 anchor，流程不受影响（下一次 Tab 仍从渲染区作用域遍历）。
+      hilog.warn(DOMAIN, MODULE, "moveFocusOutOfWeb: requestFocus failed: %{public}s",
+        (e as Error).message);
+    }
+  }
+
+  /**
+   * 焦点进入渲染区（走焦遍历或本视图激活请求）。此时网页应接管键盘：
+   * 浏览器获焦 + 窗口级按键过滤生效，随后的 TAB/Shift+TAB 将送入 CEF
+   * 在网页内流转。幂等：已激活时不再重复处理。
+   */
+  private onRenderAreaFocusGained(): void {
+    if (this.webExitArmed) {
+      // 正向边界退出刚把焦点移到渲染区停靠点本身（anchor → Column，整页
+      // 焦点框中间态）：此刻网页不能收回键盘，下一次 Tab 必须继续框架
+      // 遍历环绕出去。armed 由超时/标签页重新激活解除。
+      return;
+    }
+    // 焦点回到渲染区 = 网页重新接管键盘，退出保护解除。
+    this.webExitArmed = false;
+    if (!this.tabActive || !this.isCreated() || this.renderAreaActive) {
+      return;
+    }
+    hilog.info(DOMAIN, MODULE, "render area focus gained — handing keyboard to web, id=%{public}d",
+      this.browserId);
+    this.setRenderAreaActive(true);
+    arkui_cef.cefSendFocusEvent(this.browserId, true);
+  }
+
+  /**
+   * 焦点离开渲染区（移出网页或点击了其它控件）。释放键盘路由，让物理
+   * 按键回到 ArkUI 原生走焦。focusMoveGuard 期间为渲染区内部焦点重锚
+   * （Column ↔ anchor），不视为离开。
+   */
+  private onRenderAreaFocusLost(): void {
+    // 焦点离开渲染区 = 边界退出的遍历已经继续，退出保护确定解除（比
+    // 600ms 超时兜底更可靠：快速连按时环绕重入可能落在超时窗口内，
+    // 残留的 armed 会让网页不接管键盘）。
+    this.webExitArmed = false;
+    if (this.focusMoveGuard || !this.renderAreaActive) {
+      return;
+    }
+    hilog.info(DOMAIN, MODULE, "render area focus lost — releasing keyboard, id=%{public}d",
+      this.browserId);
+    this.setRenderAreaActive(false);
   }
 
   onOsrScrollOffset(offset: string): void {

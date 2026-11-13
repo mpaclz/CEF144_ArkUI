@@ -32,6 +32,22 @@ export struct CefView {
 
   @Prop viewUrl: string = '';
   private interceptFocusKeys: boolean = false;
+  // TAB 焦点流出网页边界时的落点（OnTakeFocus → 宿主移动焦点）。
+  // next=true（Tab 流出网页末尾）→ focusNextId；next=false（Shift+Tab 流出
+  // 网页开头）→ focusPrevId。由容器（如 BrowserView 用自身工具栏末按钮 id
+  // 接线逆向落点实现一键直达）。
+  // 未接线的方向：落到本视图的惰性边界锚点（focusPreAnchorKey/focusPostAnchorKey，
+  // tabIndex(-1)：可 requestFocus 寻址但不参与 Tab 遍历），下一次 Tab/Shift+Tab
+  // 由框架原生遍历从边界继续——正向环绕进 TabBar，逆向到达本视图之前的
+  // 停靠点（TabBar 逆向）。与 OSR 视图（OsrCefView）的边界处理语义一致。
+  focusNextId: string = '';
+  focusPrevId: string = '';
+  // 惰性边界锚点 id（实例唯一）。位于 Stack 之外（不触发 onKeyPreIme 拦截
+  // 接管），tabIndex(-1)（不成为走焦停靠点，环绕落点仍是网页本身）。
+  private static uidCounter: number = 0;
+  private uid: number = 0;
+  private focusPreAnchorKey: string = 'cefAnchorPre';
+  private focusPostAnchorKey: string = 'cefAnchorPost';
 
   private dragOutEnabled: boolean = false;
   private dragOutWindow: window.Window | null = null;
@@ -50,21 +66,40 @@ export struct CefView {
   private onDragOutCallback: DragOutCallback | undefined = undefined;
 
   build() {
-    Stack() {
-      ContentSlot(this.cefContent)
-      if (this.released) {
-        Column() {
-          Text('网页已拖出至新窗口')
-            .fontSize(14)
-            .fontColor(Color.White)
+    Column() {
+      // 惰性边界锚点（网页视图走焦边界）。tabIndex(-1)：可被 requestFocus
+      // 寻址，但 Tab 遍历不会停在上面——正常走焦循环完全感知不到它们。
+      // position 绝对定位使其脱离布局流（不占据 1px 行高，避免把 CEF 原生
+      // 视图挤下移产生缝隙）。网页 TAB 流出边界且该方向未接线时，焦点移
+      // 到锚点上（网页视图整体持焦、键盘已交还宿主），下一次 Tab/Shift+Tab
+      // 从边界继续遍历。
+      Text('')
+        .focusable(true)
+        .tabIndex(-1)
+        .id(this.focusPreAnchorKey)
+        .width(1)
+        .height(1)
+        .opacity(0)
+        .position({ x: 0, y: 0 })
+        .hitTestBehavior(HitTestMode.None)
+
+      Stack() {
+        ContentSlot(this.cefContent)
+        if (this.released) {
+          Column() {
+            Text('网页已拖出至新窗口')
+              .fontSize(14)
+              .fontColor(Color.White)
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor('#666666')
         }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor('#666666')
       }
-    }
-    .onAreaChange((_oldValue, newValue) => {
+      .width('100%')
+      .height('100%')
+      .onAreaChange((_oldValue, newValue) => {
       hilog.info(DOMAIN, MODULE, `onAreaChange: width=${newValue.width}, height=${newValue.height}`);
       let wpx = Math.round(this.getUIContext().vp2px(newValue.width as number));
       let hpx = Math.round(this.getUIContext().vp2px(newValue.height as number));
@@ -105,6 +140,26 @@ export struct CefView {
     .onFocus(() => {
       this.interceptFocusKeys = true;
     })
+    .onBlur(() => {
+      // 焦点离开本视图子树（含内嵌的 CEF 原生节点）：停止拦截走焦键，
+      // 让键盘事件回归 ArkUI 原生走焦。网页内的焦点流转由 CEF 自行维护，
+      // 焦点重新进入子树时 onFocus 会恢复拦截。
+      this.interceptFocusKeys = false;
+    })
+
+      // 惰性边界锚点（同上，网页视图走焦边界的另一侧；绝对定位不占布局空间）
+      Text('')
+        .focusable(true)
+        .tabIndex(-1)
+        .id(this.focusPostAnchorKey)
+        .width(1)
+        .height(1)
+        .opacity(0)
+        .position({ x: 0, y: 0 })
+        .hitTestBehavior(HitTestMode.None)
+    }
+    .width('100%')
+    .height('100%')
   }
 
   handleInternalFocusMove(event: KeyEvent) {
@@ -112,12 +167,34 @@ export struct CefView {
       hilog.warn(DOMAIN, MODULE, "handleInternalFocusMove: browser not created, id: %{public}d", this.browserId);
       return;
     }
-    hilog.info(DOMAIN, MODULE, "Focus control key, send it to CEF: keyCode=%{public}d, keyType=%{public}d",
-      event.keyCode, event.type);
-    arkui_cef.cefSendKeyEvent(this.browserId, event.keyCode, event.type, 0);
+    // 修饰键状态必须一并传给 CEF：Blink 依据 Shift 判定 Tab 是正向还是
+    // 逆向走焦（DefaultTabEventHandler: shiftKey → kBackward），丢失修饰
+    // 键会导致 SHIFT+TAB 也只能正向流转。
+    let mods = 0;
+    if (event.getModifierKeyState) {
+      try {
+        if (event.getModifierKeyState(['Shift'])) {
+          mods |= 0x02; // EVENTFLAG_SHIFT_DOWN
+        }
+        if (event.getModifierKeyState(['Ctrl'])) {
+          mods |= 0x04; // EVENTFLAG_CONTROL_DOWN
+        }
+        if (event.getModifierKeyState(['Alt'])) {
+          mods |= 0x08; // EVENTFLAG_ALT_DOWN
+        }
+      } catch (e) {
+      }
+    }
+    hilog.info(DOMAIN, MODULE, "Focus control key, send it to CEF: keyCode=%{public}d, keyType=%{public}d, mods=%{public}d",
+      event.keyCode, event.type, mods);
+    arkui_cef.cefSendKeyEvent(this.browserId, event.keyCode, event.type, mods);
   }
 
   aboutToAppear(): void {
+    CefView.uidCounter += 1;
+    this.uid = CefView.uidCounter;
+    this.focusPreAnchorKey = 'cefAnchorPre_' + this.uid;
+    this.focusPostAnchorKey = 'cefAnchorPost_' + this.uid;
     if (this.browserId <= 0) {
       hilog.info(DOMAIN, MODULE, "Begin to create browser.");
       this.createCefView(this.cefContent, this.viewUrl, this.viewWidth, this.viewHeight)
@@ -472,6 +549,31 @@ export struct CefView {
 
   onCefFocusTake(next: boolean): void {
     hilog.info(DOMAIN, MODULE, "CEF focus taken, next=%{public}s", next ? "true" : "false");
+    // 网页内 TAB 流转到边界（末尾/开头），CEF 请求宿主把焦点移出网页视图
+    // （对应 QCefView 的 onCefWindowLostTabFocus → nextInFocusChain 走焦）。
+    // 必须主动移动焦点：原生 XComponent 是走焦循环的"陷阱"——未消费的
+    // TAB 会被派发给 XComponent 并送进渲染器，ArkUI 走焦系统无法把焦点
+    // 移出原生节点（也不能照搬 OSR 的"留在停靠点"方案）。
     this.interceptFocusKeys = false;
+    let wired = next ? this.focusNextId : this.focusPrevId;
+    let anchor = next ? this.focusPostAnchorKey : this.focusPreAnchorKey;
+    try {
+      // 进入焦点激活态：用户紧接着的 Tab/Shift+Tab 直接走焦（否则首次
+      // 按键仅用于激活焦点态，不移动焦点）。
+      this.getUIContext().getFocusController().activate(true);
+      if (wired.length > 0) {
+        // 已接线（如 BrowserView 逆向接线到工具栏末按钮）：一键直达。
+        this.getUIContext().getFocusController().requestFocus(wired);
+        return;
+      }
+      // 未接线：焦点落到本视图的惰性边界锚点（网页视图整体持焦、键盘已
+      // 交还宿主）。锚点 tabIndex(-1) 不参与走焦、位于 Stack 之外不触发
+      // 拦截接管；下一次 Tab/Shift+Tab 由框架原生遍历从边界继续——正向
+      // 环绕进 TabBar，逆向到达本视图之前的停靠点。
+      this.getUIContext().getFocusController().requestFocus(anchor);
+    } catch (e) {
+      hilog.error(DOMAIN, MODULE, "focus exit failed (wired=%{public}s, anchor=%{public}s): %{public}s",
+        wired, anchor, (e as Error).message);
+    }
   }
 }

@@ -184,7 +184,10 @@ public:
      * @brief 向浏览器发送触摸事件 (OSR 模式)
      * @param x 触摸 X 坐标
      * @param y 触摸 Y 坐标
-     * @param touchType 触摸类型 (0=down, 1=moved, 2=up, 3=cancel)
+     * @param touchType 触摸类型，与 cef_touch_event_type_t 枚举一致：
+     *                 0=RELEASED(抬起) 1=PRESSED(按下) 2=MOVED(移动) 3=CANCELLED(取消)。
+     *                 注意与 ArkUI TouchType(DOWN=0/UP=1/MOVE=2/CANCEL=3) 不同，
+     *                 ArkTS 侧需自行映射（参考 OsrCefView.handleTouchEvent）。
      * @param pointerId 触摸点 ID
      */
     void sendTouchEvent(int x, int y, int touchType, int pointerId);
