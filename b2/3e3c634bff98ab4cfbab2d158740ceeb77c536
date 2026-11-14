@@ -1,0 +1,14 @@
+.gitignore
+  h_ae917a57683699 23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "b23e3c634bff98ab4cfbab2d158740ceeb77c536",
+  "prompts": {},
+  "humans": {
+    "h_ae917a57683699": {
+      "author": "zhaomangguo <zhaoyinxing221@outlook.com>"
+    }
+  }
+}
