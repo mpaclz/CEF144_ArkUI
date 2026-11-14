@@ -1,0 +1,22 @@
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.cpp
+  h_ae917a57683699 41
+entry/src/main/cpp/arkui_cef/ArkUICefGpuPresenter.cpp
+  h_ae917a57683699 18-19,339
+entry/src/main/cpp/arkui_cef/ArkUICefGpuPresenter.h
+  h_ae917a57683699 17-18,37-41,43-49,57-60,101-102,104
+entry/src/main/cpp/arkui_cef/ArkUICefManager.cpp
+  h_ae917a57683699 9-11,14
+entry/src/main/cpp/napi_init.cpp
+  h_ae917a57683699 514-517,522-524,526,528,530-533
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "5942aafb880cf4d451cfcb54c64fdd1604bb5414",
+  "prompts": {},
+  "humans": {
+    "h_ae917a57683699": {
+      "author": "zhaomangguo <zhaoyinxing221@outlook.com>"
+    }
+  }
+}
