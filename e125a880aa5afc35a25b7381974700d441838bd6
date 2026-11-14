@@ -1,0 +1,14 @@
+entry/src/main/ets/components/OsrCefView.ets
+  h_7a43ad329963da 225-229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.29.1408",
+  "base_commit_sha": "e125a880aa5afc35a25b7381974700d441838bd6",
+  "prompts": {},
+  "humans": {
+    "h_7a43ad329963da": {
+      "author": "loveacat <zhaoyinxing@huawei.com>"
+    }
+  }
+}

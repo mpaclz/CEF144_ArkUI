@@ -1,0 +1,22 @@
+entry/libs/arm64-v8a/libcef.so
+  h_7a43ad329963da 2
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.cpp
+  h_7a43ad329963da 300-309,311-316,319-326,328,399-407
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.h
+  h_7a43ad329963da 168-173,283-285
+entry/src/main/ets/components/OsrCefView.ets
+  h_7a43ad329963da 83-86,346-356,479-484
+entry/src/main/ets/pages/BrowserTabsPage.ets
+  h_7a43ad329963da 8-11,73-74,83-84,92-93,102-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.29.1408",
+  "base_commit_sha": "29077c0069d079942be1ca61ff7070af33a5c7fe",
+  "prompts": {},
+  "humans": {
+    "h_7a43ad329963da": {
+      "author": "loveacat <zhaoyinxing@huawei.com>"
+    }
+  }
+}

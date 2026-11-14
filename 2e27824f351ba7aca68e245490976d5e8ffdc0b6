@@ -1,0 +1,14 @@
+entry/src/main/cpp/arkui_cef/ArkUICefApp.cpp
+  h_7a43ad329963da 46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.29.1408",
+  "base_commit_sha": "2e27824f351ba7aca68e245490976d5e8ffdc0b6",
+  "prompts": {},
+  "humans": {
+    "h_7a43ad329963da": {
+      "author": "loveacat <zhaoyinxing@huawei.com>"
+    }
+  }
+}

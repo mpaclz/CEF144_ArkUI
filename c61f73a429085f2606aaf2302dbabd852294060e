@@ -1,0 +1,14 @@
+tools/ufo_detector_test/ufo_detector.test.mjs
+  h_7a43ad329963da 1-234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.8",
+  "base_commit_sha": "c61f73a429085f2606aaf2302dbabd852294060e",
+  "prompts": {},
+  "humans": {
+    "h_7a43ad329963da": {
+      "author": "loveacat <zhaoyinxing@huawei.com>"
+    }
+  }
+}
