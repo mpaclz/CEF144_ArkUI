@@ -1,0 +1,30 @@
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.cpp
+  h_ae917a57683699 12-16,548,562-579,581
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.h
+  h_ae917a57683699 188-190,194-196,336-340
+entry/src/main/cpp/arkui_cef/CefOhosReparentApi.h
+  h_ae917a57683699 4-12
+entry/src/main/cpp/napi_init.cpp
+  h_ae917a57683699 1185-1186,1565-1568,3464-3477,3562-3579,3581-3591,3594-3599
+entry/src/main/cpp/types/libarkui_cef/Index.d.ts
+  h_ae917a57683699 97-99
+entry/src/main/ets/common/DragOutSession.ets
+  h_ae917a57683699 99-100,104-111,129-134,364-388,400-456,648,656-666,669
+entry/src/main/ets/components/BrowserView.ets
+  h_ae917a57683699 16-21,161-165
+entry/src/main/ets/components/CefView.ets
+  h_ae917a57683699 518-553
+entry/src/main/ets/pages/BrowserTabsPage.ets
+  h_ae917a57683699 60-65,128-141,143,145-150,152-169,171-172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "02f78bc5d54a1052dfbf660aeff1f786a7bbbf4c",
+  "prompts": {},
+  "humans": {
+    "h_ae917a57683699": {
+      "author": "zhaomangguo <zhaoyinxing221@outlook.com>"
+    }
+  }
+}
