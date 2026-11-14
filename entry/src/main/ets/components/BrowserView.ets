@@ -13,11 +13,13 @@ export struct BrowserView {
   @State private cefView: CefView | undefined = undefined;
   @State private hint: string = BrowserView.DEFAULT_HINT;
 
-  // 实例唯一后缀：工具栏末按钮的 focus id 必须全页唯一（多实例场景），
-  // 供 CefView 在 Shift+Tab 流出网页边界时（OnTakeFocus next=false）定向
-  // 移焦（一键直达工具栏末按钮——网页视图走焦顺序上的前一个停靠点）。
-  // 正向（next=true）不接线：落到 CefView 的惰性边界锚点，下一次 Tab 由
-  // 框架遍历环绕进 TabBar，与 OSR 视图的流转语义一致。
+  // Instance-unique suffix: the toolbar's last-button focus id must be
+  // page-unique (multi-instance), so CefView can move focus to it directly
+  // when Shift+Tab flows out of the web boundary (OnTakeFocus next=false) -
+  // one keypress lands on the toolbar's last button, the stop before the
+  // web view in focus order. Forward (next=true) is not wired: focus falls
+  // to CefView's lazy boundary anchor and the next Tab wraps into the
+  // TabBar via framework traversal, matching the OSR view's semantics.
   private static uidCounter: number = 0;
   private uid: number = 0;
   private toolbarLastKey: string = '';
@@ -144,8 +146,9 @@ export struct BrowserView {
             onCreatedCallback: (view) => {
             hilog.info(DOMAIN, MODULE, "CefView created, id: %{public}d", view.getBrowserId())
             this.cefView = view;
-            // 拖出支持：触发后视图自行完成 capture-lost/hide/占位，
-            // 会话负责拉起新窗（adopt/跟随/恢复均由 session 驱动）
+            // Drag-out support: once triggered, the view handles
+            // capture-lost/hide/placeholder itself; the session drives the
+            // new window (adopt/follow/restore are all session-driven).
             view.enableDragOut((info: DragOutInfo) => {
               getDragOutSession().startDragOut(info);
             });

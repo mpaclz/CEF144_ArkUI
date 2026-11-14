@@ -18,7 +18,8 @@ interface DragDataInfo {
   filePaths: string;
 }
 
-// 每个 GPU OSR 实例需要唯一 XComponent id，避免同页多实例冲突。
+// Each GPU OSR instance needs a unique XComponent id so multiple
+// instances on one page do not collide.
 let g_gpuComponentSeq = 0;
 
 // XComponent(SURFACE) lifecycle controller. The onSurface* overrides are
@@ -226,11 +227,13 @@ export struct OsrCefView {
   @State private dragPreviewText: string = '';
 
   @Prop viewUrl: string = '';
-  // 迁移模式（>0 时）：复用既有 OSR browser（拖出成新主窗后的新窗视图），
-  // aboutToAppear 跳过 createOsrCefView，改调 adoptOsrCefView 重绑回调。
+  // Adopt mode (>0): reuse an existing OSR browser (this is the new-window
+  // view after a drag-out tear-off). aboutToAppear skips createOsrCefView
+  // and calls adoptOsrCefView to rebind the callbacks instead.
   @Prop adoptBrowserId: number = -1;
-  // browser 已被拖出（拉到新窗口）的占位态：条件渲染移除 XComponent，
-  // destroy() 跳过 destroyOsrCefView（browser 归新窗所有）。
+  // Placeholder state after the browser was torn off to a new window:
+  // conditional rendering removes the XComponent and destroy() skips
+  // destroyOsrCefView (the browser belongs to the new window now).
   @State private releasedBrowser: boolean = false;
   // Maximum OSR frame rate (fps). The render pipeline now runs fully
   // synchronous (dirty-region writePixelsSync, no per-frame createPixelMap),
@@ -294,10 +297,11 @@ export struct OsrCefView {
   // separate gpuTabActive prop are gone).
   @Prop @Watch('onActiveUidChanged') activeUid: string = '';
   @Prop gpuEnabled: boolean = false;
-  // 每个实例独立 XComponent id，SurfaceId 路线不设置 libraryname=adapter。
+  // Per-instance XComponent id; the SurfaceId route sets no libraryname=adapter.
   private gpuComponentId: string = 'osr_gpu_' + (++g_gpuComponentSeq);
   private disposed: boolean = false;
-  // surfaceReady 用上方 CPU 模式的 @State 声明（GPU 回调写、build 读，二者共用）。
+  // surfaceReady reuses the CPU-mode @State above (GPU callbacks write,
+  // build reads; both modes share it).
   private surfaceSizeReady: boolean = false;
   private layoutSizeReady: boolean = false;
   private gpuSurfaceId: string = '';
@@ -308,19 +312,21 @@ export struct OsrCefView {
     (id: string, w: number, h: number) => this.onGpuSurfaceChanged(id, w, h),
     (id: string) => this.onGpuSurfaceDestroyed(id));
 
-  // ==================== 拖出（tear-off）支持 ====================
-  // 拖出检测状态（ArkTS 侧实现，检测嵌在 handleMouseEvent 的 Move 分支，
-  // 与 windowed 的 napi NODE_ON_MOUSE 检测互不影响）
-  // 公开字段：BrowserTabsPage 以构造参数赋值（与 CefView.onCreatedCallback
-  // 同款模式）；也可创建后调用 enableDragOut。
+  // ==================== Tear-off (drag-out) support ====================
+  // Drag-out detection state (ArkTS side; detection is embedded in the Move
+  // branch of handleMouseEvent and does not interfere with the windowed
+  // napi NODE_ON_MOUSE detection).
+  // Public field: assigned as a constructor parameter by BrowserTabsPage
+  // (same pattern as CefView.onCreatedCallback); enableDragOut works after
+  // creation too.
   onDragOutCallback: ((info: DragOutInfo) => void) | undefined = undefined;
-  // session 源登记令牌（0=未登记）
+  // Session source registration token (0 = not registered).
   private sessionSourceKey: number = 0;
-  // 本次按压会话去重（Press 置 false，触发后置 true，Release 复位）
+  // Per-press session dedup (Press sets false, trigger sets true, Release resets).
   private dragOutSessionTriggered: boolean = false;
-  private dragOutPressX: number = 0;      // vp，相对渲染区
+  private dragOutPressX: number = 0;      // vp, relative to the render area
   private dragOutPressY: number = 0;
-  private dragOutPressScreenX: number = 0; // px，屏幕系
+  private dragOutPressScreenX: number = 0; // px, screen coordinates
   private dragOutPressScreenY: number = 0;
   private static readonly DRAG_OUT_MIN_DRAG_VP: number = 10;
   private static readonly DRAG_OUT_EDGE_PX: number = 24;
@@ -365,18 +371,21 @@ export struct OsrCefView {
       (surfaceId: string, w: number, h: number) => { this.onXcSurfaceChanged(surfaceId, w, h); },
       (surfaceId: string) => { this.onXcSurfaceDestroyed(surfaceId); });
     if (this.adoptBrowserId > 0) {
-      // 迁移模式：复用既有 browser，重绑回调到本实例（新窗口视图），
-      // surface 生命周期走原路径（onXcSurfaceCreated → attachSurfaceIfPossible）。
-      // 注意：不在此处登记 session 源（仍由源视图持有该 browserId 的登记，
-      // 保证 adopt 失败/超时时 abort 能恢复源视图）。
+      // Adopt mode: reuse the existing browser and rebind the callbacks to
+      // this instance (the new-window view); the surface lifecycle follows
+      // the original path (onXcSurfaceCreated -> attachSurfaceIfPossible).
+      // Note: do NOT register the session source here - the source view
+      // still holds the registration for this browserId, so an adopt
+      // failure/timeout abort can restore the source view.
       this.browserId = this.adoptBrowserId;
       this.cefCreating = false;
       this.cachedDsf = this.getUIContext().vp2px(1);
       this.adoptCallbacksToExistingBrowser();
       this.registerKeyFilter();
-      // 迁回前置钩子：关闭本窗时由会话先解除本实例的 surface（必须先于
-      // 源视图重挂——detachOsrSurface 无条件删除 map 项，顺序颠倒会误删
-      // 源视图随后的新绑定）。
+      // Pre-migration hook: when this window closes, the session detaches
+      // this instance's surface first (must happen BEFORE the source view
+      // re-attaches - detachOsrSurface removes the map entry unconditionally,
+      // and the reverse order would delete the source view's fresh binding).
       getDragOutSession().setTearOffHooks({
         releaseBrowser: () => { this.releaseBrowser(); }
       });
@@ -386,7 +395,8 @@ export struct OsrCefView {
       return;
     }
     if (this.gpuEnabled) {
-      // GPU 模式推迟到 Surface 就绪且有有效尺寸后再创建浏览器；不在这里提前创建。
+      // GPU mode defers browser creation until the Surface is ready with a
+      // valid size; do not create early here.
       hilog.info(DOMAIN, MODULE, "GPU OSR waiting for XComponent surface before create");
       return;
     }
@@ -407,7 +417,8 @@ export struct OsrCefView {
   }
 
   aboutToDisappear(): void {
-    // 先置销毁标记，晚到的 surface/browser 回调不得复活已消失组件。
+    // Set the disposal flag first: late surface/browser callbacks must not
+    // revive a vanished component.
     this.disposed = true;
     this.creationGeneration++;
     this.destroy();
@@ -480,7 +491,8 @@ export struct OsrCefView {
       // Render area — all events are captured and forwarded to CEF
       Column() {
         if (this.gpuEnabled) {
-          // GPU 呈现节点常驻，Surface 生命周期由 controller 管理；不依赖 browserId 才创建。
+          // The GPU present node is permanent and the Surface lifecycle is
+          // controller-managed; creation does not depend on browserId.
           // NOTE: the XComponent (SURFACE type) is NOT focusable — key events
           // and focus land on the anchor leaf below and the parent Column.
           XComponent({ id: this.gpuComponentId, type: XComponentType.SURFACE,
@@ -488,8 +500,9 @@ export struct OsrCefView {
             .width('100%')
             .height('100%')
         } else if (this.releasedBrowser) {
-          // 拖出占位：browser 已迁往新窗口（XComponent 卸载触发
-          // onXcSurfaceDestroyed → 现有 detach 链路）
+          // Tear-off placeholder: the browser has moved to the new window
+          // (XComponent teardown fires onXcSurfaceDestroyed -> the existing
+          // detach chain).
           Column() {
             Text('网页已拖出至新窗口')
               .fontSize(14)
@@ -560,9 +573,12 @@ export struct OsrCefView {
           })
       }
       .width('100%')
-      // layoutWeight 严格按剩余空间分配高度：flexGrow 会被子节点 100% 高度
-      // 撑大的固有需求（首遍解析到 TabContent 全高）顶出父容器，导致渲染区
-      // 底部被裁剪、状态栏被挤出窗口。layoutWeight 忽略内容需求，只取剩余空间。
+      // layoutWeight allocates strictly from the remaining space: flexGrow
+      // gets blown out of the parent by the child's intrinsic 100%-height
+      // demand (the first layout pass resolves to the full TabContent height),
+      // clipping the bottom of the render area and pushing the status bar out
+      // of the window. layoutWeight ignores content demand and takes only the
+      // leftover space.
       .layoutWeight(1)
       .clip(true)
       .backgroundColor(Color.Black)
@@ -669,7 +685,8 @@ export struct OsrCefView {
           this.viewWidth = wpx;
           this.viewHeight = hpx;
           this.layoutSizeReady = true;
-          // GPU 模式：真实布局尺寸到达后若 Surface 已就绪即可创建。
+          // GPU mode: once real layout sizes arrive and the Surface is
+          // ready, creation can proceed.
           if (this.gpuEnabled && this.surfaceReady) {
             this.surfaceSizeReady = true;
             this.tryCreateGpuBrowser();
@@ -974,10 +991,13 @@ export struct OsrCefView {
 
   // Pause/resume the CEF render pipeline (WasHidden). Called from visibility
   // transitions only — the osrHidden guard makes repeated events idempotent.
-  // [tear-off fix] 当 browser 已被交还（releasedBrowser=true，含迁回源视图
-  // 或拖出后交予新窗实例）时本实例不得再暂停其渲染：关闭新窗瞬间 TearOff
-  // 实例随窗口转后台触发的 onVisibleAreaChange(false) 会把刚迁回源视图
-  // 的浏览器 WasHidden(true)——表现为恢复后黑屏、必须切 TAB 才显示。
+  // [tear-off fix] Once the browser has been handed back
+  // (releasedBrowser=true, either migrated home or given to a new-window
+  // instance), this instance must no longer pause its rendering: the moment
+  // the new window closes, the TearOff instance goes background with the
+  // window and onVisibleAreaChange(false) would WasHidden(true) the browser
+  // that just moved back to the source view - symptom: black screen after
+  // restore until the user switches tabs.
   private setOsrHidden(hidden: boolean): void {
     if (!this.isCreated() || this.osrHidden === hidden || this.releasedBrowser) {
       return;
@@ -1021,8 +1041,10 @@ export struct OsrCefView {
     if (this.surfaceAttached && this.isCreated()) {
       arkui_cef.updateOsrSurfaceGeometry(this.browserId, w, h);
     }
-    // [tear-off fix] attach 可能因"surface 尺寸未知"被暂缓——尺寸现已
-    // 到达，立即重试（否则要等到下一次 surface 事件才 attach，期间黑屏）。
+    // [tear-off fix] The attach may have been deferred because the surface
+    // size was unknown - the size has now arrived, retry immediately
+    // (otherwise attach waits for the next surface event and the screen
+    // stays black in between).
     if (!this.surfaceAttached) {
       this.attachSurfaceIfPossible();
     }
@@ -1052,11 +1074,12 @@ export struct OsrCefView {
     }
     let w = this.pendingSurfaceW;
     let h = this.pendingSurfaceH;
-    // [tear-off fix] 严格要求 XComponent 上报的真实 surface 尺寸
-    // （onSurfaceChanged 提供），不用 viewWidth 兜底（其默认值 800x600 会
-    // 注册错误几何，引发一串尺寸不匹配丢帧——见 TearOff 日志
-    // "attachOsrSurface: 800x600" 后的 mismatch 自愈）。onSurfaceChanged
-    // 必然跟随 onSurfaceCreated 到达，其末尾会重试本方法。
+    // [tear-off fix] Strictly require the real surface size reported by
+    // the XComponent (from onSurfaceChanged); never fall back to viewWidth
+    // (its 800x600 default registers wrong geometry and triggers a chain of
+    // size-mismatch dropped frames - see the TearOff logs after
+    // "attachOsrSurface: 800x600"). onSurfaceChanged always follows
+    // onSurfaceCreated and retries this method at its end.
     if (w <= 0 || h <= 0) {
       hilog.info(DOMAIN, MODULE,
         "attachSurfaceIfPossible: defer (surface size unknown), browserId=%{public}d", this.browserId);
@@ -1077,13 +1100,17 @@ export struct OsrCefView {
       if (this.pendingSurfaceW > 0) {
         arkui_cef.updateOsrSurfaceGeometry(this.browserId, this.pendingSurfaceW, this.pendingSurfaceH);
       }
-      // [tear-off fix] 任何模式 attach 成功后都强制全量重绘：无 surface
-      // 期间 paint 事件的帧元数据已被消费丢弃（napi 侧丢弃不可观测帧），
-      // 静态内容的 surface 首帧必须由 invalidate 重新产生——否则黑屏
-      // 直到用户点击/滚动/切 TAB 触发重绘（实测三种现象的根因）。
+      // [tear-off fix] After a successful attach in ANY mode, force a full
+      // repaint: while no surface was attached, paint-event frame metadata
+      // was consumed and dropped (napi drops unobservable frames), so the
+      // surface's first frame for static content must be regenerated by
+      // invalidate - otherwise the screen stays black until the user
+      // clicks/scrolls/switches tabs (root cause of all three observed
+      // symptoms).
       arkui_cef.cefInvalidate(this.browserId);
       if (this.adoptBrowserId > 0) {
-        // 迁移模式：surface 接管成功即 adopt 完成，通知会话开始跟随。
+        // Adopt mode: taking over the surface completes the adopt; notify
+        // the session to start following.
         getDragOutSession().onAdoptResult(true);
       }
     } else {
@@ -1091,16 +1118,19 @@ export struct OsrCefView {
       this.useSurfaceMode = false;
       this.pendingSurfaceId = undefined;
       if (this.adoptBrowserId > 0) {
-        // 迁移模式：回退显示路径同样视作 adopt 完成（回调已重绑到本实例，
-        // 帧数据走 PixelMap 重建链路）。
+        // Adopt mode: the fallback display path also counts as an adopt
+        // completion (callbacks are already rebound to this instance; frame
+        // data flows through the PixelMap rebuild chain).
         getDragOutSession().onAdoptResult(true);
       }
     }
   }
 
   destroy(): void {
-    // 先递增代际并置销毁标记，取消等待 CEF 运行中的创建循环，并让迟到的
-    // onOsrCreated 立即关闭新 browser，而不是绑定已消失组件。
+    // Bump the generation and set the disposal flag first: this cancels the
+    // create loop that may be waiting for CEF, and makes a late onOsrCreated
+    // close the new browser immediately instead of binding it to a vanished
+    // component.
     this.disposed = true;
     this.creationGeneration++;
     this.detachInputMethod();
@@ -1109,10 +1139,13 @@ export struct OsrCefView {
       this.pendingBrowserId = -1;
     }
     if (this.releasedBrowser) {
-      // browser 已迁往新窗口：只做本地清理，不销毁 browser，也不解除
-      // pixelmap 原生登记（新视图 rebuildPixelMap 时会整体替换登记；
-      // 此处释放 ArkTS PixelMap 对象会让原生句柄悬垂）——占位对象留待
-      // 进程回收（仅回退显示路径会走到，surface 主路径无 PixelMap）。
+      // The browser has moved to a new window: only clean up locally. Do
+      // NOT destroy the browser and do NOT unregister the native pixelmaps
+      // (the new view's rebuildPixelMap replaces the registration wholesale;
+      // releasing the ArkTS PixelMap objects here would dangle the native
+      // handles) - the placeholder objects are left for the process to
+      // reclaim (only the fallback display path reaches this; the surface
+      // main path has no PixelMaps).
       hilog.info(DOMAIN, MODULE,
         "Destroy released OSR view (browser kept alive), id: %{public}d", this.browserId);
       if (this.surfaceAttached) {
@@ -1138,10 +1171,12 @@ export struct OsrCefView {
     this.pendingSurfaceId = undefined;
     if (this.isCreated()) {
       if (this.adoptBrowserId > 0 && getDragOutSession().shouldKeepBrowserAlive(this.browserId)) {
-        // 迁移模式且 browser 已回源视图存活（abort 恢复 / 关闭迁回成功）：
-        // 保活 browser，仅做本视图清理。surface 已 detach；PixelMap 对象不
-        // 释放（原生登记仍指向它们，与上方 releasedBrowser 分支同理，留待
-        // 源视图/下次 attach 整体替换）。
+        // Adopt mode with the browser alive back at the source view (abort
+        // restored it, or the close-migration succeeded): keep the browser
+        // alive and only clean up this view. The surface is detached; the
+        // PixelMap objects are not released (the native registration still
+        // points at them - same rationale as the releasedBrowser branch
+        // above; the source view / next attach replaces them wholesale).
         hilog.info(DOMAIN, MODULE,
           "Destroy adopt OSR view without browser teardown (browser returned to source), id: %{public}d",
           this.browserId);
@@ -1222,7 +1257,8 @@ export struct OsrCefView {
     const generation = this.creationGeneration;
     while (!arkui_cef.isCefRunning()) {
       await this.sleep(20);
-      // 等待 CEF 运行期间组件可能已销毁或 Surface 失效，必须放弃本次创建。
+      // While waiting for CEF the component may have been disposed or the
+      // Surface invalidated; this creation attempt must be abandoned.
       if (this.disposed || generation !== this.creationGeneration ||
           (this.gpuEnabled && !this.surfaceReady)) {
         hilog.info(DOMAIN, MODULE, "createOsrCefView aborted: disposed/generation/surface changed");
@@ -1274,7 +1310,8 @@ export struct OsrCefView {
 
   onOsrCreated(id: number, generation: number): void {
     this.cefCreating = false;
-    // 组件已销毁或 Surface 代际变化：立即关闭迟到的 browser，不绑定、不初始化输入。
+    // Component disposed or Surface generation changed: close the late
+    // browser immediately - no binding, no input initialization.
     if (this.disposed || generation !== this.creationGeneration ||
         (this.gpuEnabled && !this.surfaceReady)) {
       hilog.info(DOMAIN, MODULE, "onOsrCreated for stale generation=%{public}d, destroying id=%{public}d",
@@ -1287,9 +1324,12 @@ export struct OsrCefView {
     hilog.info(DOMAIN, MODULE, "OSR CEF created, browserId=%{public}d", id);
     this.browserId = id;
     this.pendingBrowserId = -1;
-    // 创建期间所在标签可能已切走：立即同步可见性，避免隐藏标签创建后仍产帧。
-    // native 侧对 browser 未创建时的调用也有 pending 兜底，此处是 ArkTS 侧的对应保障。
-    // （CPU OSR 视图无 GPU 呈现器，可见性由 onVisibleAreaChange 边沿通道管理。）
+    // The tab may have been switched away during creation: sync visibility
+    // immediately so a hidden tab does not keep producing frames after
+    // creation. The native side also has a pending fallback for calls made
+    // before the browser exists; this is the ArkTS-side counterpart. (CPU
+    // OSR views have no GPU presenter; their visibility follows the
+    // onVisibleAreaChange edge channel.)
     if (this.gpuEnabled && !this.isMyTurn()) {
       hilog.info(DOMAIN, MODULE, "onOsrCreated: tab inactive, apply WasHidden, id=%{public}d", id);
       arkui_cef.cefSetWindowlessVisibility(id, false);
@@ -1334,14 +1374,16 @@ export struct OsrCefView {
     if (this.visibleNow || this.isMyTurn()) {
       this.setTabActive(true);
     }
-    // 构造参数已传 onDragOutCallback（BrowserTabsPage 场景）时补登记会话源
+    // When onDragOutCallback was passed as a constructor parameter
+    // (BrowserTabsPage scenario), register the session source too.
     if (this.onDragOutCallback !== undefined) {
       this.registerSessionSource();
     }
   }
 
-  // ==================== GPU Surface 生命周期 ====================
-  // GPU 模式：surfaceId 与有效尺寸两者都就绪才创建 browser；哪个先到只缓存。
+  // ==================== GPU Surface lifecycle ====================
+  // GPU mode: create the browser only when BOTH the surfaceId and a valid
+  // size are ready; whichever arrives first is just cached.
 
   private onGpuSurfaceCreated(surfaceId: string): void {
     if (this.disposed) {
@@ -1349,7 +1391,9 @@ export struct OsrCefView {
     }
     this.gpuSurfaceId = surfaceId;
     this.surfaceReady = true;
-    // 首帧可能只回调 Created；真实布局尺寸若已就绪则视为尺寸就绪（默认 800×600 不算）。
+    // The first callback may carry only Created; if the real layout size
+    // is already available the size counts as ready (800x600 default does
+    // not).
     if (this.layoutSizeReady) {
       this.surfaceSizeReady = true;
     }
@@ -1363,7 +1407,7 @@ export struct OsrCefView {
     if (this.disposed) {
       return;
     }
-    // SurfaceRect 尺寸单位为 px，不再 vp2px。
+    // SurfaceRect sizes are in px; no vp2px conversion.
     if (w > 0 && h > 0) {
       this.viewWidth = w;
       this.viewHeight = h;
@@ -1378,7 +1422,8 @@ export struct OsrCefView {
 
   private onGpuSurfaceDestroyed(surfaceId: string): void {
     hilog.info(DOMAIN, MODULE, "GPU onSurfaceDestroyed id=%{public}s", surfaceId);
-    // 立即使 Surface 失效并递增代际，阻止在途创建与后续帧提交到死 Surface。
+    // Invalidate the Surface and bump the generation immediately: stop
+    // in-flight creations and further frame submissions to a dead Surface.
     this.surfaceReady = false;
     this.gpuSurfaceId = '';
     this.surfaceSizeReady = false;
@@ -1648,21 +1693,26 @@ export struct OsrCefView {
     this.moveFocusOutOfWeb(next);
   }
 
-  // ==================== 网页内外焦点流转（TAB 边界处理） ====================
+  // ==================== Focus flow across the web boundary (TAB handling) ====================
   //
-  // 焦点模型：渲染区（含隐形 anchor）是 ArkUI 走焦链中的一个"停靠点"。
-  // 焦点落在渲染区（onFocus）→ 网页接管键盘（SetFocus + 窗口级按键过滤）；
-  // TAB 在网页内部流转时被过滤层消费；流到网页边界时 CEF 回调 OnTakeFocus，
-  // 宿主在此把焦点"移出"：
-  //   逆向（Shift+Tab 流出网页开头）→ 落到 Go（渲染区走焦顺序上的前一个
-  //   停靠点，可按 id 寻址），一次按键完成转移；
-  //   正向（Tab 流出网页末尾）→ 渲染区之后没有可按 id 寻址的停靠点（走焦
-  //   环绕目标是内置 TabBar 的激活 Tab 名项，无组件 id），焦点留在渲染区
-  //   停靠点本身（整页焦点框）、键盘已交还宿主，下一次 Tab 由框架原生
-  //   遍历环绕到 TabBar 继续流转。
-  // 移出后过滤层停止消费，键盘事件回到 ArkUI 原生走焦，直到下一轮焦点
-  // 遍历再次落在渲染区（onFocus）完成闭环。
-
+  // Focus model: the render area (with its invisible anchor) is one "stop"
+  // in the ArkUI focus chain. When focus lands on the render area
+  // (onFocus), the web page takes over the keyboard (SetFocus + the
+  // window-level key filter); TABs circulating INSIDE the page are consumed
+  // by the filter, and when the flow reaches the page boundary CEF calls
+  // OnTakeFocus and the host "moves focus out" here:
+  //   Backward (Shift+Tab leaving the page start) -> land on Go (the
+  //   addressable-by-id stop before the render area in focus order); one
+  //   keypress completes the transfer.
+  //   Forward (Tab leaving the page end) -> there is no id-addressable stop
+  //   after the render area (the wrap-around target is the built-in
+  //   TabBar's active tab label, which has no component id), so focus stays
+  //   on the render area stop itself (whole-page focus frame), the keyboard
+  //   is back with the host, and the NEXT Tab wraps around to the TabBar
+  //   via the framework's native traversal.
+  // After moving out, the filter stops consuming and key events return to
+  // ArkUI native focus traversal, until a later traversal lands on the
+  // render area again (onFocus), closing the loop.
   /**
    * 网页边界退出：把键盘交还宿主，并按方向转移焦点。
    * @param next true=正向（Tab 流出网页末尾），false=逆向（Shift+Tab 流出网页开头）
@@ -1674,37 +1724,46 @@ export struct OsrCefView {
     let wired = next ? this.focusNextId : this.focusPrevId;
     hilog.info(DOMAIN, MODULE, "moveFocusOutOfWeb: next=%{public}s, wired=%{public}s",
       next ? "true" : "false", wired);
-    // 网页侧焦点已在 OnTakeFocus 链路中清空；同步释放浏览器焦点与键盘路由，
-    // 使后续按键回归 ArkUI 原生走焦。
+    // Web-side focus was already cleared in the OnTakeFocus chain; also
+    // release the browser focus and keyboard routing so subsequent keys
+    // return to ArkUI native focus traversal.
     this.webExitArmed = true;
     setTimeout(() => {
       this.webExitArmed = false;
     }, 600);
     this.setRenderAreaActive(false);
     try {
-      // 进入焦点激活态：用户紧接着的 Tab 直接走焦（否则首次 Tab 仅用于
-      // 激活焦点态，不移动焦点）。
+      // Enter the focus-armed state: the user's very next Tab moves focus
+      // directly (otherwise the first Tab only activates the focus state
+      // without moving).
       this.getUIContext().getFocusController().activate(true);
       if (wired.length > 0) {
         this.getUIContext().getFocusController().requestFocus(wired);
         return;
       }
       if (!next) {
-        // 逆向默认落点：Go —— 渲染区走焦顺序上的前一个停靠点（QCefView
-        // 的 previousInFocusChain 语义），一次按键完成转移。
+        // Backward default landing: Go - the stop before the render area
+        // in focus order (the previousInFocusChain semantics of QCefView);
+        // one keypress completes the transfer.
         this.getUIContext().getFocusController().requestFocus(this.toolbarLastKey);
         return;
       }
-      // 正向默认：无可寻址的下一停靠点（环绕目标是内置 TabBar 项）。
-      // 焦点留在渲染区作用域内的隐形 anchor 上（含义="网页视图整体持焦、
-      // 键盘已交还宿主"），下一次 Tab 由框架遍历环绕出网页。直接寻址
-      // anchor（而非渲染区容器）——落点确定，不依赖框架对容器的解析
-      // 行为。requestFocus 失败也无碍：焦点本就在 anchor 上（网页流转
-      // 期间的重锚保持），遍历同样从渲染区作用域出发。
+      // Forward default: there is no addressable next stop (the
+      // wrap-around target is a built-in TabBar item). Focus stays on the
+      // invisible anchor inside the render area scope (meaning "the web view
+      // as a whole holds focus; the keyboard is back with the host"), and
+      // the next Tab wraps out of the page via framework traversal. Address
+      // the anchor directly (not the render-area container) - the landing
+      // point is deterministic and does not depend on how the framework
+      // resolves containers. A failed requestFocus is harmless: focus is
+      // already on the anchor (kept re-anchored while the page circulated),
+      // and traversal starts from the render area scope either way.
       this.getUIContext().getFocusController().requestFocus(this.focusAnchorKey);
     } catch (e) {
-      // 寻址可能被拒绝（如切换动画期的 unfocusable-ancestor）——焦点
-      // 留在 anchor，流程不受影响（下一次 Tab 仍从渲染区作用域遍历）。
+      // The address request may be rejected (e.g. an unfocusable ancestor
+      // during a switch animation) - focus stays on the anchor and the flow
+      // is unaffected (the next Tab still traverses from the render area
+      // scope).
       hilog.warn(DOMAIN, MODULE, "moveFocusOutOfWeb: requestFocus failed: %{public}s",
         (e as Error).message);
     }
@@ -1717,12 +1776,16 @@ export struct OsrCefView {
    */
   private onRenderAreaFocusGained(): void {
     if (this.webExitArmed) {
-      // 正向边界退出刚把焦点移到渲染区停靠点本身（anchor → Column，整页
-      // 焦点框中间态）：此刻网页不能收回键盘，下一次 Tab 必须继续框架
-      // 遍历环绕出去。armed 由超时/标签页重新激活解除。
+      // The forward boundary exit just moved focus onto the render-area
+      // stop itself (anchor -> Column, a whole-page focus-frame
+      // intermediate state): at this moment the page must NOT take the
+      // keyboard back, and the next Tab must continue wrapping out via
+      // framework traversal. armed is cleared by timeout or by tab
+      // re-activation.
       return;
     }
-    // 焦点回到渲染区 = 网页重新接管键盘，退出保护解除。
+    // Focus back on the render area = the page retakes the keyboard; clear
+    // the exit protection.
     this.webExitArmed = false;
     if (!this.tabActive || !this.isCreated() || this.renderAreaActive) {
       return;
@@ -1739,9 +1802,11 @@ export struct OsrCefView {
    * （Column ↔ anchor），不视为离开。
    */
   private onRenderAreaFocusLost(): void {
-    // 焦点离开渲染区 = 边界退出的遍历已经继续，退出保护确定解除（比
-    // 600ms 超时兜底更可靠：快速连按时环绕重入可能落在超时窗口内，
-    // 残留的 armed 会让网页不接管键盘）。
+    // Focus leaving the render area = the boundary-exit traversal has
+    // continued, so the exit protection is definitively cleared (more
+    // reliable than the 600ms timeout fallback: on fast repeated presses the
+    // wrap-around re-entry may land inside the timeout window, and a stale
+    // armed flag would stop the page from taking the keyboard).
     this.webExitArmed = false;
     if (this.focusMoveGuard || !this.renderAreaActive) {
       return;
@@ -2128,7 +2193,7 @@ export struct OsrCefView {
       .constraintSize({ maxWidth: 200 })
   }
 
-  // ==================== Touch Event (触摸屏) ====================
+  // ==================== Touch events (touchscreen) ====================
   handleTouchEvent(event: TouchEvent): void {
     if (!this.isCreated()) {
       return;
@@ -2198,7 +2263,7 @@ export struct OsrCefView {
     }
   }
 
-  // ==================== Mouse Event (鼠标移动/点击/触摸板单指) ====================
+  // ==================== Mouse events (move/click/one-finger touchpad) ====================
   // Touchpad single-finger input also arrives here as SourceType.Mouse
   // (verified from docs) — tap=Press/Release, swipe=Move, so touchpad is
   // fully covered by this handler plus handleAxisEvent (two-finger scroll).
@@ -2274,7 +2339,7 @@ export struct OsrCefView {
       }
       return false;
     }
-    // Fallback（pressedButtons 不可用）：按本地跟踪。
+    // Fallback (pressedButtons unavailable): use local tracking.
     return this.mouseButtonPressed;
   }
 
@@ -2332,7 +2397,7 @@ export struct OsrCefView {
           clickCount = this.clickCount;
           this.mouseButtonPressed = true;
 
-          // 拖出检测会话起点（左键按下）
+          // Drag-out detection session start (left button down).
           this.dragOutSessionTriggered = false;
           this.dragOutPressX = event.x;
           this.dragOutPressY = event.y;
@@ -2365,10 +2430,12 @@ export struct OsrCefView {
         arkui_cef.cefSendMouseMove(this.browserId, x, y, false, moveMods);
         this.lastMouseX = x;
         this.lastMouseY = y;
-        // 窗口内拖出检测（左键按住 + 位移超阈值 + 进入内容区边缘带）。
-        // 左键校验用系统按键状态（leftButtonHeld）：本地 mouseButtonPressed
-        // 为 true 但系统报告无左键 = Release 在窗外丢失（P2-3），自愈复位
-        // 本地状态并跳过本次检测。
+        // In-window drag-out detection (left button held + displacement over
+        // threshold + entered the content-area edge band). The left-button
+        // check uses the system button state (leftButtonHeld): local
+        // mouseButtonPressed true while the system reports no left button
+        // means the Release was lost outside the window (P2-3); self-heal by
+        // resetting the local state and skipping this detection round.
         if (this.onDragOutCallback !== undefined && !this.dragOutSessionTriggered &&
             this.mouseButtonPressed && !this.releasedBrowser) {
           if (!this.leftButtonHeld(event)) {
@@ -2385,7 +2452,7 @@ export struct OsrCefView {
     }
   }
 
-  // ==================== 拖出（tear-off）支持 ====================
+  // ==================== Tear-off (drag-out) support ====================
 
   /**
    * 启用拖出检测。与 CefView 的 enableDragOut(cb) 对应；由于 OSR 检测
@@ -2418,7 +2485,8 @@ export struct OsrCefView {
           hilog.info(DOMAIN, MODULE, "drag-out settled, browserId=%{public}d", this.browserId);
         },
         onTakeBack: (tearOffContent: NodeContent | undefined, done: (ok: boolean) => void) => {
-          // OSR 迁回不使用 NodeContent（surface 已由会话先解除）
+          // OSR migration home does not use NodeContent (the session has
+          // already detached the surface).
           this.takeBackFromTearOff(done);
         }
       }
@@ -2468,14 +2536,17 @@ export struct OsrCefView {
     let props = win.getWindowProperties();
     let drawable = props.drawableRect;
     let winRect = props.windowRect;
-    // 内容区原点（窗口坐标）。实测 drawableRect.left/top 恒为 (0,0)（窗口
-    // 相对）而 windowRect.left/top 为屏幕绝对坐标，差值可能为负——钳到
-    // >=0 防止边缘触发带错位（与 CefView.refreshDragOutRectFromWindow 同因）。
+    // Content-area origin (window coordinates). In practice
+    // drawableRect.left/top are always (0,0) (window-relative) while
+    // windowRect.left/top are absolute screen coordinates, so the
+    // difference can be negative - clamp to >=0 so the edge trigger band
+    // cannot misplace (same cause as CefView.refreshDragOutRectFromWindow).
     let contentOffX = Math.max(0, drawable.left - winRect.left);
     let contentOffY = Math.max(0, drawable.top - winRect.top);
     let contentX = event.windowX * dsf - contentOffX;
     let contentY = event.windowY * dsf - contentOffY;
-    // 触发带：距内容区任一边界 edgePx 以内（含越界——快速甩出时不丢触发）。
+    // Trigger band: within edgePx of any content-area border (overshoot
+    // included, so a fast flick out still triggers).
     let edge = OsrCefView.DRAG_OUT_EDGE_PX;
     let nearEdge = contentX <= edge || contentY <= edge ||
       contentX >= drawable.width - edge || contentY >= drawable.height - edge;
@@ -2486,7 +2557,8 @@ export struct OsrCefView {
     hilog.info(DOMAIN, MODULE,
       "onDragOut: browserId=%{public}d, cur=(%{public}d,%{public}d)",
       this.browserId, Math.round(event.displayX * dsf), Math.round(event.displayY * dsf));
-    // 终止网页内拖拽态 + 释放 browser（表面/IME/焦点，browser 保留）
+    // End the in-page drag state + release the browser (surface/IME/focus;
+    // the browser itself is kept).
     arkui_cef.cefSendCaptureLost(this.browserId);
     this.releaseBrowser();
     let info: DragOutInfo = {
@@ -2522,8 +2594,10 @@ export struct OsrCefView {
     this.setRenderAreaActive(false);
     this.detachInputMethod();
     if (this.surfaceAttached) {
-      // 先显式解除（幂等），随后 releasedBrowser 条件渲染卸载 XComponent
-      // 触发的 onXcSurfaceDestroyed 会因 surfaceAttached 已为 false 跳过重复解除。
+      // Detach explicitly first (idempotent); the onXcSurfaceDestroyed fired
+      // later by the releasedBrowser conditional-render teardown of the
+      // XComponent then skips the duplicate detach because
+      // surfaceAttached is already false.
       this.surfaceAttached = false;
       this.surfaceReady = false;
       arkui_cef.detachOsrSurface(this.browserId);
@@ -2539,13 +2613,17 @@ export struct OsrCefView {
     hilog.info(DOMAIN, MODULE, "restoreReleasedBrowser: browserId=%{public}d", this.browserId);
     this.releasedBrowser = false;
     if (this.isCreated()) {
-      // [tear-off fix] 浏览器级 WasHidden 可能仍为 true（交还前的 TearOff
-      // 实例随窗口转后台时暂停过渲染）——显式恢复，不依赖
-      // onVisibleAreaChange 的事件时序（源窗此刻可能仍在后台）。
+      // [tear-off fix] The browser-level WasHidden may still be true (the
+      // TearOff instance paused rendering when its window went background
+      // before the handback) - restore explicitly instead of relying on
+      // onVisibleAreaChange event timing (the source window may still be
+      // background right now).
       arkui_cef.cefWasHidden(this.browserId, false);
       this.osrHidden = false;
-      // 走完整激活路径（setOsrHidden(false) 幂等 + 键盘路由 + 焦点）；
-      // tabActive 已为 true 时被幂等跳过，渲染已由上面显式恢复
+      // Take the full activation path (idempotent setOsrHidden(false) +
+      // keyboard routing + focus); when tabActive is already true the
+      // idempotent guard skips it - rendering was already restored
+      // explicitly above.
       this.setTabActive(true);
       arkui_cef.cefInvalidate(this.browserId);
     }
@@ -2578,7 +2656,7 @@ export struct OsrCefView {
     done(true);
   }
 
-  // ==================== Axis Event (鼠标滚轮 / 触摸板双指滚动) ====================
+  // ==================== Axis events (wheel / two-finger scroll) ====================
   // Wheel translation: axis values are forwarded event-by-event with a
   // per-source gain — NO threshold batching (the old batching caused the
   // "two-stage scroll": sub-threshold deltas waited, then jumped). The gain
@@ -2681,7 +2759,7 @@ export struct OsrCefView {
   // Called when the user clicks the web render area: exit the URL
   // TextInput's edit state so its caret stops blinking and its IME editor
   // binding is released (via the component's OWN lifecycle —
-  // TextInputController.stopEditing, API 10, "退出编辑态"), letting letters
+  // TextInputController.stopEditing, API 10, "exit edit state"), letting letters
   // and IME input route to the web page's IMF C session.
   //
   // NOTE: FocusController.clearFocus() was tried here first and REGRESSED

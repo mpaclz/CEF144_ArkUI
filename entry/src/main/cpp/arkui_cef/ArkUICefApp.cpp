@@ -2,8 +2,9 @@
 
 #include <string>
 
-#include "ArkUICefManager.h"
 #include <hilog/log.h>
+
+#include "ArkUICefManager.h"
 
 namespace {
 constexpr unsigned int LOG_PRINT_DOMAIN = 0xFF00;

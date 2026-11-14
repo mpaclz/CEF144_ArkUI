@@ -313,19 +313,19 @@ public:
     IMPLEMENT_REFCOUNTING(ArkUICefClient);
 
 private:
-    int64_t id_;                                            ///< 关联的浏览器 ID
+    int64_t id_;                                            ///< Associated browser id
     int64_t arkui_cef_id_ = -1;
-    CefRefPtr<ArkUICefBrowser> browser_;                   ///< ArkUICefBrowser 弱引用
-    ArkUICefDelegate* delegate_;                           ///< 生命周期回调委托者
-    bool is_closing_;                                      ///< 是否正在关闭
+    CefRefPtr<ArkUICefBrowser> browser_;                   ///< Weak reference to ArkUICefBrowser
+    ArkUICefDelegate* delegate_;                           ///< Lifecycle callback delegate
+    bool is_closing_;                                      ///< Whether closing is in progress
     
-    LoadCallback loadCallback_;                            ///< 页面加载回调
-    TitleCallback titleCallback_;                          ///< 标题变更回调
-    FocusTakeCallback focusTakeCallback_;                  ///< 焦点离开回调
-    CursorChangeCallback cursorChangeCallback_;            ///< 光标变更回调
+    LoadCallback loadCallback_;                            ///< Page load callback
+    TitleCallback titleCallback_;                          ///< Title change callback
+    FocusTakeCallback focusTakeCallback_;                  ///< Focus-taken callback
+    CursorChangeCallback cursorChangeCallback_;            ///< Cursor change callback
 
-    bool use_osr_ = false;                                 ///< 是否使用离屏渲染
-    CefRefPtr<ArkUICefRenderHandler> renderHandler_;       ///< OSR 渲染处理器
+    bool use_osr_ = false;                                 ///< Whether off-screen rendering is enabled
+    CefRefPtr<ArkUICefRenderHandler> renderHandler_;       ///< OSR render handler
 };
 } // namespace arkui_cef
 #endif // ARKUI_CEF_CLIENT_H

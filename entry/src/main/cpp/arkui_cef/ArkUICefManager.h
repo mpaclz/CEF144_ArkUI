@@ -158,7 +158,7 @@ public:
      */
     void NotifyPopupBrowserCreated(int cefBrowserId);
     
-    // ArkUICefDelegate 接口实现
+    // ArkUICefDelegate interface implementation
     /**
      * @brief 浏览器创建完成回调
      * @param browser 新创建的浏览器
@@ -184,21 +184,23 @@ private:
      */
     void CefThreadMain();
     
-    std::thread cefThread_;                                      ///< CEF 主工作线程
+    std::thread cefThread_;                                      ///< CEF main work thread
     
-    // start() 幂等标记：start() 可能被多处调用（MyAbilityStage 与测试
-    // TestAbility 各调一次）。无保护时第二次调用会再起一个 CEF_Main
-    // 线程并二次 CefInitialize（必崩）。首次调用生效，后续为 no-op。
+    // start() idempotence flag: start() may be called from several places
+    // (MyAbilityStage and the test TestAbility each call it once). Without
+    // this guard the second call would spawn another CEF_Main thread and
+    // run CefInitialize again (guaranteed crash). First call wins; later
+    // calls are no-ops.
     std::atomic<bool> startCalled_{false};
     
-    std::mutex mutex_;                                           ///< 保护 browsers_ 和 initOk_ 的锁
-    std::unordered_map<int64_t, CefRefPtr<ArkUICefBrowser>> browsers_; ///< 浏览器注册表
+    std::mutex mutex_;                                           ///< Guards browsers_ and initOk_
+    std::unordered_map<int64_t, CefRefPtr<ArkUICefBrowser>> browsers_; ///< Browser registry
     
-    bool initOk_ = false;                                        ///< CEF 是否已初始化完成
-    bool shuttingDown_ = false;                                  ///< 是否正在关闭整个 CEF（stop 已调用）
+    bool initOk_ = false;                                        ///< Whether CEF initialization completed
+    bool shuttingDown_ = false;                                  ///< Whether CEF shutdown is in progress (stop() called)
 
-    std::unordered_map<int, std::function<void(const std::string&)>> popupTitleCallbacks_; ///< cefBrowserId → 标题回调
-    std::function<void(int)> popupBrowserCreatedCallback_;                                ///< 弹窗浏览器创建回调
+    std::unordered_map<int, std::function<void(const std::string&)>> popupTitleCallbacks_; ///< cefBrowserId -> popup title callback
+    std::function<void(int)> popupBrowserCreatedCallback_;                                ///< Popup browser creation callback
 };
 } // namespace arkui_cef
 #endif //OPENQTCEF_ARKUICEFMANAGER_H

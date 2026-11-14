@@ -9,12 +9,13 @@
 #include "include/cef_command_line.h"
 
 // Entry point function for secondary processes (renderer, GPU, utility, etc.).
-// OHOS 上子进程是动态库 (libcefsimple.so)，由 CEF 主进程 fork 后 dlopen 加载并调用 CefMain()。
+// On OHOS the subprocess is a shared library (libcefsimple.so): the CEF
+// main process forks, dlopens it and calls CefMain().
 extern "C" {
 int __attribute__((visibility("default"))) CefMain(int argc, char* argv[]) {
     CefMainArgs main_args(argc, argv);
 
-    // 解析命令行判断进程类型
+    // Parse the command line to determine the process type.
     CefRefPtr<CefCommandLine> command_line = CefCommandLine::CreateCommandLine();
     command_line->InitFromArgv(argc, argv);
 

@@ -15,7 +15,7 @@ type DragOutCallback = (info: DragOutInfo) => void;
 
 @Component
 export struct CefView {
-  // 拖出阈值（与设计 §3 一致，借鉴 Chromium kMinimumDragDistance）
+  // Drag-out threshold (design §3; mirrors Chromium kMinimumDragDistance).
   private static readonly DRAG_OUT_EDGE_PX: number = 24;
   private static readonly DRAG_OUT_MIN_DRAG_VP: number = 10;
 
@@ -26,24 +26,30 @@ export struct CefView {
   @State private viewWidth: number = -1;
   @State private viewHeight: number = -1;
 
-  // 网页拖出后源视图占位态：NodeContent 中的节点保留（cefHide 隐藏），
-  // adopt 成功后由 napi 侧移除；abort 时恢复显示。
+  // Source-view placeholder after a drag-out: the nodes inside NodeContent
+  // stay (hidden via cefHide); the napi side removes them on adopt success,
+  // and abort restores visibility.
   @State private released: boolean = false;
 
   @Prop viewUrl: string = '';
   private interceptFocusKeys: boolean = false;
-  // TAB 焦点流出网页边界时的落点（OnTakeFocus → 宿主移动焦点）。
-  // next=true（Tab 流出网页末尾）→ focusNextId；next=false（Shift+Tab 流出
-  // 网页开头）→ focusPrevId。由容器（如 BrowserView 用自身工具栏末按钮 id
-  // 接线逆向落点实现一键直达）。
-  // 未接线的方向：落到本视图的惰性边界锚点（focusPreAnchorKey/focusPostAnchorKey，
-  // tabIndex(-1)：可 requestFocus 寻址但不参与 Tab 遍历），下一次 Tab/Shift+Tab
-  // 由框架原生遍历从边界继续——正向环绕进 TabBar，逆向到达本视图之前的
-  // 停靠点（TabBar 逆向）。与 OSR 视图（OsrCefView）的边界处理语义一致。
+  // Landing spots when TAB focus flows out of the web boundary
+  // (OnTakeFocus -> the host moves focus). next=true (Tab leaving the page
+  // end) -> focusNextId; next=false (Shift+Tab leaving the page start) ->
+  // focusPrevId. The container wires them (e.g. BrowserView points the
+  // backward landing at its own toolbar's last button id for one-key
+  // reach). Unwired directions fall to this view's lazy boundary anchors
+  // (focusPreAnchorKey/focusPostAnchorKey, tabIndex(-1): addressable by
+  // requestFocus but not part of Tab traversal); the next Tab/Shift+Tab
+  // then continues from the boundary via native framework traversal -
+  // forward wraps into the TabBar, backward reaches the stop before this
+  // view. Same boundary semantics as the OSR view (OsrCefView).
   focusNextId: string = '';
   focusPrevId: string = '';
-  // 惰性边界锚点 id（实例唯一）。位于 Stack 之外（不触发 onKeyPreIme 拦截
-  // 接管），tabIndex(-1)（不成为走焦停靠点，环绕落点仍是网页本身）。
+  // Lazy boundary anchor ids (unique per instance). They live OUTSIDE the
+  // Stack (so onKeyPreIme interception is not triggered) and use
+  // tabIndex(-1) (not a traversal stop; the wrap-around landing remains
+  // the page itself).
   private static uidCounter: number = 0;
   private uid: number = 0;
   private focusPreAnchorKey: string = 'cefAnchorPre';
@@ -51,11 +57,13 @@ export struct CefView {
 
   private dragOutEnabled: boolean = false;
   private dragOutWindow: window.Window | null = null;
-  // session 源登记令牌（0=未登记）
+  // Session source registration token (0 = not registered).
   private sessionSourceKey: number = 0;
-  // windowRectChange 订阅句柄（销毁时精准反注册，避免影响同窗其他订阅）
+  // windowRectChange subscription handle (unregistered precisely on
+  // dispose so other subscriptions of the same window are untouched).
   private dragOutRectHandler: ((data: window.RectChangeOptions) => void) | undefined = undefined;
-  // 检测矩形缓存：内容区原点（相对窗口左上，即标题栏偏移）与尺寸（px）
+  // Detection-rect cache: content-area origin (window-relative, i.e. the
+  // title-bar offset) and size (px).
   private dragOutContentOffsetX: number = 0;
   private dragOutContentOffsetY: number = 0;
   private dragOutContentW: number = 0;
@@ -67,12 +75,15 @@ export struct CefView {
 
   build() {
     Column() {
-      // 惰性边界锚点（网页视图走焦边界）。tabIndex(-1)：可被 requestFocus
-      // 寻址，但 Tab 遍历不会停在上面——正常走焦循环完全感知不到它们。
-      // position 绝对定位使其脱离布局流（不占据 1px 行高，避免把 CEF 原生
-      // 视图挤下移产生缝隙）。网页 TAB 流出边界且该方向未接线时，焦点移
-      // 到锚点上（网页视图整体持焦、键盘已交还宿主），下一次 Tab/Shift+Tab
-      // 从边界继续遍历。
+      // Lazy boundary anchors (the web view's focus-flow boundary).
+      // tabIndex(-1): addressable by requestFocus, but Tab traversal never
+      // stops on them - a normal focus cycle never notices them. Absolute
+      // positioning takes them out of the layout flow (no 1px line height,
+      // so the native CEF view is not pushed down into a gap). When TAB
+      // flows out of the page on an unwired side, focus moves onto the
+      // anchor (the web view as a whole holds focus; the keyboard is back
+      // with the host) and the next Tab/Shift+Tab continues traversal from
+      // the boundary.
       Text('')
         .focusable(true)
         .tabIndex(-1)
@@ -123,31 +134,33 @@ export struct CefView {
       if (!this.interceptFocusKeys) {
         return false;
       }
-      // 拦截 Tab 键和方向键，自行处理焦点移动
+      // Intercept Tab and arrow keys; handle focus movement ourselves.
       if (event.keyCode === KeyCode.KEYCODE_TAB ||
         event.keyCode === KeyCode.KEYCODE_DPAD_UP ||
         event.keyCode === KeyCode.KEYCODE_DPAD_DOWN ||
         event.keyCode === KeyCode.KEYCODE_DPAD_LEFT ||
         event.keyCode === KeyCode.KEYCODE_DPAD_RIGHT) {
-        // 自行处理自绘制空间内的焦点移动
+        // Handle focus movement inside our self-drawn space.
         this.handleInternalFocusMove(event);
-        // 返回 true 消费事件，阻止框架自动走焦
+        // Return true to consume the event and stop framework auto-focus.
         return true;
       }
-      // 非走焦按键不拦截，交由框架正常处理
+      // Do not intercept non-focus keys; let the framework handle them.
       return false;
     })
     .onFocus(() => {
       this.interceptFocusKeys = true;
     })
     .onBlur(() => {
-      // 焦点离开本视图子树（含内嵌的 CEF 原生节点）：停止拦截走焦键，
-      // 让键盘事件回归 ArkUI 原生走焦。网页内的焦点流转由 CEF 自行维护，
-      // 焦点重新进入子树时 onFocus 会恢复拦截。
+      // Focus left this view's subtree (including the embedded native CEF
+      // node): stop intercepting focus keys and let key events return to
+      // ArkUI native focus traversal. In-page focus flow is maintained by
+      // CEF itself; onFocus re-arms interception when focus re-enters.
       this.interceptFocusKeys = false;
     })
 
-      // 惰性边界锚点（同上，网页视图走焦边界的另一侧；绝对定位不占布局空间）
+      // Lazy boundary anchor (same as above, the other side of the web
+      // view's focus boundary; absolute, takes no layout space).
       Text('')
         .focusable(true)
         .tabIndex(-1)
@@ -167,9 +180,9 @@ export struct CefView {
       hilog.warn(DOMAIN, MODULE, "handleInternalFocusMove: browser not created, id: %{public}d", this.browserId);
       return;
     }
-    // 修饰键状态必须一并传给 CEF：Blink 依据 Shift 判定 Tab 是正向还是
-    // 逆向走焦（DefaultTabEventHandler: shiftKey → kBackward），丢失修饰
-    // 键会导致 SHIFT+TAB 也只能正向流转。
+    // Modifier state must reach CEF too: Blink decides forward vs backward
+    // focus by Shift (DefaultTabEventHandler: shiftKey -> kBackward); losing
+    // the modifier would make SHIFT+TAB circulate forward only.
     let mods = 0;
     if (event.getModifierKeyState) {
       try {
@@ -205,10 +218,12 @@ export struct CefView {
   }
 
   aboutToDisappear(): void {
-    // 精准反注册 windowRectChange 订阅（P3-1）：组件销毁后窗口仍在，若不
-    // off，dragOutRectHandler 闭包持有本实例（含 dragOutWindow 引用）造成
-    // 泄漏 + 后续回调打到已销毁组件上。其余销毁语义（destroy 由外部显式
-    // 调用）不变。
+    // Precisely unregister the windowRectChange subscription (P3-1): the
+    // window outlives the component; without off(), the dragOutRectHandler
+    // closure would keep this instance alive (including its dragOutWindow
+    // reference) - a leak - and later callbacks would hit a disposed
+    // component. Other dispose semantics (destroy is called explicitly by
+    // the outside) are unchanged.
     if (this.dragOutWindow !== null && this.dragOutRectHandler !== undefined) {
       this.dragOutWindow.off('windowRectChange', this.dragOutRectHandler);
     }
@@ -285,8 +300,9 @@ export struct CefView {
 
   destroy(): void {
     if (this.released) {
-      // browser 已迁往新窗口宿主：旧父 Stack 已被 adoptCefView 移除销毁，
-      // 这里只解除 session 登记并复位本地状态，不销毁 browser。
+      // The browser has moved to the new-window host: the old parent Stack
+      // was already removed and destroyed by adoptCefView; here we only
+      // unregister the session and reset local state, not the browser.
       hilog.info(DOMAIN, MODULE, "destroy: released, skip browser teardown, id: %{public}d", this.browserId);
       getDragOutSession().unregisterSource(this.browserId, this.sessionSourceKey);
       this.sessionSourceKey = 0;
@@ -329,17 +345,16 @@ export struct CefView {
     hilog.info(DOMAIN, MODULE, "CEF created, browserId=%{public}d", id);
     this.browserId = id;
     this.cefCreating = false;
-    // aboutToAppear 在 onAreaChange 之前触发，
-    // 所以 aboutToAppear 中创建 CEF 时还不知道正确的大小。
-    // 如果在 aboutToAppear 中创建 CEF，
-    // 需要在完成创建后 resize 一次，让 CEF 变成正确的大小。
+    // aboutToAppear fires before onAreaChange, so the correct size is not
+    // yet known when CEF is created in aboutToAppear. If CEF is created
+    // there, resize once after creation so CEF reaches the right size.
     arkui_cef.cefResize(this.browserId, this.viewWidth, this.viewHeight);
     if (this.onCreatedCallback) {
       this.onCreatedCallback(this);
     }
   }
 
-  // ==================== 拖出（tear-off）支持 ====================
+  // ==================== Tear-off (drag-out) support ====================
 
   /**
    * 启用拖出检测（外部在 browser 创建后调用，如 BrowserView 的
@@ -382,15 +397,17 @@ export struct CefView {
           });
         hilog.info(DOMAIN, MODULE, "cefWatchDragOut: ok=%{public}s, id=%{public}d",
           ok ? "true" : "false", this.browserId);
-        // 窗口移动/缩放时同步检测矩形（含 drawableRect 与 windowRect 差值）；
-        // 幂等：同窗口重复 enableDragOut 只订阅一次
+        // Keep the detection rect in sync on window move/resize (including
+        // the drawableRect vs windowRect delta); idempotent: repeated
+        // enableDragOut on the same window subscribes only once.
         if (this.dragOutRectHandler === undefined) {
           this.dragOutRectHandler = (data: window.RectChangeOptions) => {
             this.refreshDragOutRectFromWindow(win);
           };
           win.on('windowRectChange', this.dragOutRectHandler);
         }
-        // 登记源视图信息（供新窗 adopt 取 oldNodeContent、abort 恢复、关闭迁回）
+        // Register source-view info (for the new window's adopt to fetch
+        // oldNodeContent, abort restore, and close-migration home).
         let registration: DragOutSourceRegistration = {
           browserId: this.browserId,
           mode: 'windowed',
@@ -424,11 +441,13 @@ export struct CefView {
       let props = win.getWindowProperties();
       let drawable = props.drawableRect;
       let winRect = props.windowRect;
-      // 实测（2in1 自由窗）：windowRect.left/top 为屏幕绝对坐标，而
-      // drawableRect.left/top 恒为 (0,0)（窗口相对），直接相减会得到
-      // 负偏移（如 -515/-211），把边缘触发带整体错位到窗口中部甚至
-      // 窗外。钳到 >= 0：本平台归零（drawable 尺寸 == 窗口尺寸），
-      // 标题栏真实存在的窗口上差值为正、语义保持不变。
+      // Measured (2-in-1 free windows): windowRect.left/top are absolute
+      // screen coordinates while drawableRect.left/top are always (0,0)
+      // (window-relative), so a direct subtraction yields negative offsets
+      // (e.g. -515/-211) that misplace the whole edge trigger band into the
+      // middle of the window or outside it. Clamp to >= 0: on this platform
+      // it zeroes out (drawable size == window size); on windows with a
+      // real title bar the delta is positive and the semantics hold.
       this.dragOutContentOffsetX = Math.max(0, drawable.left - winRect.left);
       this.dragOutContentOffsetY = Math.max(0, drawable.top - winRect.top);
       this.dragOutContentW = drawable.width;
@@ -464,7 +483,8 @@ export struct CefView {
     hilog.info(DOMAIN, MODULE,
       "onDragOut: browserId=%{public}d, press=(%{public}d,%{public}d), cur=(%{public}d,%{public}d)",
       browserId, pressLocalX, pressLocalY, curScreenX, curScreenY);
-    // 终止网页内拖拽态 + 视觉移除（browser 保留，设计 §5.1 T2a）
+    // End the in-page drag state + visual removal (browser kept, design
+    // §5.1 T2a).
     arkui_cef.cefSendCaptureLost(this.browserId);
     arkui_cef.cefHide(this.browserId);
     this.released = true;
@@ -532,8 +552,9 @@ export struct CefView {
           if (this.isCreated()) {
             arkui_cef.cefShow(this.browserId);
           }
-          // 对反向迁移产生的新父 Stack 重新注册检测 + 刷新矩形 +
-          // 重新登记源信息（幂等：windowRectChange 订阅不重复）
+          // Re-register detection on the new parent Stack produced by the
+          // reverse migration + refresh the rect + re-register source info
+          // (idempotent: no duplicate windowRectChange subscription).
           this.setupDragOutWatch();
         }
         done(ok);
@@ -549,27 +570,34 @@ export struct CefView {
 
   onCefFocusTake(next: boolean): void {
     hilog.info(DOMAIN, MODULE, "CEF focus taken, next=%{public}s", next ? "true" : "false");
-    // 网页内 TAB 流转到边界（末尾/开头），CEF 请求宿主把焦点移出网页视图
-    // （对应 QCefView 的 onCefWindowLostTabFocus → nextInFocusChain 走焦）。
-    // 必须主动移动焦点：原生 XComponent 是走焦循环的"陷阱"——未消费的
-    // TAB 会被派发给 XComponent 并送进渲染器，ArkUI 走焦系统无法把焦点
-    // 移出原生节点（也不能照搬 OSR 的"留在停靠点"方案）。
+    // TAB circulated to the page boundary (end/start): CEF asks the host
+    // to move focus out of the web view (QCefView's onCefWindowLostTabFocus
+    // -> nextInFocusChain equivalent). Focus MUST be moved actively: the
+    // native XComponent is a trap for the focus cycle - an unconsumed TAB
+    // gets dispatched to the XComponent and into the renderer, and the
+    // ArkUI focus system cannot move focus out of a native node (nor can
+    // we copy the OSR "stay on the stop" approach).
     this.interceptFocusKeys = false;
     let wired = next ? this.focusNextId : this.focusPrevId;
     let anchor = next ? this.focusPostAnchorKey : this.focusPreAnchorKey;
     try {
-      // 进入焦点激活态：用户紧接着的 Tab/Shift+Tab 直接走焦（否则首次
-      // 按键仅用于激活焦点态，不移动焦点）。
+      // Enter the focus-armed state: the user's very next Tab/Shift+Tab
+      // moves focus directly (otherwise the first key only activates the
+      // focus state without moving).
       this.getUIContext().getFocusController().activate(true);
       if (wired.length > 0) {
-        // 已接线（如 BrowserView 逆向接线到工具栏末按钮）：一键直达。
+        // Wired (e.g. BrowserView's backward landing on the toolbar's last
+        // button): one keypress lands there directly.
         this.getUIContext().getFocusController().requestFocus(wired);
         return;
       }
-      // 未接线：焦点落到本视图的惰性边界锚点（网页视图整体持焦、键盘已
-      // 交还宿主）。锚点 tabIndex(-1) 不参与走焦、位于 Stack 之外不触发
-      // 拦截接管；下一次 Tab/Shift+Tab 由框架原生遍历从边界继续——正向
-      // 环绕进 TabBar，逆向到达本视图之前的停靠点。
+      // Unwired: focus falls to this view's lazy boundary anchor (the web
+      // view as a whole holds focus; the keyboard is back with the host).
+      // The anchor's tabIndex(-1) keeps it out of traversal and its
+      // outside-the-Stack placement avoids interception; the next
+      // Tab/Shift+Tab continues from the boundary via native framework
+      // traversal - forward wraps into the TabBar, backward reaches the
+      // stop before this view.
       this.getUIContext().getFocusController().requestFocus(anchor);
     } catch (e) {
       hilog.error(DOMAIN, MODULE, "focus exit failed (wired=%{public}s, anchor=%{public}s): %{public}s",

@@ -314,33 +314,37 @@ public:
 private:
     void ApplyOsrPopupOffset(int& x, int& y);
 
-    int64_t id_;                    ///< 浏览器唯一标识符
-    int width_;                     ///< 当前宽度
-    int height_;                    ///< 当前高度
-    bool browserCreated_;           ///< 浏览器是否已创建
-    bool browserClosing_;           ///< 浏览器是否正在关闭
+    int64_t id_;                    ///< Unique browser identifier
+    int width_;                     ///< Current width
+    int height_;                    ///< Current height
+    bool browserCreated_;           ///< Whether the CEF browser has been created
+    bool browserClosing_;           ///< Whether the browser is closing
     
-    CefRefPtr<CefBrowser> browser_; ///< CEF Browser 引用
-    CefRefPtr<ArkUICefClient> client_; ///< 关联的 Client 引用
+    CefRefPtr<CefBrowser> browser_; ///< CEF browser reference
+    CefRefPtr<ArkUICefClient> client_; ///< Associated client reference
     
-    CreateCallback createCallback_; ///< CEF实例创建回调
-    LoadCallback loadCallback_;     ///< 页面加载回调
-    TitleCallback titleCallback_;   ///< 标题变更回调
-    FocusTakeCallback focusTakeCallback_; ///< 焦点离开回调
-    CursorChangeCallback cursorChangeCallback_; ///< 光标变更回调
+    CreateCallback createCallback_; ///< Browser creation callback
+    LoadCallback loadCallback_;     ///< Page load callback
+    TitleCallback titleCallback_;   ///< Title change callback
+    FocusTakeCallback focusTakeCallback_; ///< Focus-taken callback
+    CursorChangeCallback cursorChangeCallback_; ///< Cursor change callback
 
-    bool use_osr_ = false;            ///< 是否使用离屏渲染模式
+    bool use_osr_ = false;            ///< Whether off-screen rendering is enabled
 
-    // 缓存的宿主窗口节点（onBrowserCreated 时于 CEF UI 线程记录；reparent
-    // 迁移时跨线程读取 —— 直接实时调 GetWindowHandle() 需要 CEF UI 线程，
-    // 缓存一份指针最稳）。reparent 成功后由导出函数的出参刷新为新宿主
-    // 句柄（旧宿主已销毁）；失败/超时保持不动。show()/hide() 优先用它。
+    // Cached host window node: recorded on the CEF UI thread in
+    // onBrowserCreated and read from other threads after a reparent
+    // migration. A live GetWindowHandle() call must run on the CEF UI
+    // thread and may race with the migration, so a cached copy is the
+    // safest source. After a successful reparent the exported function's
+    // out-param refreshes the cache to the new host handle (the old host is
+    // destroyed on the CEF side); on failure/timeout it stays unchanged.
+    // show()/hide() prefer this cache.
     Node* hostWindowHandle_ = nullptr;
 
     std::shared_ptr<ArkUICefGpuPresenter> gpuPresenter_;
 
-    bool wasHidden_ = false;          ///< 应用侧通报的隐藏状态（browser 未创建时暂存）
-    bool visibilityPending_ = false;  ///< browser 创建后需要补调 WasHidden
+    bool wasHidden_ = false;          ///< Hidden state last reported by the app (stashed until the browser exists)
+    bool visibilityPending_ = false;  ///< WasHidden must be replayed after browser creation
 };
 } // namespace arkui_cef
 #endif // ARKUI_CEF_BROWSER_H

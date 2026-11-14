@@ -90,10 +90,12 @@ export interface TearOffWantParams {
  * （多 CefView/OsrCefView 实例并存时各自登记，触发时按 browserId 匹配）。
  */
 export class DragOutSessionManager {
-  // 必须严格大于 napi 侧 reparent 的 3s 上限（cef_ohos_reparent_browser_host
-  // 阻塞等待 CEF UI 线程最多 3s）：若同为 3s，会话超时 abort（terminate 新窗）
-  // 可能与 reparent 恰好完成撞车，产生双 3s 边界竞争（adopt 完成回调晚于
-  // abort 到达）。5s 给迁移留出明确的先后窗口。
+  // Must be strictly greater than the napi reparent ceiling of 3s
+  // (cef_ohos_reparent_browser_host blocks on the CEF UI thread for up to
+  // 3s): at exactly 3s, a session-timeout abort (terminating the new
+  // window) could race a reparent that just completed - a double-3s
+  // boundary race where the adopt-completed callback arrives after the
+  // abort. 5s leaves the migration a clear ordering window.
   private static readonly LAUNCH_TIMEOUT_MS: number = 5000;
   /** 关闭迁回（反向迁移）超时：须大于 napi reparent 3s 上限 + 页面销毁余量。 */
   private static readonly RESTORE_TIMEOUT_MS: number = 6000;
@@ -102,7 +104,7 @@ export class DragOutSessionManager {
   private sources: Map<number, StoredSource> = new Map();
   private sourceKeyCounter: number = 0;
 
-  // 当前会话参数
+  // Current session parameters.
   private browserId: number = -1;
   private mode: DragOutMode = 'windowed';
   private viewW: number = 0;
@@ -114,16 +116,21 @@ export class DragOutSessionManager {
   private osrAdopted: boolean = false;
   private tearOffContext: common.UIAbilityContext | undefined = undefined;
   private timeoutId: number = -1;
-  // 源窗口矩形跟踪（源窗 windowRectChange 回调更新，落点判定/诊断用）
+  // Source-window rect tracking (updated by the source window's
+  // windowRectChange callback; used for landing decisions/diagnostics).
   private sourceWindowRect: window.Rect | undefined = undefined;
-  // windowed 迁回所需：新窗 TearOffPage 的 NodeContent（notifyWindowReady
-  // 登记；reset() 有意保留，供 settled 之后的关闭迁回使用）。
+  // Needed by the windowed migration home: the new window TearOffPage's
+  // NodeContent (registered by notifyWindowReady; reset() deliberately
+  // keeps it for the close-migration after settled).
   private tearOffNodeContent: NodeContent | undefined = undefined;
-  // OSR 迁回前置钩子：TearOff 实例注册（adopt 模式 aboutToAppear 登记）。
+  // Pre-hooks for the OSR migration home: registered by the TearOff
+  // instance (adopt-mode aboutToAppear).
   private tearOffHooks: TearOffHooks | undefined = undefined;
-  // "browser 存活在别处（源视图），新窗关闭时不得销毁" 的集合：
-  // abort 恢复（browser 回源视图）与迁回成功（takeBack）时加入；源视图
-  // 注销登记时移除。取代旧的 lastSettledBrowserId 门控。
+  // Set of "the browser lives elsewhere (the source view); the new window
+  // must not destroy it on close": populated on abort-restore (browser
+  // back at the source view) and on successful migration home (takeBack);
+  // removed when the source view unregisters. Replaces the old
+  // lastSettledBrowserId gating.
   private keptAliveBrowsers: Set<number> = new Set();
 
   getState(): DragOutState {
@@ -184,8 +191,9 @@ export class DragOutSessionManager {
       hilog.warn(DOMAIN, MODULE,
         "startDragOut rejected: session busy, state=%{public}s, active=%{public}d",
         this.state, this.browserId);
-      // 拒绝时源视图已被隐藏（检测触发先 releaseView 再进本方法），必须
-      // 恢复其显示，否则该视图永久停留占位态（P3-2）。
+      // On rejection the source view is already hidden (detection calls
+      // releaseView before entering this method); its visibility MUST be
+      // restored or the view stays in the placeholder state forever (P3-2).
       let stored = this.sources.get(info.browserId);
       if (stored !== undefined) {
         hilog.info(DOMAIN, MODULE,
@@ -210,7 +218,8 @@ export class DragOutSessionManager {
     this.osrAdopted = false;
     this.newWindow = undefined;
     this.state = 'tearing';
-    // 新会话开始：清掉上一轮的迁回资源（旧 NodeContent/钩子已随旧窗销毁）
+    // New session: clear the previous round's migration resources (the old
+    // NodeContent/hooks died with the old window).
     this.tearOffNodeContent = undefined;
     this.tearOffHooks = undefined;
     hilog.info(DOMAIN, MODULE,
@@ -238,13 +247,15 @@ export class DragOutSessionManager {
       let props = win.getWindowProperties();
       let winRect = props.windowRect;
       let drawable = props.drawableRect;
-      // 内容区原点在窗口内的偏移（>=0：标题栏高度、边框宽度）
+      // Content-area origin offset inside the window (>=0: title bar
+      // height, border width).
       let contentOffX = drawable.left - winRect.left;
       let contentOffY = drawable.top - winRect.top;
-      // 窗口装饰超出内容区的尺寸（边框/标题栏），用于新窗总尺寸
+      // Window decoration extending beyond the content area
+      // (border/title bar); used for the new window's total size.
       let decorW = winRect.width - drawable.width;
       let decorH = winRect.height - drawable.height;
-      // 光标相对新窗口左上角（含标题栏）的偏移
+      // Cursor offset from the new window's top-left (title bar included).
       let offsetXWin = Math.round(info.pressLocalX) + contentOffX;
       let offsetYWin = Math.round(info.pressLocalY) + contentOffY;
       if (offsetXWin < 0) {
@@ -300,7 +311,8 @@ export class DragOutSessionManager {
       return;
     }
     if (this.mode === 'windowed') {
-      // 登记新窗 NodeContent：正向 adopt 用；关闭迁回（反向 adopt）也要用
+      // Register the new window's NodeContent: used by the forward adopt
+      // and by the close-migration home (reverse adopt).
       this.tearOffNodeContent = newNodeContent;
       let stored = this.sources.get(this.browserId);
       let oldContent = stored ? stored.reg.nodeContent : undefined;
@@ -317,7 +329,8 @@ export class DragOutSessionManager {
           this.onAdoptResult(ok);
         });
     } else if (this.osrAdopted) {
-      // OSR：adopt 已完成、新窗引用刚就绪 → 开始跟随
+      // OSR: adopt finished and the new-window reference just became
+      // ready -> start following.
       this.beginFollow();
     }
   }
@@ -335,8 +348,9 @@ export class DragOutSessionManager {
     if (this.newWindow !== undefined) {
       this.beginFollow();
     } else {
-      // 新窗引用尚未就绪（OSR surface attach 早于页面 onAppear），
-      // notifyWindowReady 到达后补启跟随。
+      // New-window reference not ready yet (the OSR surface attach precedes
+      // the page's onAppear); following starts once notifyWindowReady
+      // arrives.
       this.osrAdopted = true;
       hilog.info(DOMAIN, MODULE, "onAdoptResult: ok, waiting for window ref");
     }
@@ -359,8 +373,10 @@ export class DragOutSessionManager {
         this.finishDrag();
       })
       .catch((err: BusinessError) => {
-        // FallbackFollow：窗口已由 StartOptions 定位在光标处；事件流无法
-        // 跨窗续接（源窗事件停发），保持当前位置直接收尾等待用户释放。
+        // FallbackFollow: the window was already positioned at the cursor
+        // by StartOptions; the event stream cannot continue across windows
+        // (the source window stops emitting), so hold position and finish
+        // here, waiting for the user to release.
         hilog.error(DOMAIN, MODULE, "startMoving failed: %{public}d %{public}s",
           err.code, err.message);
         this.finishDrag();
@@ -388,7 +404,8 @@ export class DragOutSessionManager {
     }
     hilog.warn(DOMAIN, MODULE, "abort: %{public}s (browserId=%{public}d, state=%{public}s)",
       reason, this.browserId, this.state);
-    // abort 路径：browser 回源视图存活，标记"保活"——新窗关闭时不得销毁。
+    // Abort path: the browser is alive back at the source view; mark it
+    // keep-alive - the new window must not destroy it on close.
     this.keptAliveBrowsers.add(this.browserId);
     let stored = this.sources.get(this.browserId);
     if (stored) {
@@ -409,10 +426,12 @@ export class DragOutSessionManager {
   /** CefTearOffAbility.onWindowStageDestroy 回调。 */
   onTearOffWindowDestroyed(): void {
     if (this.state === 'tearing') {
-      // adopt 未完成时新窗被销毁 → 恢复源视图
+      // New window destroyed before adopt completed -> restore the source
+      // view.
       this.abort('window destroyed before adopt');
     } else {
-      // following/settled 阶段：用户关闭新窗或跟随已结束，仅复位
+      // following/settled stage: the user closed the new window or
+      // following has ended; just reset.
       hilog.info(DOMAIN, MODULE, "tear-off window destroyed in state=%{public}s", this.state);
       this.reset();
     }
@@ -441,8 +460,9 @@ export class DragOutSessionManager {
       return false;
     }
     if (this.state !== 'idle' && this.browserId !== browserId) {
-      // 另一个拖出会话正在进行：并发 reparent 有风险，不迁回——
-      // browser 由 TearOffPage 的销毁门控走 destroy 兜底。
+      // Another drag-out session is in flight: a concurrent reparent is
+      // risky, so do not migrate home - the TearOffPage's teardown gating
+      // falls back to destroy for the browser.
       hilog.warn(DOMAIN, MODULE,
         "handleTearOffWindowClose: session busy with browserId=%{public}d, skip restore for %{public}d",
         this.browserId, browserId);
@@ -480,8 +500,9 @@ export class DragOutSessionManager {
         "restoreToSource: no tearOff node content, browserId=%{public}d", browserId);
       return new Promise<boolean>((resolve) => { resolve(false); });
     }
-    // 闭包外的非空收窄无法穿透进 Promise 闭包（ArkTS 视捕获的 let 可能
-    // 被重赋值）——提取为非可选局部后再捕获。
+    // A non-null narrowing outside the closure does not carry into a
+    // Promise closure (ArkTS assumes the captured let may be reassigned) -
+    // copy to a non-optional local first, then capture.
     let takeBack = stored.reg.callbacks.onTakeBack;
     let session = this;
     return new Promise<boolean>((resolve) => {
@@ -535,16 +556,19 @@ export class DragOutSessionManager {
     this.followOffsetY = 0;
     this.newWindow = undefined;
     this.osrAdopted = false;
-    // keptAliveBrowsers / tearOffNodeContent / tearOffHooks 有意保留：
-    // reset（settled）后关闭新窗仍需它们做迁回与销毁门控；下一次
-    // startDragOut / 迁回完成时清理。
-    // tearOffContext 不清理：新窗 ability 的 context 在其销毁后仍可安全调用
-    // terminateSelf（幂等失败）；下一次会话会重新 setTearOffContext。
+    // keptAliveBrowsers / tearOffNodeContent / tearOffHooks are kept
+    // deliberately: closing the new window after reset (settled) still
+    // needs them for the migration home and destroy gating; they are
+    // cleared by the next startDragOut / migration-home completion.
+    // tearOffContext is not cleared: the new window ability's context
+    // stays safe to call terminateSelf on after its destruction (fails
+    // idempotently); the next session calls setTearOffContext again.
   }
 }
 
-// 模块级单例：同进程两个 UIAbility（源窗 + CefTearOffAbility）import 同一
-// 模块路径，天然共享同一实例。
+// Module-level singleton: the two UIAbilities in this process (source
+// window + CefTearOffAbility) import the same module path and therefore
+// share one instance.
 let gDragOutSession: DragOutSessionManager | undefined = undefined;
 
 export function getDragOutSession(): DragOutSessionManager {

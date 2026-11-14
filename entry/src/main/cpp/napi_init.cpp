@@ -215,7 +215,8 @@ void WaitAndCloseFence(int fd) {
 // flushes with the dirty region as damage. Returns false on any failure so
 // the caller can fall back to the pixelmap/ArrayBuffer path.
 // IMPORTANT: the FlushBuffer damage Region uses a BOTTOM-LEFT origin
-// (documented: "Region.rect以buffer左下角为坐标原点") while CEF dirty rects
+// (documented: "Region.rect uses the buffer's bottom-left as origin")
+// while CEF dirty rects
 // are top-left — the Y axis is flipped below.
 bool WriteRegionToSurface(OsrNativeSurface& s,
                           CefRefPtr<arkui_cef::ArkUICefRenderHandler> handler,
@@ -1898,7 +1899,8 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
         }
     }
 
-    // GPU 不创建 CPU paint TSFN，也不向 ArkTS 传像素缓冲区。
+    // GPU mode creates no CPU paint TSFN and passes no pixel buffers to
+    // ArkTS.
     std::shared_ptr<OsrPaintTsfn> paintTsfn;
     if (gpuSurfaceId == 0) {
         paintTsfn = std::make_shared<OsrPaintTsfn>();

@@ -39,7 +39,7 @@ export default class CefTearOffAbility extends UIAbility {
         return;
       }
       hilog.info(DOMAIN, MODULE, "loadContent ok");
-      // 自由窗装饰（标题栏），参照 CefPopupAbility.setTitleBarVisible
+      // Free-window decoration (title bar); see CefPopupAbility.setTitleBarVisible.
       try {
         let win = windowStage.getMainWindowSync();
         win.setWindowDecorVisible(true);

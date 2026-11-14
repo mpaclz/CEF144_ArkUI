@@ -1,13 +1,16 @@
 #include "ArkUICefClient.h"
 
-#include "ArkUICefBrowser.h"
-#include "ArkUICefManager.h"
+#include <sstream>
+
+#include <hilog/log.h>
+
 #include "cef_app.h"
-#include "include/wrapper/cef_helpers.h"
 #include "include/cef_parser.h"
 #include "include/cef_path_util.h"
-#include <hilog/log.h>
-#include <sstream>
+#include "include/wrapper/cef_helpers.h"
+
+#include "ArkUICefBrowser.h"
+#include "ArkUICefManager.h"
 
 namespace {
     constexpr unsigned int LOG_PRINT_DOMAIN = 0xFF00;
@@ -21,7 +24,8 @@ void ArkUICefClient::OnTitleChange(CefRefPtr<CefBrowser> browser,
         title.ToString().c_str(), browser->GetIdentifier(), arkui_cef_id_);
     
     if (browser->GetIdentifier() != arkui_cef_id_) {
-        // 弹窗浏览器的标题变更，通过 ArkUICefManager 全局回调通知到弹窗窗口
+        // Popup browser title changes reach the popup window via the
+        // ArkUICefManager global callback.
         ArkUICefManager::getInstance().NotifyPopupTitleChange(
             browser->GetIdentifier(), title.ToString());
     } else if (titleCallback_) {
@@ -156,7 +160,7 @@ bool ArkUICefClient::OnPreKeyEvent(CefRefPtr<CefBrowser> browser,
         return false;
     }
 
-    // F12 (0x7B): 打开 DevTools
+    // F12 (0x7B): open DevTools
     if (event.type == KEYEVENT_RAWKEYDOWN) {
         switch (event.windows_key_code) {
         case 0x7B:
@@ -172,7 +176,7 @@ bool ArkUICefClient::OnPreKeyEvent(CefRefPtr<CefBrowser> browser,
         }
     }
 
-    // Ctrl + 快捷键 demo
+    // Ctrl + shortcut demo
     if (event.modifiers & EVENTFLAG_CONTROL_DOWN) {
         if (event.type == KEYEVENT_KEYUP) {
             switch (event.windows_key_code) {

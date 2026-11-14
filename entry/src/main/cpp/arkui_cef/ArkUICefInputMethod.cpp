@@ -1,6 +1,8 @@
 #include "ArkUICefInputMethod.h"
-#include <hilog/log.h>
+
 #include <cstring>
+
+#include <hilog/log.h>
 
 namespace {
 constexpr unsigned int IME_LOG_DOMAIN = 0xFF00;

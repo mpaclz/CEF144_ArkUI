@@ -51,9 +51,11 @@ ArkUICefManager::~ArkUICefManager() {
 }
 
 void ArkUICefManager::start() {
-    // 幂等：只允许拉起一次 CEF 主线程。CEF 已在初始化中（initOk_ 尚未
-    // 置位）时 isCefRunning() 仍为 false，调用方据此重试 start() 会造成
-    // 双线程双 CefInitialize —— 用 startCalled_ 在 start() 入口直接挡住。
+    // Idempotent: only one CEF main thread may ever be spawned. While CEF
+    // is mid-initialization (initOk_ still false) isCefRunning() returns
+    // false, and callers retrying start() on that basis would spawn a second
+    // thread and a second CefInitialize - startCalled_ blocks that at the
+    // start() entry.
     bool expected = false;
     if (!startCalled_.compare_exchange_strong(expected, true)) {
         OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefManager",
@@ -190,9 +192,10 @@ int64_t ArkUICefManager::createOsrBrowser(const std::string& url, int width, int
     client->SetUseOsr(true);
     client->SetRenderHandler(renderHandler);
 
-    // 提前登记 pending id，使 Surface 销毁能够取消尚未触发 OnAfterCreated 的实例。
+    // Register the pending id early so a Surface teardown can cancel an
+    // instance whose OnAfterCreated has not fired yet.
     browsers_.emplace(id, browser);
-    // OSR 模式不需要父窗口，传 nullptr
+    // OSR mode needs no parent window; pass nullptr.
     CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::createBrowser, browser,
                                                             client, (Node*)nullptr, url)));
     return id;
@@ -211,7 +214,8 @@ void ArkUICefManager::destroyBrowser(int64_t id) {
     }
     
     if (browser) {
-        // 在 Surface 生命周期回调返回前停止呈现；呈现器与绘制共用串行锁。
+        // Stop presenting before the Surface lifecycle callback returns;
+        // the presenter and drawing share one serialization lock.
         browser->StopGpuPresentation();
         CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::close, browser)));
     }

@@ -57,8 +57,9 @@ struct TearOffPage {
         }
         .width('100%')
         .height('100%')
-        // 窗口尺寸变化（用户拉伸自由窗）同步给 CEF 宿主窗口（P2-4），
-        // 换算写法与 CefView.ets 的 onAreaChange 一致（vp → px）。
+        // Sync window size changes (user resizing the free window) to the
+        // CEF host window (P2-4); the vp -> px conversion matches the
+        // onAreaChange handler in CefView.ets.
         .onAreaChange((_oldValue, newValue) => {
           let wpx = Math.round(this.getUIContext().vp2px(newValue.width as number));
           let hpx = Math.round(this.getUIContext().vp2px(newValue.height as number));
@@ -78,7 +79,8 @@ struct TearOffPage {
         .width('100%')
         .height('100%')
       } else {
-        // 会话失效（超时/被 abort）：显示占位（ability 会随后被终止）
+        // Session invalid (timed out/aborted): show the placeholder (the
+        // ability will be terminated shortly).
         Column() {
           Text('拖出会话已失效')
             .fontSize(16)

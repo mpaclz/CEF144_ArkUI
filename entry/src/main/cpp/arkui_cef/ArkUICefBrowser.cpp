@@ -1,13 +1,16 @@
-#include "arkui_cef/ArkUICefBrowser.h"
-#include "arkui_cef/ArkUICefClient.h"
-#include "arkui_cef/ArkUICefRenderHandler.h"
-#include "arkui_cef/NodeHandle.h"
-#include "arkui_cef/CefOhosReparentApi.h"
-#include "arkui_cef/ArkUICefManager.h"
+#include "ArkUICefBrowser.h"
+
+#include <sstream>
 
 #include <hilog/log.h>
+
 #include "include/cef_drag_data.h"
-#include <sstream>
+
+#include "ArkUICefClient.h"
+#include "ArkUICefManager.h"
+#include "ArkUICefRenderHandler.h"
+#include "CefOhosReparentApi.h"
+#include "NodeHandle.h"
 
 namespace {
 constexpr unsigned int LOG_PRINT_DOMAIN = 0xFF00;
@@ -212,16 +215,19 @@ void ArkUICefBrowser::setFrameRate(int frameRate) {
 }
 
 void ArkUICefBrowser::show() {
-    // 优先用缓存句柄：reparent 迁移后实时 getWindowHandle() 需要 CEF UI
-    // 线程，且迁移瞬间可能返回 CEF 侧已换/已 free 的旧句柄（悬垂）；缓存
-    // 由 onBrowserCreated / reparent 成功后维护，仅缓存缺失才兜底查询。
+    // Prefer the cached handle: after a reparent migration a live
+    // getWindowHandle() needs the CEF UI thread and may briefly return the
+    // old, already-freed handle (dangling). The cache is maintained by
+    // onBrowserCreated / successful reparent; only fall back to a live query
+    // when the cache is missing.
     Node* node = hostWindowHandle_ != nullptr ? hostWindowHandle_ : getWindowHandle();
     if (node)
         arkui_cef::show(node->container);
 }
 
 void ArkUICefBrowser::hide() {
-    // 同 show()：优先缓存句柄，防迁移后实时查询拿到已 free 的旧句柄。
+    // Same as show(): prefer the cached handle so a post-migration live
+    // query cannot return a freed stale handle.
     Node* node = hostWindowHandle_ != nullptr ? hostWindowHandle_ : getWindowHandle();
     if (node)
         arkui_cef::hide(node->container);
@@ -316,8 +322,9 @@ void ArkUICefBrowser::wasHidden(bool hidden) {
 }
 
 void ArkUICefBrowser::setWindowlessVisibility(bool visible) {
-    // WasHidden 仅适用于离屏渲染（window rendering disabled）的 browser；
-    // windowed browser 的可见性由平台窗口信号驱动，此调用直接忽略。
+    // WasHidden applies only to off-screen-rendered browsers (window
+    // rendering disabled); windowed browsers get visibility from platform
+    // window signals, so this call is ignored for them.
     if (!use_osr_) {
         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
             "setWindowlessVisibility: id=%{public}ld ignored (not OSR)", id_);
@@ -327,8 +334,9 @@ void ArkUICefBrowser::setWindowlessVisibility(bool visible) {
     wasHidden_ = !visible;
 
     if (!browser_) {
-        // browser 尚未创建：记录状态，onBrowserCreated 时补调，
-        // 避免隐藏标签在创建完成后仍以"前台可见"状态产帧。
+        // Browser not created yet: stash the state and replay it in
+        // onBrowserCreated, so a hidden tab does not start producing frames
+        // as if it were foreground-visible.
         visibilityPending_ = true;
         OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
             "setWindowlessVisibility: id=%{public}ld, visible=%{public}d (pending, browser not created)",
@@ -537,15 +545,16 @@ int ArkUICefBrowser::reparent(Node* newParent, int width, int height) {
             id_, width, height);
         return -1;
     }
-    // 优先用 onBrowserCreated 缓存的宿主句柄（跨线程读取安全）；
-    // 兜底实时查询（仅在缓存缺失时）。
+    // Prefer the host handle cached by onBrowserCreated (safe to read
+    // cross-thread); fall back to a live query only if the cache is empty.
     Node* host = hostWindowHandle_ != nullptr ? hostWindowHandle_ : getWindowHandle();
     if (host == nullptr) {
         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
             "reparent: no host window handle, id=%{public}ld", id_);
         return -1;
     }
-    // 出参：rc==0 时 CEF 侧写入新宿主句柄（旧句柄在 CEF 侧已销毁）。
+    // Out-param: on rc==0 the CEF side writes the new host handle (the old
+    // one is destroyed there).
     void* newHandle = nullptr;
     int rc = cef_ohos_reparent_browser_host(reinterpret_cast<void*>(host),
                                             reinterpret_cast<void*>(newParent),
@@ -554,17 +563,20 @@ int ArkUICefBrowser::reparent(Node* newParent, int width, int height) {
         "reparent: id=%{public}ld rc=%{public}d size=%{public}dx%{public}d",
         id_, rc, width, height);
     if (rc == 0) {
-        // 迁移成功：把缓存刷新为新宿主句柄（旧宿主节点已由 CEF 侧销毁，
-        // 实时 GetWindowHandle() 需要 CEF UI 线程且可能拿到换/释放中的旧
-        // 值；后续 show/hide/reparent 直接用这份缓存）。
+        // Migration succeeded: refresh the cache to the new host handle (the
+        // old host node was destroyed on the CEF side, and a live
+        // GetWindowHandle() would need the CEF UI thread and could observe
+        // the mid-swap old value; later show/hide/reparent use this cache).
         if (newHandle != nullptr) {
             hostWindowHandle_ = reinterpret_cast<Node*>(newHandle);
         } else {
-            // 理论不可达（CEF 侧成功必写出参）；兜底置空走实时查询。
+            // Theoretically unreachable (success implies the out-param was
+            // written); defensively clear it to fall back to a live query.
             hostWindowHandle_ = nullptr;
         }
     }
-    // rc != 0（含 -3 结果未知）：保持缓存不动——未观测到句柄被换出。
+    // rc != 0 (including -3 unknown outcome): keep the cache as-is - no
+    // handle swap was observed.
     return rc;
 }
 
@@ -581,8 +593,9 @@ void ArkUICefBrowser::onBrowserCreated(CefRefPtr<CefBrowser> browser) {
     if (createCallback_) {
         createCallback_(id_);
     }
-    // 创建期间应用侧可能已通报过隐藏状态（如 browser 创建时所在标签非激活），
-    // 此时补调 WasHidden，避免隐藏标签创建完成后仍以前台状态产帧。
+    // The app may have reported a hidden state while the browser was still
+    // being created (e.g. its tab was inactive at creation time); replay
+    // WasHidden now so a hidden tab does not produce frames as foreground.
     if (visibilityPending_) {
         visibilityPending_ = false;
         browser_->GetHost()->WasHidden(wasHidden_);

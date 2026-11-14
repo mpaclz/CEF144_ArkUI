@@ -6,8 +6,9 @@
 
 #include "NodeHandle.h"
 
-#include <arkui/native_interface.h>
 #include <functional>
+
+#include <arkui/native_interface.h>
 #include <hilog/log.h>
 
 // Forward declaration — implementation lives in libadapter.so.

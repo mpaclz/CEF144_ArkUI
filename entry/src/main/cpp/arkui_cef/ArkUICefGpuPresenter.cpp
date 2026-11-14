@@ -1,27 +1,30 @@
 #include "ArkUICefGpuPresenter.h"
 
-#include <hilog/log.h>
-#include <native_buffer/native_buffer.h>
 #include <chrono>
 #include <cmath>
 #include <memory>
+
+#include <hilog/log.h>
+#include <native_buffer/native_buffer.h>
 
 namespace arkui_cef {
 namespace {
 constexpr unsigned int kLogDomain = 0xFF00;
 constexpr EGLenum kNativeBufferOhos = 0x34E1;
 constexpr uint64_t kNoModifier = 0x00ffffffffffffffULL;
-// fence 异步回收参数：在途源资源上限与有界等待时长（纳秒）。
+// Fence-based async reclamation parameters: max in-flight source
+// resources and bounded wait duration (nanoseconds).
 constexpr size_t kMaxPendingSources = 3;
 constexpr GLuint64 kBackpressureTimeoutNs = 8ULL * 1000 * 1000;   // 8ms
-constexpr GLuint64 kDrainTimeoutNs = 1000ULL * 1000 * 1000;       // 1s（仅销毁路径）
+constexpr GLuint64 kDrainTimeoutNs = 1000ULL * 1000 * 1000;       // 1s (shutdown path only)
 // Diagnostics window for the Paint arrival-rate log.
 constexpr int64_t kFpsLogWindowMs = 1000;
 const GLfloat kFullRect[] = {-1, -1, 1, 1};
 const GLfloat kPresentRect[] = {-1, 1, 1, -1};
 const GLfloat kFullUv[] = {0, 0, 1, 1};
 
-// 应用不共享 Chromium context，也不能改变调用线程原有 EGL current 状态。
+// The app shares no context with Chromium and must not change the
+// calling thread's pre-existing EGL current state.
 class CurrentBinding {
 public:
     explicit CurrentBinding(EGLDisplay ownedDisplay)
@@ -236,12 +239,14 @@ bool ArkUICefGpuPresenter::Paint(cef_paint_element_type_t type, const CefAcceler
         visible.width <= 0 || visible.height <= 0 || visible.x > coded.width || visible.y > coded.height ||
         visible.width > coded.width - visible.x || visible.height > coded.height - visible.y)
         return Fail("coded_size/visible_rect");
-    // native_buffer 是本进程可直接使用的 OHNativeWindowBuffer*，借用期仅限本次
-    // 回调；跨进程解析由 CEF 内部完成，应用不参与。
+    // native_buffer is an OHNativeWindowBuffer* this process can use
+    // directly; it is borrowed for this callback only. Cross-process
+    // resolution is done inside CEF; the app is not involved.
     OHNativeWindowBuffer* borrowed =
         reinterpret_cast<OHNativeWindowBuffer*>(info.native_buffer);
     if (!borrowed) return Fail("accelerated frame without native buffer");
-    // 源纹理需在 fence 点亮后才回收，故自主加一次引用以便跨回调持有。
+    // The source texture cannot be reclaimed until its fence signals, so
+    // take an extra reference of our own to hold it across callbacks.
     if (OH_NativeWindow_NativeObjectReference(borrowed) != 0)
         return Fail("native buffer ref-count acquire");
     ScopedWindowBuffer native(borrowed);
@@ -255,9 +260,12 @@ bool ArkUICefGpuPresenter::Paint(cef_paint_element_type_t type, const CefAcceler
         plane.size != static_cast<uint64_t>(actual->size) ||
         plane.stride < static_cast<uint64_t>(coded.width) * 4 ||
         plane.size < static_cast<uint64_t>(plane.stride) * coded.height) {
-        // 几何不一致是瞬态的（典型场景：GPU 进程重启窗口期，跨进程 lease 解析
-        // 拿到旧代际缓冲）。只丢弃本帧，不做永久熔断——永久熔断会把一次瞬态
-        // 不一致放大为整个会话的画面冻结。硬失败（EGL/GL）仍保留熔断。
+        // Geometry mismatches are transient (typical case: during a GPU
+        // process restart window, cross-process lease resolution returns a
+        // stale-generation buffer). Drop this frame only; do NOT trip the
+        // permanent circuit breaker - that would amplify one transient
+        // inconsistency into a whole-session freeze. Hard failures (EGL/GL)
+        // still trip the breaker.
         OH_LOG_Print(LOG_APP, LOG_WARN, kLogDomain, "GpuOsrPresenter",
             "[OHOS_GPU_OSR] frame geometry mismatch with paint planes, dropping this frame actual=%{public}p w=%{public}d h=%{public}d fmt=%{public}d "
             "stride=%{public}d size=%{public}d | coded=%{public}dx%{public}d nativeFmt=%{public}d | "
@@ -286,20 +294,25 @@ bool ArkUICefGpuPresenter::Paint(cef_paint_element_type_t type, const CefAcceler
     bool copied = source != 0 && glGetError() == GL_NO_ERROR &&
         CopySource(source, type == PET_VIEW ? view_ : popup_, visible, coded);
     if (!copied) {
-        // 复制未入队成功：没有 GPU 读取，可立即释放源资源。
+        // The copy was not enqueued: no GPU reads it, release the source
+        // resources immediately.
         glBindTexture(GL_TEXTURE_2D, 0);
         if (source) glDeleteTextures(1, &source);
         destroyImage_(display_, image);
         return Fail("source texture copy");
     }
-    // 复制命令已入队但未执行。不再 glFinish 阻塞 UI 线程，而是插 fence 并把
-    // 源纹理/EGLImage/缓冲区引用移交在途队列；fence 点亮后异步回收。
-    // 我们已用 NDK 引用计数自主持有一份引用，因此 CEF 在回调返回后释放它自己
-    // 那份也不会让帧像素失效——这不违反「帧内容仅回调期有效」契约。
+    // The copy command is enqueued but not executed yet. Instead of a
+    // blocking glFinish on the UI thread, insert a fence and move the
+    // source texture / EGLImage / buffer reference to the in-flight queue;
+    // reclaim asynchronously once the fence signals. We already hold our own
+    // NDK ref-counted reference, so CEF releasing its own copy after the
+    // callback returns does not invalidate the frame pixels - this does not
+    // violate the "frame contents valid only during the callback" contract.
     GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-    if (fence) glFlush();  // fence 本身不强制提交命令流，显式刷出让 GPU 尽早执行
+    if (fence) glFlush();  // a fence alone does not flush the command stream; flush explicitly so the GPU starts early
     if (!fence) {
-        // fence 不可用则退回保守路径：阻塞等待后同步释放（正确性优先）。
+        // Fence unavailable: fall back to the conservative path - block
+        // and release synchronously (correctness first).
         glFinish();
         glBindTexture(GL_TEXTURE_2D, 0);
         glDeleteTextures(1, &source);
@@ -317,8 +330,9 @@ bool ArkUICefGpuPresenter::Paint(cef_paint_element_type_t type, const CefAcceler
     pending.buffer = std::move(native);
     pending.fence = fence;
     pending_.push_back(std::move(pending));
-    // 背压：在途队列积压说明 GPU 落后于捕获节奏，有界等待最老 fence，
-    // 防止源缓冲区引用无限堆积。
+    // Backpressure: a growing in-flight queue means the GPU is behind the
+    // capture pace; wait (bounded) on the oldest fence so source buffer
+    // references cannot pile up without bound.
     if (pending_.size() > kMaxPendingSources) {
         glClientWaitSync(pending_.front().fence, GL_SYNC_FLUSH_COMMANDS_BIT,
                          kBackpressureTimeoutNs);
@@ -326,9 +340,11 @@ bool ArkUICefGpuPresenter::Paint(cef_paint_element_type_t type, const CefAcceler
     ReapCompletedSources();
     (type == PET_VIEW ? view_ : popup_).ready = true;
     if (!PresentCurrent()) return Fail("owned-texture present");
-    // 呈现命令入队后也回收一次（present 完成的帧其源多半已可释放）。
+    // Reap once more after enqueueing the present (the sources of frames
+    // that finished presenting are usually releasable by then).
     ReapCompletedSources();
-    // 诊断：统计 Paint 实际到达帧率，用于区分「捕获掉速」与「呈现异步」。
+    // Diagnostics: measure the Paint arrival rate to distinguish capture
+    // slow-down from present-pipeline asynchrony.
     {
         auto now = std::chrono::steady_clock::now();
         int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -350,11 +366,12 @@ bool ArkUICefGpuPresenter::Paint(cef_paint_element_type_t type, const CefAcceler
 }
 
 void ArkUICefGpuPresenter::ReapCompletedSources() {
-    // 仅在持有 mutex_ 且自有 context current 时调用。timeout=0 纯轮询，绝不阻塞。
+    // Call only while holding mutex_ with our own context current.
+    // timeout=0 is a pure poll and never blocks.
     while (!pending_.empty()) {
         PendingSource& front = pending_.front();
         GLenum wait = glClientWaitSync(front.fence, 0, 0);
-        if (wait == GL_TIMEOUT_EXPIRED) break;  // 队首未完成，其后必然也未完成
+        if (wait == GL_TIMEOUT_EXPIRED) break;  // queue head not done: nothing behind it can be done either
         if (wait == GL_WAIT_FAILED) {
             OH_LOG_Print(LOG_APP, LOG_ERROR, kLogDomain, "GpuOsrPresenter",
                 "[OHOS_GPU_OSR] fence query failed GL=%{public}x, fence=%{public}p, pending=%{public}zu",
@@ -363,14 +380,15 @@ void ArkUICefGpuPresenter::ReapCompletedSources() {
         }
         if (front.texture) glDeleteTextures(1, &front.texture);
         if (front.image != EGL_NO_IMAGE_KHR) destroyImage_(display_, front.image);
-        front.buffer.reset();  // 归还我们自主持有的缓冲区引用
+        front.buffer.reset();  // return our own buffer reference
         glDeleteSync(front.fence);
         pending_.pop_front();
     }
 }
 
 void ArkUICefGpuPresenter::DrainPendingSources() {
-    // 销毁路径：阻塞等待全部在途 fence，确保 GPU 不再触碰源资源后才拆 context。
+    // Shutdown path: block on ALL in-flight fences, ensuring the GPU no
+    // longer touches source resources before tearing down the context.
     while (!pending_.empty()) {
         PendingSource& front = pending_.front();
         glClientWaitSync(front.fence, GL_SYNC_FLUSH_COMMANDS_BIT, kDrainTimeoutNs);
@@ -450,7 +468,8 @@ void ArkUICefGpuPresenter::ShutdownLocked() {
     if (context_ != EGL_NO_CONTEXT && surface_ != EGL_NO_SURFACE) {
         CurrentBinding binding(display_);
         if (MakeCurrent()) {
-            // 先阻塞回收全部在途源资源，确保 GPU 不再引用它们，再拆自有资源。
+            // Drain all in-flight sources first (GPU no longer references
+            // them), then tear down our own resources.
             DrainPendingSources();
             glFinish();
             if (view_.id) glDeleteTextures(1, &view_.id);
@@ -462,11 +481,12 @@ void ArkUICefGpuPresenter::ShutdownLocked() {
             OH_LOG_Print(LOG_APP, LOG_ERROR, kLogDomain, "GpuOsrPresenter",
                 "[OHOS_GPU_OSR] make current failed during shutdown, EGL=%{public}x, pending=%{public}zu",
                 eglGetError(), pending_.size());
-            // 无法 current：GPU 资源交由 context 销毁回收，但缓冲区引用是 CPU
-            // 侧计数，必须在这里释放，否则该缓冲区泄漏。
+            // Cannot make current: GL resources are reclaimed by context
+            // destruction, but the buffer reference is a CPU-side ref-count
+            // and must be released here or the buffer leaks.
             for (auto& pending : pending_) {
                 pending.buffer.reset();
-                pending.fence = nullptr;  // sync 对象随 context 销毁失效
+                pending.fence = nullptr;  // sync objects die with the context
                 pending.texture = 0;
                 pending.image = EGL_NO_IMAGE_KHR;
             }
@@ -479,7 +499,8 @@ void ArkUICefGpuPresenter::ShutdownLocked() {
     context_ = EGL_NO_CONTEXT;
     if (window_) OH_NativeWindow_DestroyNativeWindow(window_);
     window_ = nullptr;
-    // EGL_DEFAULT_DISPLAY 可能被其他组件共用，不能 eglTerminate 它。
+    // EGL_DEFAULT_DISPLAY may be shared with other components; never
+    // eglTerminate it.
     display_ = EGL_NO_DISPLAY;
     view_ = {};
     popup_ = {};

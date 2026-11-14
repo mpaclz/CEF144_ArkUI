@@ -3,12 +3,15 @@ import { CefView } from '../components/CefView';
 import { OsrCefView } from '../components/OsrCefView';
 import { getDragOutSession, DragOutInfo } from '../common/DragOutSession';
 
-// ── 标签数据源（注册表 + 渲染源合一）──────────────────────────────────────
-// TabDef 数组既驱动 TabContent 渲染（ForEach 下标 = Tabs 位置），也承载每个
-// OSR 视图的身份令牌（uid）。增删标签只改这个数组——位置与身份天然同源，
-// 不存在需要人工同步的第二处（旧 myTabIndex 硬编码索引因此类 bug 已移除）。
-// uid 约定：OSR 标签非空且全表唯一（同时用作 focus target id 后缀，须 ASCII）；
-//          非 OSR 标签为空串（不参与广播通道）。
+// ── Tab data source (registry + render source in one) ──────────────────
+// The TabDef array both drives TabContent rendering (ForEach index == Tabs
+// position) and carries each OSR view's identity token (uid). Adding or
+// removing a tab touches only this array - position and identity share one
+// source of truth, with no second place to keep in sync by hand (the old
+// hard-coded myTabIndex indexes were removed after exactly that class of
+// bug). uid conventions: OSR tabs are non-empty and unique across the table
+// (also used as a focus-target id suffix, so ASCII only); non-OSR tabs use
+// the empty string (outside the broadcast channel).
 interface TabDef {
   kind: 'browser' | 'cef' | 'osr-cpu' | 'osr-gpu';
   label: string;
@@ -20,7 +23,7 @@ interface TabDef {
 @Entry
 @Component
 struct MultiTabPage {
-  // ── 唯一数据源 ──
+  // ── The single source of truth ──
   static readonly TABS: TabDef[] = [
     { kind: 'browser', label: '多CEF实例', url: 'https://qq.com', uid: '' },
     { kind: 'browser', label: 'BrowserView', url: 'https://example.com/', uid: '' },
@@ -45,11 +48,13 @@ struct MultiTabPage {
       uid: 'osr-drag', dragOut: true },
   ];
 
-  // 当前激活标签位置（Tabs 自身坐标系：驱动切换、两行头部高亮）。
+  // Active tab position (Tabs' own coordinate system: drives switching
+  // and the two-row header highlight).
   @State currentIndex: number = 0;
-  // 当前激活标签的身份令牌（由 onChange 从 TABS 换算），广播给全部 OSR 视图。
+  // Active tab's identity token (mapped from TABS by onChange), broadcast
+  // to every OSR view.
   @State activeUid: string = '';
-  // TabsController 驱动器：自定义标签头点击 → changeIndex。
+  // TabsController driver: custom header chip clicks -> changeIndex.
   controller: TabsController = new TabsController();
 
   private isOsr(t: TabDef): boolean {
@@ -60,7 +65,7 @@ struct MultiTabPage {
     return t.kind === 'browser' || t.kind === 'cef';
   }
 
-  // ── 单个标签按钮 ──
+  // ── One tab chip ──
   @Builder
   TabChip(t: TabDef, index: number) {
     Text(t.label)
@@ -79,7 +84,7 @@ struct MultiTabPage {
 
   build() {
     Column() {
-      // ── 第一行：非 OSR（windowed）标签 ──
+      // ── Row 1: non-OSR (windowed) tabs ──
       Row({ space: 6 }) {
         ForEach(MultiTabPage.TABS, (t: TabDef, index: number) => {
           if (this.isRow1(t)) {
@@ -93,7 +98,7 @@ struct MultiTabPage {
       .alignItems(VerticalAlign.Center)
       .backgroundColor(Color.White)
 
-      // ── 第二行：OSR 标签（CPU OSR + GPU OSR）──
+      // ── Row 2: OSR tabs (CPU OSR + GPU OSR) ──
       Row({ space: 6 }) {
         ForEach(MultiTabPage.TABS, (t: TabDef, index: number) => {
           if (this.isOsr(t)) {
@@ -108,7 +113,7 @@ struct MultiTabPage {
       .backgroundColor(Color.White)
       .border({ width: { bottom: 1 }, color: '#D0D5DD' })
 
-      // ── 内容区：ForEach 数据驱动，下标即 Tabs 位置 ──
+      // ── Content area: ForEach data-driven; the array index is the Tabs position ──
       Tabs({ controller: this.controller, index: this.currentIndex }) {
         ForEach(MultiTabPage.TABS, (t: TabDef, index: number) => {
           TabContent() {
@@ -144,7 +149,7 @@ struct MultiTabPage {
                   CefView({
                     viewUrl: t.url,
                     onCreatedCallback: (view: CefView) => {
-                      // 拖出支持：BrowserView 标签页同款接线
+                      // Drag-out support: same wiring as the BrowserView tab.
                       view.enableDragOut((info: DragOutInfo) => {
                         getDragOutSession().startDragOut(info);
                       });
@@ -157,7 +162,8 @@ struct MultiTabPage {
               .width('100%')
               .height('100%')
             } else {
-              // OSR（CPU + GPU 共用 OsrCefView；GPU 走 native presenter）
+              // OSR (CPU + GPU share OsrCefView; GPU goes through the
+              // native presenter).
               Column() {
                 OsrCefView({
                   viewUrl: t.url,
