@@ -1,0 +1,14 @@
+entry/src/main/resources/resfile/ufo_fixed_test.html
+  h_ae917a57683699 422-437
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "61aea79f742e91c2d8c8d35cce8ec894481f278b",
+  "prompts": {},
+  "humans": {
+    "h_ae917a57683699": {
+      "author": "zhaomangguo <zhaoyinxing221@outlook.com>"
+    }
+  }
+}
