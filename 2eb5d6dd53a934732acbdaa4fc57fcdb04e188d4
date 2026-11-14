@@ -1,0 +1,44 @@
+entry/libs/arm64-v8a/libadapter.so
+  h_7a43ad329963da 2-3
+entry/libs/arm64-v8a/libcef.so
+  h_7a43ad329963da 2
+entry/src/main/cpp/CMakeLists.txt
+  h_7a43ad329963da 69-72,78,101-103
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.cpp
+  h_7a43ad329963da 5,39-42,71,84,93,95-96,109-110,370-373
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.h
+  h_7a43ad329963da 9-10,228-233,276
+entry/src/main/cpp/arkui_cef/ArkUICefGpuPresenter.cpp
+  h_7a43ad329963da 1-383
+entry/src/main/cpp/arkui_cef/ArkUICefGpuPresenter.h
+  h_7a43ad329963da 1-74
+entry/src/main/cpp/arkui_cef/ArkUICefManager.cpp
+  h_7a43ad329963da 101-102,108-116,120,126-127,137-138,158-159
+entry/src/main/cpp/arkui_cef/ArkUICefManager.h
+  h_7a43ad329963da 94-95
+entry/src/main/cpp/arkui_cef/ArkUICefRenderHandler.cpp
+  h_7a43ad329963da 17,23,69-74,122-126,209,211,218,220
+entry/src/main/cpp/arkui_cef/ArkUICefRenderHandler.h
+  h_7a43ad329963da 8-9,52-54,73
+entry/src/main/cpp/include/cef/include/internal/cef_types_linux.h
+  h_7a43ad329963da 212-218
+entry/src/main/cpp/napi_init.cpp
+  h_7a43ad329963da 6,798-799,804,806,822-863,947-953,970-971
+entry/src/main/cpp/types/libarkui_cef/Index.d.ts
+  h_7a43ad329963da 24,31-32
+entry/src/main/ets/components/OsrCefView.ets
+  h_7a43ad329963da 13-34,82-95,99-103,121-123,190-196,269-274,339-342,346-349,401,405,408-413,420-441,445-456,459,471-531
+entry/src/main/ets/pages/BrowserTabsPage.ets
+  h_7a43ad329963da 74-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.29.1408",
+  "base_commit_sha": "2eb5d6dd53a934732acbdaa4fc57fcdb04e188d4",
+  "prompts": {},
+  "humans": {
+    "h_7a43ad329963da": {
+      "author": "loveacat <zhaoyinxing@huawei.com>"
+    }
+  }
+}

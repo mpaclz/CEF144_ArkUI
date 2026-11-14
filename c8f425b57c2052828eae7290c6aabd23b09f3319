@@ -1,0 +1,16 @@
+entry/src/main/ets/pages/BrowserTabsPage.ets
+  h_7a43ad329963da 99-110
+entry/src/main/resources/resfile/ufo_fixed_test.html
+  h_7a43ad329963da 1-423
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.8",
+  "base_commit_sha": "c8f425b57c2052828eae7290c6aabd23b09f3319",
+  "prompts": {},
+  "humans": {
+    "h_7a43ad329963da": {
+      "author": "loveacat <zhaoyinxing@huawei.com>"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+entry/src/main/cpp/arkui_cef/ArkUICefGpuPresenter.cpp
+  h_7a43ad329963da 14-17,273-297,299-311,314-315,319-350,419-420,430-438
+entry/src/main/cpp/arkui_cef/ArkUICefGpuPresenter.h
+  h_7a43ad329963da 11-12,39-46,55-56,83-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.29.1408",
+  "base_commit_sha": "27e16f1e2faf6331b0a3dc7ff22d7113bc99dce8",
+  "prompts": {},
+  "humans": {
+    "h_7a43ad329963da": {
+      "author": "loveacat <zhaoyinxing@huawei.com>"
+    }
+  }
+}

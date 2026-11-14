@@ -1,0 +1,14 @@
+entry/src/main/resources/resfile/ufo_fixed_test.html
+  h_7a43ad329963da 229-234,283-289,317,324-325,329-333,345,387-392
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.8",
+  "base_commit_sha": "3ddc192521d47055da929cb8d7fbba2eaf0072e4",
+  "prompts": {},
+  "humans": {
+    "h_7a43ad329963da": {
+      "author": "loveacat <zhaoyinxing@huawei.com>"
+    }
+  }
+}

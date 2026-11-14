@@ -1,0 +1,16 @@
+entry/libs/arm64-v8a/libadapter.so
+  h_7a43ad329963da 2-3
+entry/libs/arm64-v8a/libcef.so
+  h_7a43ad329963da 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "570f17b0c5489389794ff63ef51243c1801599c7",
+  "prompts": {},
+  "humans": {
+    "h_7a43ad329963da": {
+      "author": "loveacat <zhaoyinxing@huawei.com>"
+    }
+  }
+}

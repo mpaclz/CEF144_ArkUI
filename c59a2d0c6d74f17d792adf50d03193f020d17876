@@ -1,0 +1,20 @@
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.h
+  h_ae917a57683699 172-185
+entry/src/main/cpp/napi_init.cpp
+  h_ae917a57683699 2067-2071
+entry/src/main/ets/components/OsrCefView.ets
+  h_ae917a57683699 289-296,959,961-962,964,966,1287-1288,1312-1320
+entry/src/main/ets/pages/BrowserTabsPage.ets
+  h_ae917a57683699 130,153,177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "c59a2d0c6d74f17d792adf50d03193f020d17876",
+  "prompts": {},
+  "humans": {
+    "h_ae917a57683699": {
+      "author": "zhaomangguo <zhaoyinxing221@outlook.com>"
+    }
+  }
+}

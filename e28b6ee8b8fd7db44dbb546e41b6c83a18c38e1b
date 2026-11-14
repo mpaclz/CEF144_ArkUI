@@ -1,0 +1,14 @@
+entry/libs/arm64-v8a/libcef.so
+  h_7a43ad329963da 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "e28b6ee8b8fd7db44dbb546e41b6c83a18c38e1b",
+  "prompts": {},
+  "humans": {
+    "h_7a43ad329963da": {
+      "author": "loveacat <zhaoyinxing@huawei.com>"
+    }
+  }
+}
