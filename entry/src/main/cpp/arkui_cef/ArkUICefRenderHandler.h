@@ -6,6 +6,8 @@
 #include <functional>
 #include <mutex>
 #include <vector>
+#include <memory>
+#include "ArkUICefGpuPresenter.h"
 
 namespace arkui_cef {
 
@@ -70,6 +72,9 @@ public:
     void SetDeviceScaleFactor(float factor);
     void SetComponentOffset(int x, int y);
     void SetPaintCallback(PaintCallback callback) { paintCallback_ = std::move(callback); }
+    void SetGpuPresenter(std::shared_ptr<ArkUICefGpuPresenter> presenter) {
+        gpuPresenter_ = std::move(presenter);
+    }
     void SetScrollOffsetCallback(ScrollOffsetCallback cb) { scrollOffsetCallback_ = std::move(cb); }
     void SetVirtualKeyboardCallback(VirtualKeyboardCallback cb) { virtualKeyboardCallback_ = std::move(cb); }
     void SetTextSelectionCallback(TextSelectionCallback cb) { textSelectionCallback_ = std::move(cb); }
@@ -132,6 +137,7 @@ private:
     int componentOffsetX_ = 0;
     int componentOffsetY_ = 0;
     PaintCallback paintCallback_;
+    std::shared_ptr<ArkUICefGpuPresenter> gpuPresenter_;
     std::mutex mutex_;
     bool popupVisible_ = false;
     CefRect popupRect_;            // display rect (CSS px, repositioned into the view)

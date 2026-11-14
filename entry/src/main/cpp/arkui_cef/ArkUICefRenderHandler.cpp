@@ -33,11 +33,13 @@ void ArkUICefRenderHandler::SetSize(int width, int height) {
     std::lock_guard<std::mutex> lock(mutex_);
     width_ = width;
     height_ = height;
+    if (gpuPresenter_) gpuPresenter_->Resize(width, height);
 }
 
 void ArkUICefRenderHandler::SetDeviceScaleFactor(float factor) {
     std::lock_guard<std::mutex> lock(mutex_);
     deviceScaleFactor_ = factor;
+    if (gpuPresenter_) gpuPresenter_->SetScale(factor);
 }
 
 void ArkUICefRenderHandler::SetComponentOffset(int x, int y) {
@@ -83,6 +85,14 @@ bool ArkUICefRenderHandler::GetScreenPoint(CefRefPtr<CefBrowser> browser,
 void ArkUICefRenderHandler::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
                                      const RectList& dirtyRects, const void* buffer,
                                      int width, int height) {
+    if (gpuPresenter_) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
+            "[OHOS_GPU_OSR] CPU OnPaint received while GPU presenter active, browser id=%{public}ld "
+            "type=%{public}d size=%{public}dx%{public}d",
+            browser ? browser->GetIdentifier() : -1, static_cast<int>(type), width, height);
+        gpuPresenter_->Shutdown();
+        return;
+    }
     if (type == PET_POPUP) {
         // Store popup pixels, then composite into the staging buffer right
         // away (a popup repaint may arrive without a matching PET_VIEW
@@ -289,11 +299,12 @@ bool ArkUICefRenderHandler::BlitFullFrameTo(uint8_t* dst, size_t dstStride, bool
 void ArkUICefRenderHandler::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
                                                 const RectList& dirtyRects,
                                                 const CefAcceleratedPaintInfo& info) {
-    // GPU accelerated paint uses shared textures. We don't have the infrastructure
-    // to import GPU textures into ArkUI's Image component, so we log and ignore.
-    // The software OnPaint path will still be called if Invalidate(PET_VIEW) is used.
-    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
-        "OnAcceleratedPaint: type=%{public}d (not supported, using software path)", type);
+    if (!gpuPresenter_) return;
+    if (!gpuPresenter_->Paint(type, info)) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
+            "[OHOS_GPU_OSR] accelerated frame present failed, browser id=%{public}ld type=%{public}d",
+            browser ? browser->GetIdentifier() : -1, static_cast<int>(type));
+    }
 }
 
 void ArkUICefRenderHandler::OnTextSelectionChanged(CefRefPtr<CefBrowser> browser,
@@ -361,6 +372,7 @@ CefRect ArkUICefRenderHandler::CompositePopup(const void* viewBuffer, int viewW,
 void ArkUICefRenderHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
         "OnPopupShow: show=%{public}d", show);
+    std::shared_ptr<ArkUICefGpuPresenter> presenter;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         popupVisible_ = show;
@@ -373,10 +385,14 @@ void ArkUICefRenderHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show
             // lingers on screen until something else triggers a repaint).
             ClearPopupRects();
         }
+        // GPU mode: the presenter composites the popup itself; mirror the
+        // visibility into it (same serialized lock domain as Paint).
+        presenter = gpuPresenter_;
     }
     if (!show) {
         browser->GetHost()->Invalidate(PET_VIEW);
     }
+    if (presenter) presenter->SetPopupVisible(show);
 }
 
 void ArkUICefRenderHandler::OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect) {
@@ -386,14 +402,22 @@ void ArkUICefRenderHandler::OnPopupSize(CefRefPtr<CefBrowser> browser, const Cef
     if (rect.width <= 0 || rect.height <= 0) {
         return;
     }
-    std::lock_guard<std::mutex> lock(mutex_);
-    // rect is in CSS pixels (matching GetViewRect's coordinate system).
-    // Keep both the original rect (CEF's internal notion, needed for input
-    // coordinate mapping) and the repositioned display rect (clamped into
-    // the view so the whole popup stays visible — e.g. a dropdown opening
-    // upward near the bottom edge).
-    originalPopupRect_ = rect;
-    popupRect_ = GetPopupRectInWebView(rect);
+    std::shared_ptr<ArkUICefGpuPresenter> presenter;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        // rect is in CSS pixels (matching GetViewRect's coordinate system).
+        // Keep both the original rect (CEF's internal notion, needed for input
+        // coordinate mapping) and the repositioned display rect (clamped into
+        // the view so the whole popup stays visible — e.g. a dropdown opening
+        // upward near the bottom edge).
+        originalPopupRect_ = rect;
+        popupRect_ = GetPopupRectInWebView(rect);
+        presenter = gpuPresenter_;
+    }
+    // GPU mode: the presenter composites the popup at CEF's own coordinates
+    // (the repositioned display rect only applies to the CPU staging path),
+    // so forward the ORIGINAL rect, matching the presenter's contract.
+    if (presenter) presenter->SetPopupRect(rect);
 }
 
 CefRect ArkUICefRenderHandler::GetPopupRectInWebView(const CefRect& original) {

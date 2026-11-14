@@ -18,6 +18,9 @@ interface DragDataInfo {
   filePaths: string;
 }
 
+// 每个 GPU OSR 实例需要唯一 XComponent id，避免同页多实例冲突。
+let g_gpuComponentSeq = 0;
+
 // XComponent(SURFACE) lifecycle controller. The onSurface* overrides are
 // XComponentController virtuals (API 12+) that fire only when libraryname is
 // NOT set; the callbacks are injected so the controller can route events
@@ -234,9 +237,13 @@ export struct OsrCefView {
   // so the historical 10fps cap is no longer required to keep the JS thread
   // healthy. 20 is a safe default; profile and raise on capable devices.
   @Prop osrFrameRate: number = 60;
-  // This view's index among the page's Tabs (plain construction parameter,
-  // not reactive).
-  myTabIndex: number = -1;
+  // Identity token assigned by the hosting page (plain construction
+  // parameter, not reactive). Non-empty only for views living in a Tabs
+  // page; the page broadcasts the active token via activeUid and each view
+  // decides for itself whether the broadcast refers to it. Empty string =
+  // not in a Tabs context (tear-off window): the broadcast channel is
+  // disabled and visibility follows onVisibleAreaChange only.
+  viewUid: string = '';
   // Unique focus target id for the render area. Focus is requested here on
   // activation so the ArkTS onKeyEvent fallback channel (below) receives
   // key events without requiring a prior click on the render area.
@@ -277,11 +284,29 @@ export struct OsrCefView {
   private webExitArmed: boolean = false;
   // Global counter for window instances without a tab index (tear-off windows).
   private static nextWindowUid: number = 1;
-  // Currently active tab index, synced from the page's Tabs.onChange. @Watch
+  // Currently active identity token, synced from the page's Tabs.onChange
+  // (the page maps the tab index to a token via its tab table). @Watch
   // routes activation: onChange fires reliably on EVERY switch including the
   // first one — unlike the visibility edge, which does not fire when a
-  // TabContent's component tree is attached for the first time.
-  @Prop @Watch('onActiveTabChanged') activeTabIndex: number = -1;
+  // TabContent's component tree is attached for the first time. A single
+  // watch drives BOTH the keyboard ownership and the GPU visibility channel
+  // (they share one event source; the old numeric-index comparison and the
+  // separate gpuTabActive prop are gone).
+  @Prop @Watch('onActiveUidChanged') activeUid: string = '';
+  @Prop gpuEnabled: boolean = false;
+  // 每个实例独立 XComponent id，SurfaceId 路线不设置 libraryname=adapter。
+  private gpuComponentId: string = 'osr_gpu_' + (++g_gpuComponentSeq);
+  private disposed: boolean = false;
+  // surfaceReady 用上方 CPU 模式的 @State 声明（GPU 回调写、build 读，二者共用）。
+  private surfaceSizeReady: boolean = false;
+  private layoutSizeReady: boolean = false;
+  private gpuSurfaceId: string = '';
+  private creationGeneration: number = 0;
+  private pendingBrowserId: number = -1;
+  private gpuController: XComponentController = new OsrSurfaceController(
+    (id: string) => this.onGpuSurfaceCreated(id),
+    (id: string, w: number, h: number) => this.onGpuSurfaceChanged(id, w, h),
+    (id: string) => this.onGpuSurfaceDestroyed(id));
 
   // ==================== 拖出（tear-off）支持 ====================
   // 拖出检测状态（ArkTS 侧实现，检测嵌在 handleMouseEvent 的 Move 分支，
@@ -300,22 +325,38 @@ export struct OsrCefView {
   private static readonly DRAG_OUT_MIN_DRAG_VP: number = 10;
   private static readonly DRAG_OUT_EDGE_PX: number = 24;
 
-  private onActiveTabChanged(propName: string): void {
-    let active = this.activeTabIndex === this.myTabIndex;
+  // Unified "is this view the one the user is looking at" decision for the
+  // Tabs broadcast channel. Empty viewUid = no Tabs context (tear-off).
+  private isMyTurn(): boolean {
+    return this.viewUid !== '' && this.viewUid === this.activeUid;
+  }
+
+  private onActiveUidChanged(): void {
+    const active = this.isMyTurn();
+    hilog.info(DOMAIN, MODULE, "onActiveUidChanged: uid=%{public}s activeUid=%{public}s active=%{public}s, browserId=%{public}d",
+      this.viewUid, this.activeUid, String(active), this.browserId);
     if (active) {
       // Focus does not depend on the browser being alive — request it even
       // while CEF is still initializing, so keys work the moment the page
       // becomes interactive.
       this.requestFocusToRenderArea();
     }
+    // Keyboard ownership channel (edge-tracked in setTabActive).
     this.setTabActive(active);
+    // GPU visibility channel: WasHidden stops layout/frame capture in the
+    // hidden tab and throttles the renderer. Browser not created yet: the
+    // native side has a pending fallback, and onOsrCreated re-checks.
+    if (this.gpuEnabled && this.isCreated()) {
+      arkui_cef.cefSetWindowlessVisibility(this.browserId, active);
+    }
   }
 
   aboutToAppear(): void {
     this.urlInput = this.viewUrl;
-    // Focus target ids must be unique page-wide. Tabs pages pass myTabIndex;
-    // tear-off windows (adopt mode) have none — fall back to a global counter.
-    let uid = this.myTabIndex >= 0 ? String(this.myTabIndex) : 'w' + (OsrCefView.nextWindowUid++);
+    // Focus target ids must be unique page-wide. Tabs pages pass a viewUid
+    // token; tear-off windows (adopt mode) have none — fall back to a global
+    // counter. Tokens must stay id-safe (ASCII, no spaces).
+    let uid = this.viewUid !== '' ? this.viewUid : 'w' + (OsrCefView.nextWindowUid++);
     this.renderAreaKey = 'osrRender_' + uid;
     this.focusAnchorKey = 'osrAnchor_' + uid;
     this.toolbarLastKey = 'osrToolbarLast_' + uid;
@@ -339,9 +380,14 @@ export struct OsrCefView {
       getDragOutSession().setTearOffHooks({
         releaseBrowser: () => { this.releaseBrowser(); }
       });
-      if (this.activeTabIndex === this.myTabIndex) {
+      if (this.isMyTurn()) {
         this.setTabActive(true);
       }
+      return;
+    }
+    if (this.gpuEnabled) {
+      // GPU 模式推迟到 Surface 就绪且有有效尺寸后再创建浏览器；不在这里提前创建。
+      hilog.info(DOMAIN, MODULE, "GPU OSR waiting for XComponent surface before create");
       return;
     }
     if (this.browserId <= 0) {
@@ -361,6 +407,9 @@ export struct OsrCefView {
   }
 
   aboutToDisappear(): void {
+    // 先置销毁标记，晚到的 surface/browser 回调不得复活已消失组件。
+    this.disposed = true;
+    this.creationGeneration++;
     this.destroy();
   }
 
@@ -430,7 +479,15 @@ export struct OsrCefView {
 
       // Render area — all events are captured and forwarded to CEF
       Column() {
-        if (this.releasedBrowser) {
+        if (this.gpuEnabled) {
+          // GPU 呈现节点常驻，Surface 生命周期由 controller 管理；不依赖 browserId 才创建。
+          // NOTE: the XComponent (SURFACE type) is NOT focusable — key events
+          // and focus land on the anchor leaf below and the parent Column.
+          XComponent({ id: this.gpuComponentId, type: XComponentType.SURFACE,
+            controller: this.gpuController })
+            .width('100%')
+            .height('100%')
+        } else if (this.releasedBrowser) {
           // 拖出占位：browser 已迁往新窗口（XComponent 卸载触发
           // onXcSurfaceDestroyed → 现有 detach 链路）
           Column() {
@@ -503,7 +560,11 @@ export struct OsrCefView {
           })
       }
       .width('100%')
+      // layoutWeight 严格按剩余空间分配高度：flexGrow 会被子节点 100% 高度
+      // 撑大的固有需求（首遍解析到 TabContent 全高）顶出父容器，导致渲染区
+      // 底部被裁剪、状态栏被挤出窗口。layoutWeight 忽略内容需求，只取剩余空间。
       .layoutWeight(1)
+      .clip(true)
       .backgroundColor(Color.Black)
       .hitTestBehavior(HitTestMode.Block)
       .focusable(true)
@@ -607,6 +668,12 @@ export struct OsrCefView {
         if (wpx > 0 && hpx > 0) {
           this.viewWidth = wpx;
           this.viewHeight = hpx;
+          this.layoutSizeReady = true;
+          // GPU 模式：真实布局尺寸到达后若 Surface 已就绪即可创建。
+          if (this.gpuEnabled && this.surfaceReady) {
+            this.surfaceSizeReady = true;
+            this.tryCreateGpuBrowser();
+          }
 
           if (this.isCreated()) {
             // Set DSF to actual device scale factor for correct content sizing
@@ -1020,7 +1087,7 @@ export struct OsrCefView {
         getDragOutSession().onAdoptResult(true);
       }
     } else {
-      hilog.error(DOMAIN, MODULE, "attachOsrSurface failed — falling back to PixelMap display");
+      hilog.error(DOMAIN, MODULE, "attachOsrSurface failed, browserId=%{public}d, surface=%{public}s", this.browserId, String(this.pendingSurfaceId));
       this.useSurfaceMode = false;
       this.pendingSurfaceId = undefined;
       if (this.adoptBrowserId > 0) {
@@ -1032,7 +1099,15 @@ export struct OsrCefView {
   }
 
   destroy(): void {
+    // 先递增代际并置销毁标记，取消等待 CEF 运行中的创建循环，并让迟到的
+    // onOsrCreated 立即关闭新 browser，而不是绑定已消失组件。
+    this.disposed = true;
+    this.creationGeneration++;
     this.detachInputMethod();
+    if (this.pendingBrowserId > 0) {
+      arkui_cef.destroyOsrCefView(this.pendingBrowserId);
+      this.pendingBrowserId = -1;
+    }
     if (this.releasedBrowser) {
       // browser 已迁往新窗口：只做本地清理，不销毁 browser，也不解除
       // pixelmap 原生登记（新视图 rebuildPixelMap 时会整体替换登记；
@@ -1140,44 +1215,85 @@ export struct OsrCefView {
   }
 
   async createOsrCefView(url: string, width: number, height: number): Promise<void> {
-    if (this.cefCreating || this.isCreated()) {
+    if (this.disposed || this.cefCreating || this.isCreated()) {
       hilog.info(DOMAIN, MODULE, "OSR is creating or created. id: %{public}d", this.browserId);
       return;
     }
-
+    const generation = this.creationGeneration;
     while (!arkui_cef.isCefRunning()) {
       await this.sleep(20);
+      // 等待 CEF 运行期间组件可能已销毁或 Surface 失效，必须放弃本次创建。
+      if (this.disposed || generation !== this.creationGeneration ||
+          (this.gpuEnabled && !this.surfaceReady)) {
+        hilog.info(DOMAIN, MODULE, "createOsrCefView aborted: disposed/generation/surface changed");
+        return;
+      }
     }
 
     hilog.info(DOMAIN, MODULE, "Begin to create OSR cef view, url: %{public}s, size: %{public}d X %{public}d",
       url, width, height);
     this.cefCreating = true;
 
-    let id = arkui_cef.createOsrCefView(url, width, height,
-      (regionData: ArrayBuffer | undefined, x: number, y: number, w: number, h: number,
-        fullFrame: boolean, viewW: number, viewH: number) => {
-        this.onOsrPaint(regionData, x, y, w, h, fullFrame, viewW, viewH);
-      },
-      (id: number) => { this.onOsrCreated(id); },
-      (title: string) => { this.onOsrTitleChanged(title); },
-      (next: boolean) => { this.onOsrFocusTake(next); },
-      (offset: string) => { this.onOsrScrollOffset(offset); },
-      (show: boolean) => { this.onOsrVirtualKeyboard(show); },
-      (text: string) => { this.onOsrTextSelection(text); },
-      (cursorType: number) => { this.onOsrCursorChange(cursorType); },
-      (left: number, top: number, w: number, h: number) => { this.onOsrImeCursor(left, top, w, h); },
-      (text: string, html: string, durl: string, urlTitle: string, fileName: string, fileData: ArrayBuffer, x: number, y: number) => {
-        this.onOsrStartDrag(text, html, durl, urlTitle, fileName, fileData, x, y);
-      },
-      (operation: number) => { this.onOsrUpdateDragCursor(operation); });
+    let id = this.gpuEnabled
+      ? arkui_cef.createOsrCefView(url, width, height,
+          // GPU mode: no CPU paint callback — frames stay on the native
+          // presenter and never cross to ArkTS. Optional callback slots
+          // before options are passed as undefined placeholders (the
+          // options object is the last parameter, index 14).
+          undefined,
+          (newId: number) => { this.onOsrCreated(newId, generation); },
+          (title: string) => { this.onOsrTitleChanged(title); },
+          (next: boolean) => { this.onOsrFocusTake(next); },
+          (offset: string) => { this.onOsrScrollOffset(offset); },
+          (show: boolean) => { this.onOsrVirtualKeyboard(show); },
+          (text: string) => { this.onOsrTextSelection(text); },
+          (cursorType: number) => { this.onOsrCursorChange(cursorType); },
+          undefined, undefined, undefined,
+          { surfaceId: this.gpuSurfaceId })
+      : arkui_cef.createOsrCefView(url, width, height,
+          (regionData: ArrayBuffer | undefined, x: number, y: number, w: number, h: number,
+            fullFrame: boolean, viewW: number, viewH: number) => {
+            this.onOsrPaint(regionData, x, y, w, h, fullFrame, viewW, viewH);
+          },
+          (newId: number) => { this.onOsrCreated(newId, generation); },
+          (title: string) => { this.onOsrTitleChanged(title); },
+          (next: boolean) => { this.onOsrFocusTake(next); },
+          (offset: string) => { this.onOsrScrollOffset(offset); },
+          (show: boolean) => { this.onOsrVirtualKeyboard(show); },
+          (text: string) => { this.onOsrTextSelection(text); },
+          (cursorType: number) => { this.onOsrCursorChange(cursorType); },
+          (left: number, top: number, w: number, h: number) => { this.onOsrImeCursor(left, top, w, h); },
+          (text: string, html: string, durl: string, urlTitle: string, fileName: string, fileData: ArrayBuffer, x: number, y: number) => {
+            this.onOsrStartDrag(text, html, durl, urlTitle, fileName, fileData, x, y);
+          },
+          (operation: number) => { this.onOsrUpdateDragCursor(operation); });
 
+    this.pendingBrowserId = id;
     hilog.info(DOMAIN, MODULE, "OSR CEF starts to create, id: %{public}d", id);
   }
 
-  onOsrCreated(id: number): void {
+  onOsrCreated(id: number, generation: number): void {
+    this.cefCreating = false;
+    // 组件已销毁或 Surface 代际变化：立即关闭迟到的 browser，不绑定、不初始化输入。
+    if (this.disposed || generation !== this.creationGeneration ||
+        (this.gpuEnabled && !this.surfaceReady)) {
+      hilog.info(DOMAIN, MODULE, "onOsrCreated for stale generation=%{public}d, destroying id=%{public}d",
+        generation, id);
+      if (id > 0) {
+        arkui_cef.destroyOsrCefView(id);
+      }
+      return;
+    }
     hilog.info(DOMAIN, MODULE, "OSR CEF created, browserId=%{public}d", id);
     this.browserId = id;
-    this.cefCreating = false;
+    this.pendingBrowserId = -1;
+    // 创建期间所在标签可能已切走：立即同步可见性，避免隐藏标签创建后仍产帧。
+    // native 侧对 browser 未创建时的调用也有 pending 兜底，此处是 ArkTS 侧的对应保障。
+    // （CPU OSR 视图无 GPU 呈现器，可见性由 onVisibleAreaChange 边沿通道管理。）
+    if (this.gpuEnabled && !this.isMyTurn()) {
+      hilog.info(DOMAIN, MODULE, "onOsrCreated: tab inactive, apply WasHidden, id=%{public}d", id);
+      arkui_cef.cefSetWindowlessVisibility(id, false);
+    }
     // Set DSF BEFORE any resize: GetViewRect divides width_ by the DSF, so
     // a resize processed while the DSF is still the default 1.0 makes the
     // renderer treat physical pixels as CSS pixels and double-scale the
@@ -1198,7 +1314,15 @@ export struct OsrCefView {
     // takes effect on the CEF UI thread; static pages emit no extra frames
     // regardless of the cap, so the value only affects pages with dynamic
     // content.
-    if (this.osrFrameRate >= 1) {
+    // GPU OSR: the native createBrowser already set 120 (matching the 120Hz
+    // display; a lower cap here would alias TestUFO's 120/60/30 rows). Only
+    // apply the prop override when the caller explicitly passed one, or when
+    // running CPU OSR (creation default 60).
+    if (this.gpuEnabled) {
+      if (this.osrFrameRate > 0 && this.osrFrameRate !== 60) {
+        arkui_cef.cefSetFrameRate(this.browserId, this.osrFrameRate);
+      }
+    } else if (this.osrFrameRate >= 1) {
       arkui_cef.cefSetFrameRate(this.browserId, this.osrFrameRate);
     }
     // Register window-level key event filter for non-text keys (digits, symbols, etc.)
@@ -1207,13 +1331,74 @@ export struct OsrCefView {
     // before the browser existed and were dropped by the isCreated guard in
     // setTabActive — take keyboard ownership now if this view is the active
     // tab (e.g. the user switched here while CEF was still initializing).
-    if (this.visibleNow || this.activeTabIndex === this.myTabIndex) {
+    if (this.visibleNow || this.isMyTurn()) {
       this.setTabActive(true);
     }
     // 构造参数已传 onDragOutCallback（BrowserTabsPage 场景）时补登记会话源
     if (this.onDragOutCallback !== undefined) {
       this.registerSessionSource();
     }
+  }
+
+  // ==================== GPU Surface 生命周期 ====================
+  // GPU 模式：surfaceId 与有效尺寸两者都就绪才创建 browser；哪个先到只缓存。
+
+  private onGpuSurfaceCreated(surfaceId: string): void {
+    if (this.disposed) {
+      return;
+    }
+    this.gpuSurfaceId = surfaceId;
+    this.surfaceReady = true;
+    // 首帧可能只回调 Created；真实布局尺寸若已就绪则视为尺寸就绪（默认 800×600 不算）。
+    if (this.layoutSizeReady) {
+      this.surfaceSizeReady = true;
+    }
+    this.creationGeneration++;
+    hilog.info(DOMAIN, MODULE, "GPU onSurfaceCreated id=%{public}s size=%{public}dx%{public}d",
+      surfaceId, this.viewWidth, this.viewHeight);
+    this.tryCreateGpuBrowser();
+  }
+
+  private onGpuSurfaceChanged(surfaceId: string, w: number, h: number): void {
+    if (this.disposed) {
+      return;
+    }
+    // SurfaceRect 尺寸单位为 px，不再 vp2px。
+    if (w > 0 && h > 0) {
+      this.viewWidth = w;
+      this.viewHeight = h;
+      this.surfaceSizeReady = true;
+    }
+    if (this.isCreated()) {
+      arkui_cef.cefOsrSetScale(this.browserId, this.getUIContext().vp2px(1));
+      arkui_cef.cefOsrResize(this.browserId, this.viewWidth, this.viewHeight);
+    }
+    this.tryCreateGpuBrowser();
+  }
+
+  private onGpuSurfaceDestroyed(surfaceId: string): void {
+    hilog.info(DOMAIN, MODULE, "GPU onSurfaceDestroyed id=%{public}s", surfaceId);
+    // 立即使 Surface 失效并递增代际，阻止在途创建与后续帧提交到死 Surface。
+    this.surfaceReady = false;
+    this.gpuSurfaceId = '';
+    this.surfaceSizeReady = false;
+    this.creationGeneration++;
+    if (this.pendingBrowserId > 0) {
+      arkui_cef.destroyOsrCefView(this.pendingBrowserId);
+      this.pendingBrowserId = -1;
+    }
+    this.destroy();
+  }
+
+  private tryCreateGpuBrowser(): void {
+    if (this.disposed || this.isCreated() || this.cefCreating) {
+      return;
+    }
+    if (!this.surfaceReady || this.gpuSurfaceId.length === 0 ||
+        !this.surfaceSizeReady || this.viewWidth <= 0 || this.viewHeight <= 0) {
+      return;
+    }
+    this.createOsrCefView(this.viewUrl, this.viewWidth, this.viewHeight);
   }
 
   private async registerKeyFilter(): Promise<void> {
@@ -2364,7 +2549,7 @@ export struct OsrCefView {
       this.setTabActive(true);
       arkui_cef.cefInvalidate(this.browserId);
     }
-    if (this.visibleNow || this.activeTabIndex === this.myTabIndex) {
+    if (this.visibleNow || this.isMyTurn()) {
       this.setRenderAreaActive(true);
       if (this.isCreated()) {
         arkui_cef.cefSendFocusEvent(this.browserId, true);
@@ -2476,7 +2661,7 @@ export struct OsrCefView {
     }
     let ok = arkui_cef.cefImeCShowKeyboard();
     if (!ok) {
-      hilog.warn(DOMAIN, MODULE, "IME show failed — session dead, re-attaching");
+      hilog.warn(DOMAIN, MODULE, "IME show failed");
       this.detachInputMethod();
       this.attachInputMethod();
     } else {

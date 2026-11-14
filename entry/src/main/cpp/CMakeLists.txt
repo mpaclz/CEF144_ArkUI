@@ -81,11 +81,16 @@ find_library(
     native_buffer
 )
 
+find_library(egl-lib EGL)
+find_library(gles3-lib GLESv3)
+find_library(dl-lib dl)
+
 add_library(arkui_cef_core SHARED
     arkui_cef/ArkUICefApp.cpp
     arkui_cef/ArkUICefClient.cpp
     arkui_cef/ArkUICefBrowser.cpp
     arkui_cef/ArkUICefRenderHandler.cpp
+    arkui_cef/ArkUICefGpuPresenter.cpp
     arkui_cef/NodeHandle.cpp
     arkui_cef/ArkUICefManager.cpp)
 target_include_directories(arkui_cef_core PUBLIC
@@ -108,6 +113,9 @@ target_link_libraries(arkui_cef_core PUBLIC
     ${HAP_LIB_DIR}/libadapter.so
     ${native-window-lib}
     ${native-drawing-lib}
+    ${egl-lib}
+    ${gles3-lib}
+    ${dl-lib}
     ${hilog-lib}
     ${libace-lib}
     ${libnapi-lib}

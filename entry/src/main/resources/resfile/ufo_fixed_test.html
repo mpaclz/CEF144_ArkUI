@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UFO Equivalent Test - Bounded Buffer</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#000;color:#fff;
+  font-family:ui-monospace,"Cascadia Mono",Consolas,"Courier New",monospace}
+#wrap{padding:10px 14px}
+h1{font-size:15px;font-weight:500;margin:0 0 6px;color:#8fd3ff}
+#note{font-size:11px;color:#9aa7b4;margin:0 0 10px;line-height:1.55}
+#stats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.box{background:#2a2d33;border:1px solid #3c4048;border-radius:6px;padding:6px 12px;min-width:116px}
+.box .k{font-size:10px;color:#98a4b0;letter-spacing:.4px}
+.box .v{font-size:21px;font-weight:500;color:#fff;line-height:1.2}
+#status{font-size:12px;padding:5px 10px;border-radius:5px;margin-bottom:8px;display:inline-block;
+  background:#12351c;color:#7ee29a;border:1px solid #2c6b3d}
+#status.bad{background:#3a1414;color:#ff9d9d;border-color:#7a2c2c}
+#status.warn{background:#3a2f14;color:#ffd97e;border-color:#7a642c}
+canvas{display:block;width:100%;background:#05070d;border-radius:6px}
+#ctl{margin:10px 0;font-size:11px;color:#c3cedb}
+#ctl button{font:inherit;font-size:11px;background:#232830;color:#cfe0f0;border:1px solid #46505c;
+  border-radius:5px;padding:4px 10px;cursor:pointer;margin-right:6px}
+#ctl button.on{background:#4a2020;border-color:#8a3a3a;color:#ffb4b4}
+table{font-size:11px;color:#c6d2de;border-collapse:collapse;margin-top:6px;width:100%}
+td,th{padding:2px 12px 2px 0;text-align:left;font-weight:400;white-space:nowrap}
+th{color:#8fd3ff;font-weight:500}
+td.n{color:#fff}
+.hint{color:#7d8b98;font-size:10px}
+#cmp{margin-top:10px;border-top:1px solid #2a323c;padding-top:8px}
+.good{color:#7ee29a}
+.evil{color:#ff9d9d}
+</style>
+</head>
+<body>
+<div id="wrap">
+<h1>UFO equivalent test &mdash; bounded ring buffer</h1>
+<p id="note">
+Functionally equivalent to testufo.com's multi-framerate test: same three UFO rows
+(120/60/30&nbsp;fps) at identical pixels-per-second, same star field, same refresh-rate
+detection cadence (validate every 100&nbsp;ms). The one difference is the detector's
+sample store. testufo.com appends to arrays that grow to <b>MAXSTORE=240,000</b> and runs
+an O(n) least-squares pass over them, so per-cycle cost rises with uptime until a 41&nbsp;ms
+spike lands inside an 8.33&nbsp;ms frame budget. This page keeps a fixed-capacity ring
+buffer, so validation is O(CAP) &mdash; constant regardless of uptime.
+Toggle the second button to run the original unbounded algorithm side by side and watch
+the frame rate collapse while the bounded one stays flat.
+</p>
+
+<div id="stats">
+  <div class="box"><div class="k">FRAME RATE</div><div class="v" id="fps">--</div></div>
+  <div class="box"><div class="k">REFRESH RATE</div><div class="v" id="hz">--</div></div>
+  <div class="box"><div class="k">PIXELS / FRAME</div><div class="v" id="ppf">--</div></div>
+  <div class="box"><div class="k">PIXELS / SEC</div><div class="v" id="pps">--</div></div>
+  <div class="box"><div class="k">UPTIME</div><div class="v" id="up">0s</div></div>
+</div>
+
+<div id="status">SYNCING&hellip;</div>
+
+<canvas id="c"></canvas>
+
+<div id="ctl">
+  <button id="bBounded" class="on">bounded detector: ON</button>
+  <button id="bEvil">unbounded (testufo algorithm): OFF</button>
+  <span class="hint">both detectors run in the same rAF callback, so their costs add to the same frame</span>
+</div>
+
+<table>
+  <tr><th>metric</th><th>bounded (this page)</th><th>unbounded (testufo)</th><th>meaning</th></tr>
+  <tr><td>samples stored</td><td class="n" id="b_n">-</td><td class="n" id="e_n">-</td>
+      <td class="hint">bounded caps at CAP; unbounded grows to 240k</td></tr>
+  <tr><td>validate calls</td><td class="n" id="b_val">-</td><td class="n" id="e_val">-</td>
+      <td class="hint">once per 100 ms each</td></tr>
+  <tr><td>last validate cost</td><td class="n" id="b_cost">-</td><td class="n" id="e_cost">-</td>
+      <td class="hint">microseconds per O(n) pass</td></tr>
+  <tr><td>peak validate cost</td><td class="n" id="b_peak">-</td><td class="n" id="e_peak">-</td>
+      <td class="hint">worst pass seen so far</td></tr>
+  <tr><td>rAF cycles</td><td class="n" id="b_cycles">-</td><td class="n" id="e_cycles">-</td>
+      <td class="hint">total animation frames</td></tr>
+</table>
+
+<div id="cmp">
+<table>
+  <tr><th>frame timing</th><th>value</th><th>meaning</th></tr>
+  <tr><td>median rAF gap</td><td class="n" id="t_med">-</td><td class="hint">8.33 ms = 120 Hz</td></tr>
+  <tr><td>long frames (&gt;1.6&times;median)</td><td class="n" id="t_long">-</td><td class="hint">count / share of window</td></tr>
+  <tr><td>longest gap</td><td class="n" id="t_max">-</td><td class="hint">worst single frame</td></tr>
+  <tr><td>gaps near 100 ms</td><td class="n" id="t_100">-</td><td class="hint">validate-cadence signature</td></tr>
+</table>
+</div>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* ------------------------------------------------------------------ *
+ * Bounded refresh-rate detector (the fix).
+ * Fixed-capacity ring buffer; validation cost is O(CAP), time-invariant.
+ * ------------------------------------------------------------------ */
+var CAP = 120;              // 1 s of samples at 120 Hz
+var VALIDATE_MS = 100;      // same cadence as testufo
+
+function BoundedDetector(cap, validateMs){
+  this.cap = cap; this.validateMs = validateMs;
+  this.iv = new Float64Array(cap);
+  this.ts = new Float64Array(cap);
+  this.n = 0; this.head = 0;
+  this.cycles = 0; this.ms = 0;
+  this.l0=0;this.l1=0;this.l2=0;this.l3=0;this.l4=0;
+  this.lastValidate = 0; this.validateCount = 0;
+  this.lastCostUs = 0; this.peakCostUs = 0;
+}
+BoundedDetector.prototype.add = function(t){
+  this.cycles++;
+  this.l0=this.l1; this.l1=this.l2; this.l2=this.l3; this.l3=this.l4; this.l4=t;
+  if(this.cycles < 5) return;
+  var a=this.l4-this.l3, b=this.l3-this.l2, c=this.l2-this.l1, d=this.l1-this.l0;
+  var mx=Math.max(a,b,c,d), mn=Math.min(a,b,c,d);
+  var avg=(a+b+c+d)*0.25;
+  if(!(avg>0.5) || !(avg<1000)) return;
+  if(mx-mn > avg*0.5) return;                 // jittery cycle: ignore
+  this.iv[this.head]=avg; this.ts[this.head]=this.l2;   // O(1) ring write
+  this.head=(this.head+1)%this.cap;
+  if(this.n<this.cap) this.n++;
+  if(!this.ms) this.ms=avg;
+  if(t-this.lastValidate >= this.validateMs){
+    this.lastValidate=t;
+    var c0=performance.now();
+    this._validate();
+    var us=(performance.now()-c0)*1000;
+    this.lastCostUs=us; if(us>this.peakCostUs) this.peakCostUs=us;
+    this.validateCount++;
+  }
+};
+BoundedDetector.prototype._validate = function(){
+  var n=this.n; if(n<8) return;
+  var start=(this.head-n+this.cap*2)%this.cap;
+  var base=this.ts[start];
+  var se=0,sx=0,sy=0,sxx=0,sxy=0;
+  for(var i=0;i<n;i++){
+    var slot=(start+i)%this.cap;
+    var y=Math.round(this.iv[slot]/this.ms);
+    var x=this.ts[slot]-base;
+    se+=y; sx+=x; sy+=y; sxx+=y*y; sxy+=y*x;
+  }
+  var den=n*sxx-se*se;
+  if(!(Math.abs(den)>1e-9)) return;
+  var slope=(n*sxy-se*sx)/den;
+  if(isFinite(slope) && slope>-0.9) this.ms=this.ms/(1+slope);
+};
+BoundedDetector.prototype.hz = function(){
+  if(!this.ms) return 0;
+  var v=1000/this.ms;
+  return (v>=10 && v<=1000) ? v : 0;   // guard against divergence on jitter-free input
+};
+
+/* ------------------------------------------------------------------ *
+ * Unbounded detector: faithful replica of testufo.com's algorithm.
+ * Arrays grow to MAXSTORE then halve; validation is O(n) over them.
+ * Kept here only as an A/B control to demonstrate the defect.
+ * ------------------------------------------------------------------ */
+function UnboundedDetector(){
+  this.MAXSTORE=240000; this.VALIDATEMS=100;
+  this._m_D=[]; this._m_S=[];
+  this.l0=0;this.l1=0;this.l2=0;this.l3=0;this.l4=0;
+  this.cycles=0; this.ms=0; this.nSkip=0; this.nSkipBase=0;
+  this.lastValidate=0; this.validateCount=0;
+  this.lastCostUs=0; this.peakCostUs=0;
+}
+UnboundedDetector.prototype.__cut=function(a){
+  var r=[],i; for(i=0;i<a.length;i+=2) r[r.length]=a[i]; return r;
+};
+UnboundedDetector.prototype.add=function(t){
+  this.cycles++;
+  this.l0=this.l1;this.l1=this.l2;this.l2=this.l3;this.l3=this.l4;this.l4=t;
+  if(this.cycles<5) return;
+  var a=this.l4-this.l3,b=this.l3-this.l2,c=this.l2-this.l1,d=this.l1-this.l0;
+  var avg=(a+b+c+d)*0.25;
+  if(!(avg>0.5)||!(avg<1000)) return;
+  if(this.nSkip>0){ this.nSkip--; return; }
+  if(!this.ms) this.ms=avg;
+  if(this._m_D.length>=this.MAXSTORE){
+    this._m_D=this.__cut(this._m_D); this._m_S=this.__cut(this._m_S);
+    this.nSkipBase=2*this.nSkipBase+1;
+  }
+  var i=this._m_D.length;
+  this._m_D[i]=this.l2;
+  this._m_S[i]=(this.l0+this.l1+this.l2+this.l3+this.l4)/5;
+  this.nSkip=this.nSkipBase;
+  if(t-this.lastValidate>=this.VALIDATEMS){
+    this.lastValidate=t;
+    var c0=performance.now();
+    this.__validate();
+    var us=(performance.now()-c0)*1000;
+    this.lastCostUs=us; if(us>this.peakCostUs) this.peakCostUs=us;
+    this.validateCount++;
+  }
+};
+UnboundedDetector.prototype.__validate=function(){
+  var n=this._m_D.length; if(n<8) return;
+  var se=0,sx=0,sy=0,sxx=0,sxy=0,i,y,x;
+  for(i=0;i<n;i++){
+    y = i>0 ? Math.round((this._m_S[i]-this._m_S[i-1])/this.ms) : 0;
+    x = this._m_D[i]-this._m_D[0];
+    se+=y; sx+=x; sy+=y; sxx+=y*y; sxy+=y*x;
+  }
+  var den=n*sxx-se*se;
+  if(!(Math.abs(den)>1e-9)) return;
+  var slope=(n*sxy-se*sx)/den;
+  if(isFinite(slope)&&slope>-0.9) this.ms=this.ms/(1+slope);
+};
+UnboundedDetector.prototype.hz=function(){
+  if(!this.ms) return 0;
+  var v=1000/this.ms;
+  return (v>=10 && v<=1000) ? v : 0;   // guard: least-squares can diverge on jitter-free input
+};
+
+/* ------------------------- scene ---------------------------------- */
+var cv=document.getElementById('c'), ctx=cv.getContext('2d');
+var W=0,H=0,DPR=1, stars=null;
+var ROWS=[
+  {label:'120 fps', fps:120, color:'#dfe8f2'},
+  {label:'60 fps',  fps:60,  color:'#dfe8f2'},
+  {label:'30 fps',  fps:30,  color:'#dfe8f2'}
+];
+// testufo.com's legacy default speed (960 px/s). The earlier CROSS_SEC-derived
+// speed (~118 px/s on this canvas) made each row's sample-and-hold step only
+// 1/2/4 px for the 120/60/30 fps rows -- far below the judder perception
+// threshold for a 60 px-wide UFO, so the three cadences looked identical.
+// At 960 px/s the steps are 8/16/32 px, i.e. 13%/27%/53% of the object width.
+var SPEED_PPS=960;
+
+function makeStars(w,h){
+  var o=document.createElement('canvas'); o.width=w; o.height=h;
+  var g=o.getContext('2d');
+  g.fillStyle='#05070d'; g.fillRect(0,0,w,h);
+  var i,n=Math.floor(w*h/2600);
+  for(i=0;i<n;i++){
+    var x=Math.random()*w, y=Math.random()*h, r=Math.random()*1.1+0.25;
+    var a=0.25+Math.random()*0.7;
+    g.fillStyle='rgba(200,220,255,'+a.toFixed(2)+')';
+    g.beginPath(); g.arc(x,y,r,0,Math.PI*2); g.fill();
+  }
+  return o;
+}
+
+function resize(){
+  var rect=cv.parentElement.getBoundingClientRect();
+  DPR=Math.min(window.devicePixelRatio||1, 2);
+  W=Math.max(320, Math.floor(rect.width-28));
+  H=Math.max(200, Math.min(300, Math.floor(window.innerHeight*0.30)));
+  cv.width=Math.floor(W*DPR); cv.height=Math.floor(H*DPR);
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  stars=makeStars(cv.width,cv.height);
+}
+
+function rowY(i){
+  var pad=Math.max(34, H*0.16);
+  var span=(H-pad*2)/(ROWS.length-1||1);
+  return pad+span*i;
+}
+
+function drawUFO(x,y){
+  ctx.save(); ctx.translate(x,y);
+  ctx.fillStyle='#b9c6d4';
+  ctx.beginPath(); ctx.ellipse(0,0,30,10,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#63b8ee';
+  ctx.beginPath(); ctx.ellipse(0,-6,14,9,0,Math.PI,0); ctx.fill();
+  ctx.fillStyle='#ffdf6b';
+  for(var i=-2;i<=2;i++){ ctx.beginPath(); ctx.arc(i*11,3.5,2.4,0,Math.PI*2); ctx.fill(); }
+  ctx.restore();
+}
+
+/* --------------------- measurement state -------------------------- */
+var bounded=new BoundedDetector(CAP,VALIDATE_MS);
+var unbounded=new UnboundedDetector();
+var useBounded=true, useEvil=false;
+
+// Per-row cadence proof: count how many times each row's quantised position
+// actually changes per second. With rAF at 120 Hz this must read ~120/60/30,
+// which is the observable difference between the rows (a still image cannot
+// show it: all rows share the same average speed and differ only in how often
+// they step).
+var rowLastX=[-1,-1,-1], rowChg=[0,0,0], rowRate=[0,0,0], rowTimer=-1;
+
+var t0=performance.now();
+var lastFrame=t0, rafCount=0, fpsAcc=0, fpsTimer=t0, fpsValue=0;
+var GAPN=600, gaps=new Float64Array(GAPN), gapHead=0, gapN=0;
+var statsTimer=0;
+
+function pushGap(v){ gaps[gapHead]=v; gapHead=(gapHead+1)%GAPN; if(gapN<GAPN) gapN++; }
+
+function gapStats(){
+  if(gapN<10) return null;
+  var arr=[],i;
+  for(i=0;i<gapN;i++) arr.push(gaps[i]);
+  arr.sort(function(a,b){return a-b;});
+  var med=arr[arr.length>>1];
+  var thr=med*1.6, longs=0, near100=0, mx=arr[arr.length-1];
+  for(i=0;i<gapN;i++){
+    if(gaps[i]>thr) longs++;
+    if(gaps[i]>85 && gaps[i]<125) near100++;
+  }
+  return {med:med, longs:longs, near100:near100, max:mx, thr:thr, n:gapN};
+}
+
+function fmtUs(v){ return v>=1000 ? (v/1000).toFixed(2)+' ms' : v.toFixed(0)+' \u00b5s'; }
+
+function draw(t){
+  ctx.clearRect(0,0,W,H);
+  if(stars) ctx.drawImage(stars,0,0,W,H);
+  var span=W+120;
+  var speed=SPEED_PPS;
+  for(var i=0;i<ROWS.length;i++){
+    var r=ROWS[i];
+    var period=1000/r.fps;
+    // quantise to this row's own cadence: sample-and-hold, exactly like testufo
+    var q=Math.floor((t-t0)/period)*period;
+    var x=((q/1000)*speed)%span-60;
+    if(rowLastX[i]>=0 && Math.abs(x-rowLastX[i])>0.5) rowChg[i]++;
+    rowLastX[i]=x;
+    var y=rowY(i);
+    drawUFO(x,y);
+    ctx.fillStyle='#8fa3b5'; ctx.font='11px monospace';
+    // objective cadence proof: how often this row's position actually steps,
+    // plus the step size that carries the judder cue
+    var stepPx=(speed*period/1000).toFixed(0);
+    ctx.fillText(r.label+'   updates/s: '+(rowRate[i]?rowRate[i].toFixed(0):'--')
+      +'   step: '+stepPx+'px', 10, y-16);
+  }
+  ctx.fillStyle='#5d6b78'; ctx.font='10px monospace';
+  ctx.fillText('each row advances at the same pixels/sec but updates only at its own rate',
+               10, H-8);
+}
+
+function updateStats(t){
+  var hz = useBounded ? bounded.hz() : (useEvil?unbounded.hz():0);
+  var el=(t-t0)/1000;
+  document.getElementById('fps').textContent = fpsValue? fpsValue.toFixed(0)+' fps':'--';
+  document.getElementById('hz').textContent  = hz? hz.toFixed(1)+' Hz':'--';
+  var ppf = (hz>0 && fpsValue>0) ? SPEED_PPS/hz : 0;
+  document.getElementById('ppf').textContent = ppf? ppf.toFixed(1):'--';
+  document.getElementById('pps').textContent = ppf? Math.round(ppf*hz):'--';
+  document.getElementById('up').textContent =
+      el<60? el.toFixed(0)+'s' : Math.floor(el/60)+'m'+('0'+Math.floor(el%60)).slice(-2)+'s';
+
+  document.getElementById('b_n').textContent = useBounded? bounded.n : 'off';
+  document.getElementById('b_val').textContent = useBounded? bounded.validateCount : '-';
+  document.getElementById('b_cost').textContent = useBounded? fmtUs(bounded.lastCostUs) : '-';
+  document.getElementById('b_peak').textContent = useBounded? fmtUs(bounded.peakCostUs) : '-';
+  document.getElementById('b_cycles').textContent = useBounded? bounded.cycles : '-';
+
+  document.getElementById('e_n').textContent = useEvil? unbounded._m_D.length.toLocaleString() : 'off';
+  document.getElementById('e_val').textContent = useEvil? unbounded.validateCount : '-';
+  document.getElementById('e_cost').textContent = useEvil? fmtUs(unbounded.lastCostUs) : '-';
+  document.getElementById('e_peak').textContent = useEvil? fmtUs(unbounded.peakCostUs) : '-';
+  document.getElementById('e_cycles').textContent = useEvil? unbounded.cycles : '-';
+
+  var g=gapStats();
+  var st=document.getElementById('status');
+  if(g){
+    document.getElementById('t_med').textContent = g.med.toFixed(2)+' ms';
+    document.getElementById('t_long').textContent =
+        g.longs+' / '+(100*g.longs/g.n).toFixed(1)+'%';
+    document.getElementById('t_max').textContent = g.max.toFixed(1)+' ms';
+    document.getElementById('t_100').textContent = g.near100+' ('+(100*g.near100/g.n).toFixed(1)+'%)';
+    var lostPct = 100*Math.max(0,1-fpsValue/120);
+    st.className = lostPct>15?'bad':(lostPct>5?'warn':'');
+    st.textContent = 'FRAME RATE '+fpsValue.toFixed(1)+' fps'
+      +'  |  lost vs 120 Hz: '+lostPct.toFixed(1)+'%'
+      +'  |  long frames: '+(100*g.longs/g.n).toFixed(1)+'%'
+      +'  |  bounded validate: '+fmtUs(bounded.lastCostUs)
+      +(useEvil?('  |  unbounded validate: '+fmtUs(unbounded.lastCostUs)):'');
+  } else {
+    st.textContent='SYNCING\u2026';
+  }
+}
+
+function frame(t){
+  var dt=t-lastFrame; lastFrame=t;
+  pushGap(dt);
+  rafCount++; fpsAcc++;
+  if(rowTimer<0) rowTimer=t;
+  if(t-rowTimer>=1000){
+    var k=t-rowTimer;
+    for(var ri=0;ri<rowRate.length;ri++){ rowRate[ri]=rowChg[ri]*1000/k; rowChg[ri]=0; }
+    rowTimer=t;
+  }
+  if(useBounded) bounded.add(t);
+  if(useEvil)    unbounded.add(t);
+  if(t-fpsTimer>=500){ fpsValue=fpsAcc*1000/(t-fpsTimer); fpsAcc=0; fpsTimer=t; }
+  draw(t);
+  if(t-statsTimer>=250){ statsTimer=t; updateStats(t); }
+  requestAnimationFrame(frame);
+}
+
+/* --------------------------- controls ----------------------------- */
+function syncButtons(){
+  var a=document.getElementById('bBounded'), b=document.getElementById('bEvil');
+  a.textContent='bounded detector: '+(useBounded?'ON':'OFF');
+  a.className=useBounded?'on':'';
+  b.textContent='unbounded (testufo algorithm): '+(useEvil?'ON':'OFF');
+  b.className=useEvil?'on':'';
+}
+document.getElementById('bBounded').addEventListener('click',function(){
+  useBounded=!useBounded;
+  if(useBounded) bounded=new BoundedDetector(CAP,VALIDATE_MS);
+  syncButtons();
+});
+document.getElementById('bEvil').addEventListener('click',function(){
+  useEvil=!useEvil;
+  if(useEvil) unbounded=new UnboundedDetector();
+  syncButtons();
+});
+
+/* ------------------------------ boot ------------------------------ */
+window.addEventListener('resize',resize);
+resize();
+syncButtons();
+requestAnimationFrame(frame);
+
+// expose for automated probing over CDP
+window.__ufoProbe=function(){
+  var g=gapStats()||{};
+  return JSON.stringify({
+    uptime_s:+((performance.now()-t0)/1000).toFixed(1),
+    fps:+fpsValue.toFixed(1),
+    bounded_hz:+bounded.hz().toFixed(2),
+    bounded_samples:bounded.n, bounded_validates:bounded.validateCount,
+    bounded_last_us:+bounded.lastCostUs.toFixed(1), bounded_peak_us:+bounded.peakCostUs.toFixed(1),
+    evil_on:useEvil, evil_samples:unbounded._m_D.length,
+    evil_validates:unbounded.validateCount,
+    evil_last_us:+unbounded.lastCostUs.toFixed(1), evil_peak_us:+unbounded.peakCostUs.toFixed(1),
+    gap_med_ms:+(g.med||0).toFixed(2), gap_long:+(g.longs||0),
+    gap_long_pct:+(100*(g.longs||0)/(g.n||1)).toFixed(2),
+    gap_max_ms:+(g.max||0).toFixed(1), gap_near100:+(g.near100||0),
+    raf_cycles:rafCount
+  });
+};
+})();
+</script>
+</body>
+</html>

@@ -209,6 +209,13 @@ typedef struct _cef_accelerated_paint_info_t {
   /// The extra common info.
   ///
   cef_accelerated_paint_info_common_t extra;
+
+  ///
+  /// OHOS only: process-local OHNativeWindowBuffer* borrowed for the callback
+  /// duration. Zero elsewhere or when unavailable. Do not retain, release or
+  /// use after the callback returns; the frame owns it until then.
+  ///
+  uint64_t native_buffer;
 } cef_accelerated_paint_info_t;
 
 #ifdef __cplusplus

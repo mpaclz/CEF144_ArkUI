@@ -11,6 +11,7 @@
 #include <chrono>
 #include <thread>
 #include <pthread.h>
+#include <limits>
 #include <hilog/log.h>
 #include <string>
 #include <arkui/native_interface.h>
@@ -247,12 +248,12 @@ bool WriteRegionToSurface(OsrNativeSurface& s,
             s.height = viewH;
             s.needsFullDamage = true;
             OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
-                "OSR surface: retuned buffer geometry to frame size %{public}dx%{public}d (was %{public}dx%{public}d)",
+                "OSR surface: adjusted buffer geometry to frame size %{public}dx%{public}d (was %{public}dx%{public}d)",
                 viewW, viewH, oldW, oldH);
         } else {
             if ((++s.failCount % 60) == 1) {
                 OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
-                    "OSR surface: size mismatch region=%{public}dx%{public}d surface=%{public}dx%{public}d damage=%{public}d,%{public}d %{public}dx%{public}d — posting self-heal resize",
+                    "OSR surface: size mismatch region=%{public}dx%{public}d surface=%{public}dx%{public}d damage=%{public}d,%{public}d %{public}dx%{public}d",
                     viewW, viewH, s.width, s.height, x, y, w, h);
                 auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
                 if (browser) {
@@ -366,7 +367,8 @@ bool WriteRegionToSurface(OsrNativeSurface& s,
         OH_NativeWindow_NativeWindowAbortBuffer(s.window, buffer);
         if ((++s.failCount % 60) == 1) {
             OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-                "OSR surface: BlitFullFrameTo failed (no staging frame?)");
+                "OSR surface: BlitFullFrameTo failed, browserId=%{public}ld, frame=%{public}dx%{public}d",
+                browserId, viewW, viewH);
         }
         return false;
     }
@@ -509,22 +511,26 @@ CefKeyEvent convertKeyEvent(int32_t keyCode, int32_t keyType, uint32_t modifiers
     }
 
     // HarmonyOS KeyCode -> Windows virtual key code
+    // KEYCODE_A=2017 .. KEYCODE_Z=2042; KEYCODE_0=2000 .. KEYCODE_9=2009
+    // (input framework constants; not in the public NDK headers we bundle).
+    constexpr int32_t kKeyCodeDigit0 = 2000;
+    constexpr int32_t kKeyCodeA = 2017;
     int32_t winVk = 0;
     // Character for KEYEVENT_CHAR (0 = no char event needed)
     char16_t character = 0;
 
-    // Letters A-Z: KEYCODE_A=2017 .. KEYCODE_Z=2042
-    if (keyCode >= 2017 && keyCode <= 2042) {
-        winVk = 'A' + (keyCode - 2017);
+    // Letters A-Z
+    if (keyCode >= kKeyCodeA && keyCode <= kKeyCodeA + 25) {
+        winVk = 'A' + (keyCode - kKeyCodeA);
         if (modifiers & 0x2) {
-            character = static_cast<char16_t>('A' + (keyCode - 2017));
+            character = static_cast<char16_t>('A' + (keyCode - kKeyCodeA));
         } else {
-            character = static_cast<char16_t>('a' + (keyCode - 2017));
+            character = static_cast<char16_t>('a' + (keyCode - kKeyCodeA));
         }
-    } else if (keyCode >= 2000 && keyCode <= 2009) {
-        // Digits 0-9: KEYCODE_0=2000 .. KEYCODE_9=2009
-        winVk = '0' + (keyCode - 2000);
-        character = static_cast<char16_t>('0' + (keyCode - 2000));
+    } else if (keyCode >= kKeyCodeDigit0 && keyCode <= kKeyCodeDigit0 + 9) {
+        // Digits 0-9
+        winVk = '0' + (keyCode - kKeyCodeDigit0);
+        character = static_cast<char16_t>('0' + (keyCode - kKeyCodeDigit0));
     } else {
         switch (keyCode) {
             case OH_KEYCODE_ENTER:       winVk = VK_RETURN; character = u'\r'; break;
@@ -918,7 +924,7 @@ struct OsrPaintTsfn {
                                               region.x, region.y, region.w, region.h);
                     if (!nativeWritten) {
                         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
-                            "OSR native pixelmap write failed, falling back to ArrayBuffer");
+                            "OSR native pixelmap write failed");
                     }
                 }
             }
@@ -1833,15 +1839,15 @@ static napi_value NAPI_Global_hasCef(napi_env env, napi_callback_info info) {
 }
 
 static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info info) {
-    size_t argc = 14;
-    napi_value args[14];
+    size_t argc = 15;
+    napi_value args[15] = {};
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
     if (argc < 7) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-            "createOsrCefView: expected 7-14 arguments, got %{public}zu", argc);
+            "createOsrCefView: expected 7-15 arguments, got %{public}zu", argc);
         napi_throw_error(env, nullptr,
-            "Expected 7-14 arguments: url, width, height, onPaint, onCreated, onTitleChange, onFocusTake [, onScrollOffset, onVirtualKeyboard, onTextSelection, onCursorChange, onImeCursor, onStartDrag, onUpdateDragCursor]");
+            "Expected 7-15 arguments: url, width, height, onPaint, onCreated, onTitleChange, onFocusTake [, onScrollOffset, onVirtualKeyboard, onTextSelection, onCursorChange, onImeCursor, onStartDrag, onUpdateDragCursor, options]");
         return nullptr;
     }
 
@@ -1855,13 +1861,51 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
     int32_t height = 0;
     napi_get_value_int32(env, args[2], &height);
 
-    // Create the OSR paint threadsafe function
-    auto paintTsfn = std::make_shared<OsrPaintTsfn>();
-    if (!paintTsfn->Init(env, args[3], "OsrPaintCallback")) {
-        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-            "createOsrCefView: failed to init paint threadsafe function");
-        napi_throw_error(env, nullptr, "Failed to create paint callback");
-        return nullptr;
+    uint64_t gpuSurfaceId = 0;
+    // GPU options object is the LAST parameter (index 14), after all
+    // optional callbacks (7-13). Callers that pass options must pass every
+    // callback slot (the GPU branch in ArkTS sends undefined placeholders).
+    if (argc >= 15) {
+        napi_value surfaceValue;
+        napi_valuetype optionsType = napi_undefined;
+        napi_valuetype surfaceType = napi_undefined;
+        size_t length = 0;
+        char surfaceId[21] = {};
+        if (napi_typeof(env, args[14], &optionsType) != napi_ok || optionsType != napi_object ||
+            napi_get_named_property(env, args[14], "surfaceId", &surfaceValue) != napi_ok ||
+            napi_typeof(env, surfaceValue, &surfaceType) != napi_ok || surfaceType != napi_string ||
+            napi_get_value_string_utf8(env, surfaceValue, nullptr, 0, &length) != napi_ok ||
+            length == 0 || length > 20 ||
+            napi_get_value_string_utf8(env, surfaceValue, surfaceId, sizeof(surfaceId), &length) != napi_ok) {
+            napi_throw_type_error(env, nullptr, "GPU options.surfaceId 必须是十进制 uint64 字符串");
+            return nullptr;
+        }
+        for (size_t i = 0; i < length; ++i) {
+            if (surfaceId[i] < '0' || surfaceId[i] > '9') {
+                napi_throw_type_error(env, nullptr, "SurfaceId 包含非十进制字符");
+                return nullptr;
+            }
+            uint64_t digit = static_cast<uint64_t>(surfaceId[i] - '0');
+            if (gpuSurfaceId > (std::numeric_limits<uint64_t>::max() - digit) / 10) {
+                napi_throw_range_error(env, nullptr, "SurfaceId 超出 uint64 范围");
+                return nullptr;
+            }
+            gpuSurfaceId = gpuSurfaceId * 10 + digit;
+        }
+        if (gpuSurfaceId == 0 || width <= 0 || height <= 0) {
+            napi_throw_range_error(env, nullptr, "GPU SurfaceId 和像素尺寸必须为正");
+            return nullptr;
+        }
+    }
+
+    // GPU 不创建 CPU paint TSFN，也不向 ArkTS 传像素缓冲区。
+    std::shared_ptr<OsrPaintTsfn> paintTsfn;
+    if (gpuSurfaceId == 0) {
+        paintTsfn = std::make_shared<OsrPaintTsfn>();
+        if (!paintTsfn->Init(env, args[3], "OsrPaintCallback")) {
+            napi_throw_error(env, nullptr, "Failed to create paint callback");
+            return nullptr;
+        }
     }
 
     auto jsCreatedCallback = makeJsThreadSafeCallback<int64_t>(env, args[4], "OsrCreatedCallback");
@@ -1984,10 +2028,16 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
     // the render handler's staging buffer; the JS thread pulls the region
     // metadata via ConsumePendingRegionMeta (and the pixels via
     // CompactRegionPixels on fallback paths) when CallJs runs.
-    auto paintHolder = std::make_shared<OsrPaintCallbackHolder>(paintTsfn);
-    PaintCallback paintCallback = [paintHolder]() {
-        paintHolder->tsfn->Notify();
-    };
+    // GPU mode has no paintTsfn (pixels never cross to ArkTS): keep the
+    // callback null and let the render handler route OnAcceleratedPaint to
+    // the presenter.
+    PaintCallback paintCallback;
+    if (paintTsfn) {
+        auto paintHolder = std::make_shared<OsrPaintCallbackHolder>(paintTsfn);
+        paintCallback = [paintHolder]() {
+            paintHolder->tsfn->Notify();
+        };
+    }
 
     int64_t browserId = arkui_cef::ArkUICefManager::getInstance().createOsrBrowser(
         url, width, height, paintCallback,
@@ -2007,7 +2057,8 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
         cursorChangeCb,
         imeCursorCb,
         startDragCb,
-        updateDragCursorCb);
+        updateDragCursorCb,
+        gpuSurfaceId);
 
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
         "createOsrCefView: browserId=%{public}ld", browserId);
@@ -2018,8 +2069,11 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
     // the accumulated dirty region is still intact in the render handler, so
     // this forced notification picks it up. With nothing pending it's a
     // harmless no-op consume.
-    paintTsfn->SetBrowserId(browserId);
-    paintTsfn->Notify();
+    // GPU mode has no paintTsfn (pixels never cross to ArkTS) — skip.
+    if (paintTsfn) {
+        paintTsfn->SetBrowserId(browserId);
+        paintTsfn->Notify();
+    }
 
     napi_value result;
     napi_create_int64(env, browserId, &result);
@@ -2657,6 +2711,29 @@ static napi_value NAPI_Global_cefWasHidden(napi_env env, napi_callback_info info
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
             base::BindOnce(&ArkUICefBrowser::wasHidden, browser, hidden)));
+    }
+    return nullptr;
+}
+
+static napi_value NAPI_Global_cefSetWindowlessVisibility(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "Expected 2 arguments: browserId, visible");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+    bool visible = false;
+    napi_get_value_bool(env, args[1], &visible);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::setWindowlessVisibility, browser, visible)));
     }
     return nullptr;
 }
@@ -3896,6 +3973,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"cefSendCaptureLost", nullptr, NAPI_Global_cefSendCaptureLost, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefInvalidate", nullptr, NAPI_Global_cefInvalidate, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefWasHidden", nullptr, NAPI_Global_cefWasHidden, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefSetWindowlessVisibility", nullptr, NAPI_Global_cefSetWindowlessVisibility, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSendTouchEvent", nullptr, NAPI_Global_cefSendTouchEvent, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefImeSetComposition", nullptr, NAPI_Global_cefImeSetComposition, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefImeCommitText", nullptr, NAPI_Global_cefImeCommitText, nullptr, nullptr, nullptr, napi_default, nullptr},

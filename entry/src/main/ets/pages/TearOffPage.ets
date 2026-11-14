@@ -71,9 +71,9 @@ struct TearOffPage {
       } else if (this.hasSession && this.mode === 'osr') {
         OsrCefView({
           adoptBrowserId: this.browserId,
-          viewUrl: '',
-          myTabIndex: -1,
-          activeTabIndex: -1
+          viewUrl: ''
+          // No viewUid: not in a Tabs context — the broadcast channel is
+          // disabled and visibility follows onVisibleAreaChange only.
         })
         .width('100%')
         .height('100%')

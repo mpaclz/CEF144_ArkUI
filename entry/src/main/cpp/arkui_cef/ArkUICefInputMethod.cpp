@@ -195,18 +195,22 @@ void ArkUICefInputMethod::detach() {
 
 bool ArkUICefInputMethod::showKeyboard() {
     if (!is_attached_ || !input_method_proxy_) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
+            "showKeyboard: not attached (is_attached_=%{public}d proxy=%{public}d)", is_attached_, input_method_proxy_ != nullptr);
         return false;
     }
     InputMethod_ErrorCode res = OH_InputMethodProxy_ShowKeyboard(input_method_proxy_);
     if (res != IME_ERR_OK) {
         OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
-            "showKeyboard: err=%{public}d (IME_ERR_DETACHED means the session died — re-attach)", res);
+            "showKeyboard: err=%{public}d", res);
     }
     return res == IME_ERR_OK;
 }
 
 bool ArkUICefInputMethod::hideKeyboard() {
     if (!is_attached_ || !input_method_proxy_) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
+            "hideKeyboard: not attached (is_attached_=%{public}d proxy=%{public}d)", is_attached_, input_method_proxy_ != nullptr);
         return false;
     }
     InputMethod_ErrorCode res = OH_InputMethodProxy_HideKeyboard(input_method_proxy_);
@@ -219,6 +223,8 @@ bool ArkUICefInputMethod::hideKeyboard() {
 
 bool ArkUICefInputMethod::updateCursor(double left, double top, double width, double height) {
     if (!is_attached_ || !input_method_proxy_) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
+            "updateCursor: not attached (is_attached_=%{public}d proxy=%{public}d)", is_attached_, input_method_proxy_ != nullptr);
         return false;
     }
 

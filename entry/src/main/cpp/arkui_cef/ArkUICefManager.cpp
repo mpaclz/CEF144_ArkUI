@@ -6,15 +6,16 @@
 
 #include "ArkUICefManager.h"
 
+#include <cerrno>
+#include <vector>
+
 #include <hilog/log.h>
 
-#include <vector>
+#include "include/base/cef_callback.h"
 
 #include "ArkUICefApp.h"
 #include "ArkUICefBrowser.h"
 #include "ArkUICefClient.h"
-#include "include/base/cef_callback.h"
-#include <cerrno>
 
 namespace arkui_cef {
 
@@ -119,6 +120,8 @@ int64_t ArkUICefManager::createBrowser(Node* parentWindowHandle, const std::stri
                                        std::function<void(bool)> onFocusTake) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initOk_) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefManager",
+            "createBrowser: CEF not initialized, url=%{public}s size=%{public}dx%{public}d", url.c_str(), width, height);
         return -1;
     }
 
@@ -144,21 +147,37 @@ int64_t ArkUICefManager::createOsrBrowser(const std::string& url, int width, int
                                           CursorChangeCallback onCursorChange,
                                           ImeCursorCallback onImeCursor,
                                           StartDragCallback onStartDrag,
-                                          UpdateDragCursorCallback onUpdateDragCursor) {
+                                          UpdateDragCursorCallback onUpdateDragCursor,
+                                          uint64_t gpuSurfaceId) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initOk_) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefManager",
+            "createOsrBrowser: CEF not initialized, url=%{public}s size=%{public}dx%{public}d gpuSurfaceId=%{public}llu",
+            url.c_str(), width, height, static_cast<unsigned long long>(gpuSurfaceId));
         return -1;
     }
 
+    std::shared_ptr<ArkUICefGpuPresenter> presenter;
+    if (gpuSurfaceId != 0) {
+        presenter = std::make_shared<ArkUICefGpuPresenter>();
+        if (!presenter->Initialize(gpuSurfaceId, width, height)) {
+            OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefManager",
+                "[OHOS_GPU_OSR] native presenter init failed, gpuSurfaceId=%{public}llu size=%{public}dx%{public}d",
+                static_cast<unsigned long long>(gpuSurfaceId), width, height);
+            return -1;
+        }
+    }
     int64_t id = allocateBrowserId();
     CefRefPtr<ArkUICefBrowser> browser = new ArkUICefBrowser(id, width, height);
     browser->SetUseOsr(true);
+    browser->SetGpuPresenter(presenter);
     browser->SetCreateCallback(onCreated);
     browser->SetTitleCallback(onTitleChange);
     browser->SetFocusTakeCallback(onFocusTake);
 
     CefRefPtr<ArkUICefRenderHandler> renderHandler = new ArkUICefRenderHandler(width, height);
-    renderHandler->SetPaintCallback(onPaint);
+    if (presenter) renderHandler->SetGpuPresenter(presenter);
+    else renderHandler->SetPaintCallback(onPaint);
     if (onScrollOffset) renderHandler->SetScrollOffsetCallback(onScrollOffset);
     if (onVirtualKeyboard) renderHandler->SetVirtualKeyboardCallback(onVirtualKeyboard);
     if (onTextSelection) renderHandler->SetTextSelectionCallback(onTextSelection);
@@ -171,6 +190,8 @@ int64_t ArkUICefManager::createOsrBrowser(const std::string& url, int width, int
     client->SetUseOsr(true);
     client->SetRenderHandler(renderHandler);
 
+    // 提前登记 pending id，使 Surface 销毁能够取消尚未触发 OnAfterCreated 的实例。
+    browsers_.emplace(id, browser);
     // OSR 模式不需要父窗口，传 nullptr
     CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::createBrowser, browser,
                                                             client, (Node*)nullptr, url)));
@@ -190,6 +211,8 @@ void ArkUICefManager::destroyBrowser(int64_t id) {
     }
     
     if (browser) {
+        // 在 Surface 生命周期回调返回前停止呈现；呈现器与绘制共用串行锁。
+        browser->StopGpuPresentation();
         CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::close, browser)));
     }
 }
@@ -209,10 +232,14 @@ CefRefPtr<ArkUICefRenderHandler> ArkUICefManager::getRenderHandler(int64_t id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = browsers_.find(id);
     if (it == browsers_.end()) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefManager",
+            "getRenderHandler: browser not found id=%{public}ld", id);
         return nullptr;
     }
     CefRefPtr<ArkUICefClient> client = it->second->getClient();
     if (!client) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefManager",
+            "getRenderHandler: browser has no client id=%{public}ld", id);
         return nullptr;
     }
     return client->GetArkUICefRenderHandler();

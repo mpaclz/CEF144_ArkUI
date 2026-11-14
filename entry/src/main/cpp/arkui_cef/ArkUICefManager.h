@@ -94,7 +94,8 @@ public:
                              CursorChangeCallback onCursorChange = nullptr,
                              ImeCursorCallback onImeCursor = nullptr,
                              StartDragCallback onStartDrag = nullptr,
-                             UpdateDragCursorCallback onUpdateDragCursor = nullptr);
+                             UpdateDragCursorCallback onUpdateDragCursor = nullptr,
+                             uint64_t gpuSurfaceId = 0);
     
     /**
      * @brief 销毁指定浏览器

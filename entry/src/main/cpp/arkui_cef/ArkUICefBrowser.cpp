@@ -3,6 +3,7 @@
 #include "arkui_cef/ArkUICefRenderHandler.h"
 #include "arkui_cef/NodeHandle.h"
 #include "arkui_cef/CefOhosReparentApi.h"
+#include "arkui_cef/ArkUICefManager.h"
 
 #include <hilog/log.h>
 #include "include/cef_drag_data.h"
@@ -28,9 +29,16 @@ ArkUICefBrowser::~ArkUICefBrowser() {
 }
 
 void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* parentNode, const std::string& url) {
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser", 
+        "createBrowser: url=%{public}s", url.c_str());
+    
+    if (browserClosing_) {
+        ArkUICefManager::getInstance().onBrowserDestroyed(this);
+        return;
+    }
     if (browserCreated_) {
         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "createBrowser: browser already created");
+            "createBrowser: browser already created, id=%{public}ld", id_);
         return;
     }
     
@@ -54,6 +62,7 @@ void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* pare
 
     if (use_osr_) {
         windowInfo.SetAsWindowless(0);
+        windowInfo.shared_texture_enabled = gpuPresenter_ ? 1 : 0;
     } else {
         windowInfo.SetAsChild(
             (CefWindowHandle)parentNode,
@@ -62,13 +71,20 @@ void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* pare
     
     CefBrowserSettings browserSettings;
     // Initial cap during startup; the ArkTS layer raises this after creation
-    // (see OsrCefView onOsrCreated -> cefSetFrameRate). The render pipeline
-    // is now synchronous dirty-region updates with native PixelMap writes
-    // (no per-frame createPixelMap, no per-frame ArrayBuffer allocation), so
-    // 60fps no longer floods the JS thread. CEF has no upper clamp on
-    // windowless_frame_rate (osr_util::ClampFrameRate only enforces >= 1).
+    // (see OsrCefView onOsrCreated -> cefSetFrameRate).
+    // CPU OSR: the render pipeline is now synchronous dirty-region updates
+    // with native PixelMap writes (no per-frame createPixelMap, no per-frame
+    // ArrayBuffer allocation), so 60fps no longer floods the JS thread.
+    // GPU OSR: zero-copy presenter, no PixelMap/main-thread copy, so no
+    // reason to cap. windowless_frame_rate drives both SetMinCapturePeriod
+    // (capture rate) and compositor vsync; 30 here was the sole cause of the
+    // OSR output being capped at 30fps (verified on device: Paint arrival
+    // 30fps while page rAF ran 120Hz, aliasing TestUFO's 120/60/30 rows into
+    // indistinguishable motion). Match the 120Hz display.
+    // CEF has no upper clamp on windowless_frame_rate (osr_util::
+    // ClampFrameRate only enforces >= 1).
     if (use_osr_) {
-        browserSettings.windowless_frame_rate = 60;
+        browserSettings.windowless_frame_rate = gpuPresenter_ ? 120 : 60;
     }
 
     bool success = CefBrowserHost::CreateBrowser(
@@ -77,16 +93,25 @@ void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* pare
     if (!success) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
             "createBrowser: CefBrowserHost::CreateBrowser failed");
+        StopGpuPresentation();
         client_ = nullptr;
+        if (createCallback_) createCallback_(-1);
+        ArkUICefManager::getInstance().onBrowserDestroyed(this);
+    } else {
+        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+            "createBrowser: CreateBrowser called successfully");
     }
 }
 
 void ArkUICefBrowser::close() {
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "close: id=%{public}ld, browserCreated_=%{public}d", id_, browserCreated_);
+    
+    browserClosing_ = true;
+    StopGpuPresentation();
     if (!browserCreated_) {
         return;
     }
-    
-    browserClosing_ = true;
     if (browser_) {
         browser_->GetHost()->CloseBrowser(true);
     }
@@ -288,6 +313,36 @@ void ArkUICefBrowser::wasHidden(bool hidden) {
         browser_->GetHost()->WasResized();
         browser_->GetHost()->Invalidate(PET_VIEW);
     }
+}
+
+void ArkUICefBrowser::setWindowlessVisibility(bool visible) {
+    // WasHidden 仅适用于离屏渲染（window rendering disabled）的 browser；
+    // windowed browser 的可见性由平台窗口信号驱动，此调用直接忽略。
+    if (!use_osr_) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+            "setWindowlessVisibility: id=%{public}ld ignored (not OSR)", id_);
+        return;
+    }
+
+    wasHidden_ = !visible;
+
+    if (!browser_) {
+        // browser 尚未创建：记录状态，onBrowserCreated 时补调，
+        // 避免隐藏标签在创建完成后仍以"前台可见"状态产帧。
+        visibilityPending_ = true;
+        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+            "setWindowlessVisibility: id=%{public}ld, visible=%{public}d (pending, browser not created)",
+            id_, visible);
+        return;
+    }
+
+    // Delegate to wasHidden so the un-hide path keeps its kick-start
+    // (WasResized + Invalidate): the GPU tab-active flow and the CPU
+    // visibility-edge flow must both recover frame production on resume.
+    wasHidden(!visible);
+    visibilityPending_ = false;
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+        "setWindowlessVisibility: id=%{public}ld, visible=%{public}d (via WasHidden)", id_, visible);
 }
 
 void ArkUICefBrowser::sendTouchEvent(int x, int y, int touchType, int pointerId) {
@@ -518,9 +573,22 @@ void ArkUICefBrowser::onBrowserCreated(CefRefPtr<CefBrowser> browser) {
         "onBrowserCreated: id=%{public}ld, identifier=%{public}d", id_, browser->GetIdentifier());
     browser_ = browser;
     browserCreated_ = true;
+    if (browserClosing_) {
+        browser_->GetHost()->CloseBrowser(true);
+        return;
+    }
     hostWindowHandle_ = reinterpret_cast<Node*>(browser->GetHost()->GetWindowHandle());
     if (createCallback_) {
         createCallback_(id_);
+    }
+    // 创建期间应用侧可能已通报过隐藏状态（如 browser 创建时所在标签非激活），
+    // 此时补调 WasHidden，避免隐藏标签创建完成后仍以前台状态产帧。
+    if (visibilityPending_) {
+        visibilityPending_ = false;
+        browser_->GetHost()->WasHidden(wasHidden_);
+        OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
+            "onBrowserCreated: apply pending WasHidden, id=%{public}ld, hidden=%{public}d",
+            id_, wasHidden_);
     }
 }
 

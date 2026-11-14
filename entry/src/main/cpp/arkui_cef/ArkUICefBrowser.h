@@ -7,6 +7,8 @@
 #include "ArkUICefClient.h"
 #include <string>
 #include <functional>
+#include <memory>
+#include "ArkUICefGpuPresenter.h"
 
 namespace EMBEDDED_WINDOW_ADAPTER {
 struct Node {
@@ -168,6 +170,20 @@ public:
     void wasHidden(bool hidden);
 
     /**
+     * @brief 设置OSR窗口可见性 (OSR 模式)
+     *
+     * 通过 CefBrowserHost::WasHidden 将应用侧的标签页可见状态通知 CEF：
+     * 隐藏后 CEF 停止 layout 与 OnPaint/帧采集，renderer 侧
+     * document.visibilityState 变为 hidden，定时器节流、rAF 停发。
+     * browser 尚未创建时仅记录状态，onBrowserCreated 时补调。
+     * GPU OSR 标签的 tabActive 通道使用本接口（内部复用 wasHidden 的
+     * kick-start 恢复路径）。
+     *
+     * @param visible true=可见, false=不可见
+     */
+    void setWindowlessVisibility(bool visible);
+
+    /**
      * @brief 把当前浏览器宿主窗口迁移到新的父容器（网页拖出成新主窗）。
      *        windowed 模式专用；转发给 cef_ohos_reparent_browser_host（CEF 侧
      *        重建 Widget/宿主节点，同一 WebContents/页面状态保留）。
@@ -257,6 +273,13 @@ public:
     /** @brief 是否 windowed（非 OSR）模式 */
     bool isWindowed() const { return !use_osr_; }
 
+    void SetGpuPresenter(std::shared_ptr<ArkUICefGpuPresenter> presenter) {
+        gpuPresenter_ = std::move(presenter);
+    }
+    void StopGpuPresentation() {
+        if (gpuPresenter_) gpuPresenter_->Shutdown();
+    }
+
     /**
      * @brief 设置OSR设备缩放因子
      * @param factor 设备缩放因子（如2.0表示Retina屏幕）
@@ -313,6 +336,11 @@ private:
     // 缓存一份指针最稳）。reparent 成功后由导出函数的出参刷新为新宿主
     // 句柄（旧宿主已销毁）；失败/超时保持不动。show()/hide() 优先用它。
     Node* hostWindowHandle_ = nullptr;
+
+    std::shared_ptr<ArkUICefGpuPresenter> gpuPresenter_;
+
+    bool wasHidden_ = false;          ///< 应用侧通报的隐藏状态（browser 未创建时暂存）
+    bool visibilityPending_ = false;  ///< browser 创建后需要补调 WasHidden
 };
 } // namespace arkui_cef
 #endif // ARKUI_CEF_BROWSER_H

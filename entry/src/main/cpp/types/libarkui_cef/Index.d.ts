@@ -22,8 +22,10 @@ export const unregisterPopupTitleCallback: (cefBrowserId: number) => void;
 export const setPopupBrowserCreatedCallback: (callback: (cefBrowserId: number) => void) => void;
 export const cefSendKeyEvent: (browserId: number, keyCode: number, keyType: number, modifiers: number, charCode?: number) => void;
 export const createOsrCefView: (url: string, width: number, height: number,
-                                 onPaint: (regionData: ArrayBuffer | undefined, x: number, y: number, w: number, h: number,
-                                           fullFrame: boolean, viewW: number, viewH: number) => void,
+                                 // GPU mode passes undefined here (frames stay
+                                 // on the native presenter, never cross to ArkTS).
+                                 onPaint: ((regionData: ArrayBuffer | undefined, x: number, y: number, w: number, h: number,
+                                           fullFrame: boolean, viewW: number, viewH: number) => void) | undefined,
                                  onCreated: (browserId: number) => void,
                                  onTitleChange: (title: string) => void,
                                  onFocusTake: (next: boolean) => void,
@@ -31,9 +33,12 @@ export const createOsrCefView: (url: string, width: number, height: number,
                                  onVirtualKeyboard?: (show: boolean) => void,
                                  onTextSelection?: (selectedText: string) => void,
                                  onCursorChange?: (cursorType: number) => void,
-                                  onImeCursor?: (left: number, top: number, width: number, height: number) => void,
-                                  onStartDrag?: (text: string, html: string, url: string, urlTitle: string, fileName: string, fileData: ArrayBuffer, x: number, y: number) => void,
-                                 onUpdateDragCursor?: (operation: number) => void) => number;
+                                 onImeCursor?: (left: number, top: number, width: number, height: number) => void,
+                                 onStartDrag?: (text: string, html: string, url: string, urlTitle: string, fileName: string, fileData: ArrayBuffer, x: number, y: number) => void,
+                                 onUpdateDragCursor?: (operation: number) => void,
+                                 // GPU options (last parameter, index 14): set only
+                                 // for gpuEnabled views.
+                                 options?: { surfaceId: string }) => number;
 export const destroyOsrCefView: (browserId: number) => void;
 export const registerOsrPixelmaps: (browserId: number, pmA: image.PixelMap, pmB: image.PixelMap) => void;
 export const unregisterOsrPixelmaps: (browserId: number) => void;
@@ -52,6 +57,7 @@ export const cefSendFocusEvent: (browserId: number, focused: boolean) => void;
 export const cefSendCaptureLost: (browserId: number) => void;
 export const cefInvalidate: (browserId: number) => void;
 export const cefWasHidden: (browserId: number, hidden: boolean) => void;
+export const cefSetWindowlessVisibility: (browserId: number, visible: boolean) => void;
 export const cefSendTouchEvent: (browserId: number, x: number, y: number, touchType: number, pointerId: number) => void;
 export const cefImeSetComposition: (browserId: number, text: string) => void;
 export const cefImeCommitText: (browserId: number, text: string) => void;

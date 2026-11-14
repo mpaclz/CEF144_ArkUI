@@ -3,148 +3,194 @@ import { CefView } from '../components/CefView';
 import { OsrCefView } from '../components/OsrCefView';
 import { getDragOutSession, DragOutInfo } from '../common/DragOutSession';
 
+// ── 标签数据源（注册表 + 渲染源合一）──────────────────────────────────────
+// TabDef 数组既驱动 TabContent 渲染（ForEach 下标 = Tabs 位置），也承载每个
+// OSR 视图的身份令牌（uid）。增删标签只改这个数组——位置与身份天然同源，
+// 不存在需要人工同步的第二处（旧 myTabIndex 硬编码索引因此类 bug 已移除）。
+// uid 约定：OSR 标签非空且全表唯一（同时用作 focus target id 后缀，须 ASCII）；
+//          非 OSR 标签为空串（不参与广播通道）。
+interface TabDef {
+  kind: 'browser' | 'cef' | 'osr-cpu' | 'osr-gpu';
+  label: string;
+  url: string;
+  uid: string;
+  dragOut?: boolean;
+}
+
 @Entry
 @Component
 struct MultiTabPage {
-  // Index of the currently displayed tab, synced into the OSR views to drive
-  // their keyboard ownership (key filter target + IMF session). Tabs.onChange
-  // is used instead of relying solely on visibility edges:
-  // onVisibleAreaChange does not fire the FIRST time a TabContent's component
-  // tree gets attached (non-mounted nodes are not measured), so the first
-  // switch to an OSR tab would leave the window key filter inactive.
-  @State osrActiveTabIndex: number = -1;
+  // ── 唯一数据源 ──
+  static readonly TABS: TabDef[] = [
+    { kind: 'browser', label: '多CEF实例', url: 'https://qq.com', uid: '' },
+    { kind: 'browser', label: 'BrowserView', url: 'https://example.com/', uid: '' },
+    { kind: 'cef', label: 'CefView', url: 'https://developer.huawei.com/consumer/cn/develop/', uid: '' },
+    { kind: 'browser', label: 'WebRTC', url: 'https://webrtc.github.io/samples/', uid: '' },
+    { kind: 'cef', label: 'Clipboard', url: 'file:///data/storage/el1/bundle/entry/resources/resfile/Clipboard-full.html', uid: '' },
+    { kind: 'cef', label: 'PDF', url: 'https://www.orimi.com/pdf-test.pdf', uid: '' },
+    { kind: 'osr-cpu', label: 'OSR显示测试',
+      url: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_display_test.html',
+      uid: 'osr-display', dragOut: true },
+    { kind: 'osr-cpu', label: 'OSR输入测试',
+      url: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_input_test.html',
+      uid: 'osr-input', dragOut: true },
+    { kind: 'osr-gpu', label: 'GPU OSR测试',
+      url: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_test.html',
+      uid: 'osr-gpu' },
+    { kind: 'osr-gpu', label: 'ufotest-fix',
+      url: 'file:///data/storage/el1/bundle/entry/resources/resfile/ufo_fixed_test.html',
+      uid: 'osr-ufofix' },
+    { kind: 'osr-cpu', label: 'OSR拖放测试',
+      url: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_drag_test.html',
+      uid: 'osr-drag', dragOut: true },
+  ];
+
+  // 当前激活标签位置（Tabs 自身坐标系：驱动切换、两行头部高亮）。
+  @State currentIndex: number = 0;
+  // 当前激活标签的身份令牌（由 onChange 从 TABS 换算），广播给全部 OSR 视图。
+  @State activeUid: string = '';
+  // TabsController 驱动器：自定义标签头点击 → changeIndex。
+  controller: TabsController = new TabsController();
+
+  private isOsr(t: TabDef): boolean {
+    return t.kind === 'osr-cpu' || t.kind === 'osr-gpu';
+  }
+
+  private isRow1(t: TabDef): boolean {
+    return t.kind === 'browser' || t.kind === 'cef';
+  }
+
+  // ── 单个标签按钮 ──
+  @Builder
+  TabChip(t: TabDef, index: number) {
+    Text(t.label)
+      .fontSize(15)
+      .fontColor(this.currentIndex === index ? Color.White : Color.Black)
+      .textAlign(TextAlign.Center)
+      .height(38)
+      .padding({ left: 14, right: 14 })
+      .constraintSize({ minWidth: 64 })
+      .borderRadius(8)
+      .backgroundColor(this.currentIndex === index ? '#007DFF' : '#F1F3F5')
+      .onClick(() => {
+        this.controller.changeIndex(index);
+      })
+  }
 
   build() {
-    RelativeContainer() {
-      Tabs() {
-        TabContent() {
-          Row() {
-            Column() {
-              BrowserView({defaultUrl: 'https://qq.com'})
-            }
-            .width('49%')
-            .border({ width: 1, color: '#888888', radius: 12 })
-            .backgroundColor(Color.Gray)
-
-            Blank().width('2%')
-
-            Column() {
-              BrowserView({defaultUrl: 'https://bing.com'})
-            }
-            .width('49%')
-            .border({ width: 1, color: '#888888', radius: 12 })
-            .backgroundColor(Color.Gray)
+    Column() {
+      // ── 第一行：非 OSR（windowed）标签 ──
+      Row({ space: 6 }) {
+        ForEach(MultiTabPage.TABS, (t: TabDef, index: number) => {
+          if (this.isRow1(t)) {
+            this.TabChip(t, index)
           }
-        }.tabBar(
-          SubTabBarStyle.of('多CEF实例')
-        )
-        TabContent() {
-          Column() {
-            BrowserView({defaultUrl: 'https://example.com/'})
-          }
-        }.tabBar(
-          SubTabBarStyle.of('BrowserView')
-        )
-        TabContent() {
-          Column() {
-            CefView({viewUrl: 'https://developer.huawei.com/consumer/cn/develop/',
-              onCreatedCallback: (view: CefView) => {
-                // 拖出支持：BrowserView 标签页同款接线
-                view.enableDragOut((info: DragOutInfo) => {
-                  getDragOutSession().startDragOut(info);
-                });
-              }})
-          }
-        }.tabBar(
-          SubTabBarStyle.of('CefView')
-        )
-        TabContent() {
-          Column() {
-            BrowserView({defaultUrl: 'https://webrtc.github.io/samples/'})
-          }
-        }.tabBar(
-          SubTabBarStyle.of('WebRTC')
-        )
-        TabContent() {
-          Column() {
-            CefView({viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/Clipboard-full.html'})
-          }
-        }.tabBar(
-          SubTabBarStyle.of('Clipboard')
-        )
-        TabContent() {
-          Column() {
-            CefView({viewUrl: 'https://www.orimi.com/pdf-test.pdf'})
-          }
-        }.tabBar(
-          SubTabBarStyle.of('PDF')
-        )
-        TabContent() {
-          Column() {
-            // OSR 拖出：以构造参数 onDragOutCallback 接入（OsrCefView 的检测
-            // 内嵌于 handleMouseEvent，无需创建后调用 enableDragOut；传字段与
-            // CefView 的回调风格一致）
-            OsrCefView({
-              viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_display_test.html',
-              myTabIndex: 6,
-              activeTabIndex: this.osrActiveTabIndex,
-              onDragOutCallback: (info: DragOutInfo) => {
-                getDragOutSession().startDragOut(info);
-              }
-            })
-          }
-          .width('100%')
-          .height('100%')
-          .focusable(true)
-        }.tabBar(
-          SubTabBarStyle.of('OSR显示测试')
-        )
-        TabContent() {
-          Column() {
-            OsrCefView({
-              viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_input_test.html',
-              myTabIndex: 7,
-              activeTabIndex: this.osrActiveTabIndex,
-              onDragOutCallback: (info: DragOutInfo) => {
-                getDragOutSession().startDragOut(info);
-              }
-            })
-          }
-          .width('100%')
-          .height('100%')
-          .focusable(true)
-        }.tabBar(
-          SubTabBarStyle.of('OSR输入测试')
-        )
-        TabContent() {
-          Column() {
-            OsrCefView({
-              viewUrl: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_drag_test.html',
-              myTabIndex: 8,
-              activeTabIndex: this.osrActiveTabIndex,
-              onDragOutCallback: (info: DragOutInfo) => {
-                getDragOutSession().startDragOut(info);
-              }
-            })
-          }
-          .width('100%')
-          .height('100%')
-          .focusable(true)
-        }.tabBar(
-          SubTabBarStyle.of('OSR拖放测试')
-        )
+        }, (t: TabDef, index: number) => 'chip1_' + index + '_' + t.uid)
       }
-      .barBackgroundColor(Color.White)
+      .width('100%')
+      .height(46)
+      .padding({ left: 8, right: 8 })
+      .alignItems(VerticalAlign.Center)
+      .backgroundColor(Color.White)
+
+      // ── 第二行：OSR 标签（CPU OSR + GPU OSR）──
+      Row({ space: 6 }) {
+        ForEach(MultiTabPage.TABS, (t: TabDef, index: number) => {
+          if (this.isOsr(t)) {
+            this.TabChip(t, index)
+          }
+        }, (t: TabDef, index: number) => 'chip2_' + index + '_' + t.uid)
+      }
+      .width('100%')
+      .height(46)
+      .padding({ left: 8, right: 8 })
+      .alignItems(VerticalAlign.Center)
+      .backgroundColor(Color.White)
+      .border({ width: { bottom: 1 }, color: '#D0D5DD' })
+
+      // ── 内容区：ForEach 数据驱动，下标即 Tabs 位置 ──
+      Tabs({ controller: this.controller, index: this.currentIndex }) {
+        ForEach(MultiTabPage.TABS, (t: TabDef, index: number) => {
+          TabContent() {
+            if (t.kind === 'browser') {
+              if (t.label === '多CEF实例') {
+                Row() {
+                  Column() {
+                    BrowserView({ defaultUrl: 'https://qq.com' })
+                  }
+                  .width('49%')
+                  .border({ width: 1, color: '#888888', radius: 12 })
+                  .backgroundColor(Color.Gray)
+
+                  Blank().width('2%')
+
+                  Column() {
+                    BrowserView({ defaultUrl: 'https://bing.com' })
+                  }
+                  .width('49%')
+                  .border({ width: 1, color: '#888888', radius: 12 })
+                  .backgroundColor(Color.Gray)
+                }
+              } else {
+                Column() {
+                  BrowserView({ defaultUrl: t.url })
+                }
+                .width('100%')
+                .height('100%')
+              }
+            } else if (t.kind === 'cef') {
+              Column() {
+                if (t.label === 'CefView') {
+                  CefView({
+                    viewUrl: t.url,
+                    onCreatedCallback: (view: CefView) => {
+                      // 拖出支持：BrowserView 标签页同款接线
+                      view.enableDragOut((info: DragOutInfo) => {
+                        getDragOutSession().startDragOut(info);
+                      });
+                    }
+                  })
+                } else {
+                  CefView({ viewUrl: t.url })
+                }
+              }
+              .width('100%')
+              .height('100%')
+            } else {
+              // OSR（CPU + GPU 共用 OsrCefView；GPU 走 native presenter）
+              Column() {
+                OsrCefView({
+                  viewUrl: t.url,
+                  gpuEnabled: t.kind === 'osr-gpu',
+                  viewUid: t.uid,
+                  activeUid: this.activeUid,
+                  onDragOutCallback: t.dragOut === true ? (info: DragOutInfo) => {
+                    getDragOutSession().startDragOut(info);
+                  } : undefined
+                })
+              }
+              .width('100%')
+              .height('100%')
+              .focusable(true)
+            }
+          }
+        }, (t: TabDef, index: number) => 'tab_' + index + '_' + t.uid)
+      }
+      .barHeight(0)
+      .barWidth(0)
       .animationDuration(300)
       .onChange((index: number) => {
-        this.osrActiveTabIndex = index;
+        this.currentIndex = index;
+        this.activeUid = MultiTabPage.TABS[index]?.uid ?? '';
       })
+      .layoutWeight(1)
     }
     .height('100%')
     .width('100%')
     .onAppear(() => {
       // Tabs.onChange does not fire for the initial page (default index 0).
-      this.osrActiveTabIndex = 0;
+      this.currentIndex = 0;
+      this.activeUid = MultiTabPage.TABS[0].uid;
     })
   }
 }
