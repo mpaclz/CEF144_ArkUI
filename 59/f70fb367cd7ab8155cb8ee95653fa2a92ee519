@@ -1,0 +1,15 @@
+entry/src/main/ets/pages/BrowserTabsPage.ets
+  h_ae917a57683699 78-79
+  h_ae917a57683699 201,203,212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "59f70fb367cd7ab8155cb8ee95653fa2a92ee519",
+  "prompts": {},
+  "humans": {
+    "h_ae917a57683699": {
+      "author": "zhaomangguo <zhaoyinxing221@outlook.com>"
+    }
+  }
+}
