@@ -1,0 +1,12 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "f8c0b4816908df9fece20555c40561cc5b6f2355",
+  "prompts": {},
+  "humans": {
+    "h_ae917a57683699": {
+      "author": "zhaomangguo <zhaoyinxing221@outlook.com>"
+    }
+  }
+}
