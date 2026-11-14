@@ -14,3 +14,9 @@
 /dep_tools/signature_release/sign_tool/haps/
 /dep_tools/signature_release/sign_tool/results_debug/
 /dep_tools/signature_release/sign_tool/results_release/
+
+# Large prebuilt CEF/adapter libs: not tracked; drop the delivery builds
+# into entry/libs/arm64-v8a/ manually before building
+# (libcef md5 9bddec7d..., libadapter md5 196809db...).
+entry/libs/arm64-v8a/libcef.so
+entry/libs/arm64-v8a/libadapter.so
