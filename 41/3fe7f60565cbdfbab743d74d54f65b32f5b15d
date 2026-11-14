@@ -1,0 +1,18 @@
+entry/libs/arm64-v8a/libadapter.so
+  h_7a43ad329963da 2-3
+entry/libs/arm64-v8a/libcef.so
+  h_7a43ad329963da 2
+entry/src/main/cpp/arkui_cef/ArkUICefGpuPresenter.cpp
+  h_7a43ad329963da 255-269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "413fe7f60565cbdfbab743d74d54f65b32f5b15d",
+  "prompts": {},
+  "humans": {
+    "h_7a43ad329963da": {
+      "author": "loveacat <zhaoyinxing@huawei.com>"
+    }
+  }
+}
