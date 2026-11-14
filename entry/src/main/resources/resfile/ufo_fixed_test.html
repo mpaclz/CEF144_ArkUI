@@ -419,6 +419,22 @@ document.getElementById('bEvil').addEventListener('click',function(){
 
 /* ------------------------------ boot ------------------------------ */
 window.addEventListener('resize',resize);
+// A GPU process restart makes the 2D context lose its backing. Blink resets the
+// whole state stack on restore, so the DPR transform installed by resize() is
+// gone and every later draw runs at scale 1. Without re-installing it, the
+// clearRect(0,0,W,H) in draw() only covers the left W backing pixels (the backing
+// is W*DPR wide), leaving a permanent un-cleared strip on the right that collects
+// every UFO that passes through it.
+//
+// Only re-install the transform here. Two things must NOT be done:
+//  - calling resize(), because re-assigning cv.width/cv.height throws away the
+//    freshly restored backing and leaves the canvas blank;
+//  - preventDefault() on contextlost, because for a 2D context Blink reads that
+//    as "the page will restore it itself" and sets context_restorable_=false,
+//    permanently disabling the automatic restore (unlike WebGL).
+cv.addEventListener('contextrestored',function(){
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+});
 resize();
 syncButtons();
 requestAnimationFrame(frame);
