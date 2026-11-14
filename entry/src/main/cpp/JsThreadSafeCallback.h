@@ -4,8 +4,8 @@
 // Node APIs are not fully supported. To solve the compilation error of the interface cannot be found,
 // please include "napi/native_api.h".
 
-#ifndef OPENQTCEF_CALLBACKWRAPPER_H
-#define OPENQTCEF_CALLBACKWRAPPER_H
+#ifndef ARKUI_CEF_JS_THREAD_SAFE_CALLBACK_H
+#define ARKUI_CEF_JS_THREAD_SAFE_CALLBACK_H
 
 #include <node_api.h>
 
@@ -249,4 +249,4 @@ std::shared_ptr<JsThreadSafeCallback<Args...>> makeJsThreadSafeCallback(
     return callback;
 }
 
-#endif //OPENQTCEF_CALLBACKWRAPPER_H
+#endif //ARKUI_CEF_JS_THREAD_SAFE_CALLBACK_H

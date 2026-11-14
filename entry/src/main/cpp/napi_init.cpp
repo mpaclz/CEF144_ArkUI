@@ -256,7 +256,7 @@ bool WriteRegionToSurface(OsrNativeSurface& s,
                 OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "napi",
                     "OSR surface: size mismatch region=%{public}dx%{public}d surface=%{public}dx%{public}d damage=%{public}d,%{public}d %{public}dx%{public}d",
                     viewW, viewH, s.width, s.height, x, y, w, h);
-                auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+                auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
                 if (browser) {
                     CefPostTask(TID_UI, CefCreateClosureTask(
                         base::BindOnce(&arkui_cef::ArkUICefBrowser::resize, browser, s.width, s.height)));
@@ -705,16 +705,16 @@ static bool OsrKeyFilterCallback(Input_KeyEvent* keyEvent) {
     bool sendChar = isTextKey && !ctrl && !alt && (action == KEY_ACTION_DOWN);
 
     CefKeyEvent cefKeyEvent = convertKeyEvent(keyCode, cefType, cefMods);
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(
         g_keyFilterCtx->browserId.load());
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::sendKeyEvent, browser, cefKeyEvent)));
+            base::BindOnce(&ArkUICefBrowser::SendKeyEvent, browser, cefKeyEvent)));
 
         if (sendChar) {
             CefKeyEvent cefCharEvent = convertKeyEvent(keyCode, 2 /*CHAR*/, cefMods);
             CefPostTask(TID_UI, CefCreateClosureTask(
-                base::BindOnce(&ArkUICefBrowser::sendKeyEvent, browser, cefCharEvent)));
+                base::BindOnce(&ArkUICefBrowser::SendKeyEvent, browser, cefCharEvent)));
         }
     } else {
         // The routing target browser does not exist (e.g. CEF is still
@@ -752,7 +752,7 @@ struct OsrPaintTsfn {
     // Notification coalescing (formerly frame skipping — with the staging
     // buffer no pixel data is dropped, only redundant notifications).
     std::atomic<bool> framePending_{false};
-    // Browser id is assigned after createOsrBrowser() returns; until then
+    // Browser id is assigned after CreateOsrBrowser() returns; until then
     // notifications are delivered but consumed as "no data" (safe — the
     // accumulated dirty region stays in the render handler).
     std::atomic<int64_t> browserId_{-1};
@@ -829,7 +829,7 @@ struct OsrPaintTsfn {
         int64_t browserId = self->browserId_.load();
         CefRefPtr<arkui_cef::ArkUICefRenderHandler> handler;
         if (browserId > 0) {
-            handler = arkui_cef::ArkUICefManager::getInstance().getRenderHandler(browserId);
+            handler = arkui_cef::ArkUICefManager::getInstance().GetRenderHandler(browserId);
             if (handler) {
                 hasRegion = handler->ConsumePendingRegionMeta(region);
             }
@@ -1260,10 +1260,10 @@ void DragOutWatchdogMain() {
         }
         // Capture-lost posts happen OUTSIDE the lock.
         for (int64_t id : staleBrowsers) {
-            auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(id);
+            auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(id);
             if (browser) {
                 CefPostTask(TID_UI, CefCreateClosureTask(
-                    base::BindOnce(&ArkUICefBrowser::sendCaptureLostEvent, browser)));
+                    base::BindOnce(&ArkUICefBrowser::SendCaptureLostEvent, browser)));
             }
         }
     }
@@ -1458,7 +1458,7 @@ static napi_value NAPI_Global_startCef(napi_env env, napi_callback_info info) {
 }
 
 static napi_value NAPI_Global_isCefRunning(napi_env env, napi_callback_info info) {
-    bool ok = arkui_cef::ArkUICefManager::getInstance().isCefRunning();
+    bool ok = arkui_cef::ArkUICefManager::getInstance().IsCefRunning();
     napi_value result;
     napi_get_boolean(env, ok, &result);
     return result;
@@ -1525,7 +1525,7 @@ static napi_value NAPI_Global_createCefView(napi_env env, napi_callback_info inf
         return nullptr;
     }
     
-    int64_t browserId = arkui_cef::ArkUICefManager::getInstance().createBrowser(
+    int64_t browserId = arkui_cef::ArkUICefManager::getInstance().CreateBrowser(
        parentNode, url, width, height,
        [jsCreatedCallback](int64_t id) {
         jsCreatedCallback->Call(id);
@@ -1571,7 +1571,7 @@ static napi_value NAPI_Global_destroyCefView(napi_env env, napi_callback_info in
         return nullptr;
     }
     
-    arkui_cef::ArkUICefManager::getInstance().destroyBrowser(browserId);
+    arkui_cef::ArkUICefManager::getInstance().DestroyBrowser(browserId);
 
     // adoptCefView worker in flight for this browser? Mark it interrupted and
     // SKIP all node cleanup (no RemoveNode / destroyNode / userData clear):
@@ -1635,7 +1635,7 @@ static napi_value NAPI_Global_cefResize(napi_env env, napi_callback_info info) {
     int32_t height = 0;
     napi_get_value_int32(env, args[2], &height);
     
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
             base::BindOnce(&ArkUICefBrowser::resize, browser, width, height)));
@@ -1656,9 +1656,9 @@ static napi_value NAPI_Global_cefGoBack(napi_env env, napi_callback_info info) {
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
     
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
-        CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::goBack, browser)));
+        CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::GoBack, browser)));
     }
     
     return nullptr;
@@ -1677,9 +1677,9 @@ static napi_value NAPI_Global_cefGoForward(napi_env env, napi_callback_info info
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
     
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
-        CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::goForward, browser)));
+        CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::GoForward, browser)));
     }
     
     return nullptr;
@@ -1698,7 +1698,7 @@ static napi_value NAPI_Global_cefReload(napi_env env, napi_callback_info info) {
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
     
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::reload, browser)));
     }
@@ -1719,7 +1719,7 @@ static napi_value NAPI_Global_cefHide(napi_env env, napi_callback_info info) {
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
     
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::hide, browser)));
     }
@@ -1739,7 +1739,7 @@ static napi_value NAPI_Global_cefShow(napi_env env, napi_callback_info info) {
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
     
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::show, browser)));
     }
@@ -1763,10 +1763,10 @@ static napi_value NAPI_Global_cefLoadUrl(napi_env env, napi_callback_info info) 
     size_t urlLen;
     napi_get_value_string_utf8(env, args[1], url, sizeof(url), &urlLen);
     
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::loadUrl, browser, std::string(url))));
+            base::BindOnce(&ArkUICefBrowser::LoadUrl, browser, std::string(url))));
     }
 
     return nullptr;
@@ -1810,10 +1810,10 @@ static napi_value NAPI_Global_cefSendKeyEvent(napi_env env, napi_callback_info i
         keyEvent.unmodified_character = static_cast<char16_t>(charCode);
     }
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::sendKeyEvent, browser, keyEvent)));
+            base::BindOnce(&ArkUICefBrowser::SendKeyEvent, browser, keyEvent)));
     }
 
     return nullptr;
@@ -1832,7 +1832,7 @@ static napi_value NAPI_Global_hasCef(napi_env env, napi_callback_info info) {
     int64_t browserId;
     napi_get_value_int64(env, args[0], &browserId);
     
-    bool exists = arkui_cef::ArkUICefManager::getInstance().hasBrowser(browserId);
+    bool exists = arkui_cef::ArkUICefManager::getInstance().HasBrowser(browserId);
     
     napi_value result;
     napi_get_boolean(env, exists, &result);
@@ -2041,7 +2041,7 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
         };
     }
 
-    int64_t browserId = arkui_cef::ArkUICefManager::getInstance().createOsrBrowser(
+    int64_t browserId = arkui_cef::ArkUICefManager::getInstance().CreateOsrBrowser(
         url, width, height, paintCallback,
         [jsCreatedCallback](int64_t id) {
             jsCreatedCallback->Call(id);
@@ -2101,7 +2101,7 @@ static napi_value NAPI_Global_cefOsrResize(napi_env env, napi_callback_info info
     int32_t height = 0;
     napi_get_value_int32(env, args[2], &height);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
             base::BindOnce(&ArkUICefBrowser::resize, browser, width, height)));
@@ -2144,7 +2144,7 @@ static napi_value NAPI_Global_destroyOsrCefView(napi_env env, napi_callback_info
         }
     }
 
-    arkui_cef::ArkUICefManager::getInstance().destroyBrowser(browserId);
+    arkui_cef::ArkUICefManager::getInstance().DestroyBrowser(browserId);
     return nullptr;
 }
 
@@ -2437,10 +2437,10 @@ static napi_value NAPI_Global_cefSendMouseClick(napi_env env, napi_callback_info
         napi_get_value_uint32(env, args[6], &modifiers);
     }
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::sendMouseClickEvent, browser, x, y, button, mouseUp, clickCount, modifiers)));
+            base::BindOnce(&ArkUICefBrowser::SendMouseClickEvent, browser, x, y, button, mouseUp, clickCount, modifiers)));
     }
     return nullptr;
 }
@@ -2469,10 +2469,10 @@ static napi_value NAPI_Global_cefSendMouseMove(napi_env env, napi_callback_info 
         napi_get_value_uint32(env, args[4], &modifiers);
     }
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::sendMouseMoveEvent, browser, x, y, mouseLeave, modifiers)));
+            base::BindOnce(&ArkUICefBrowser::SendMouseMoveEvent, browser, x, y, mouseLeave, modifiers)));
     }
     return nullptr;
 }
@@ -2503,10 +2503,10 @@ static napi_value NAPI_Global_cefSendMouseWheel(napi_env env, napi_callback_info
         napi_get_value_uint32(env, args[5], &modifiers);
     }
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::sendMouseWheelEvent, browser, x, y, deltaX, deltaY, modifiers)));
+            base::BindOnce(&ArkUICefBrowser::SendMouseWheelEvent, browser, x, y, deltaX, deltaY, modifiers)));
     }
     return nullptr;
 }
@@ -2530,10 +2530,10 @@ static napi_value NAPI_Global_cefOsrSetScale(napi_env env, napi_callback_info in
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "napi",
         "cefOsrSetScale: browserId=%{public}ld, scale=%{public}f", browserId, scaleFactor);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::setOsrScale, browser, static_cast<float>(scaleFactor))));
+            base::BindOnce(&ArkUICefBrowser::SetOsrScale, browser, static_cast<float>(scaleFactor))));
     }
     return nullptr;
 }
@@ -2557,10 +2557,10 @@ static napi_value NAPI_Global_cefSetComponentOffset(napi_env env, napi_callback_
     int32_t offsetY = 0;
     napi_get_value_int32(env, args[2], &offsetY);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::setComponentOffset, browser, offsetX, offsetY)));
+            base::BindOnce(&ArkUICefBrowser::SetComponentOffset, browser, offsetX, offsetY)));
     }
     return nullptr;
 }
@@ -2581,10 +2581,10 @@ static napi_value NAPI_Global_cefSetFrameRate(napi_env env, napi_callback_info i
     int32_t frameRate = 0;
     napi_get_value_int32(env, args[1], &frameRate);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::setFrameRate, browser, frameRate)));
+            base::BindOnce(&ArkUICefBrowser::SetFrameRate, browser, frameRate)));
     }
     return nullptr;
 }
@@ -2596,7 +2596,7 @@ void executeJavaScript(CefRefPtr<arkui_cef::ArkUICefBrowser> browser, const std:
     if (!browser) {
         return;
     }
-    CefRefPtr<CefBrowser> cefBrowser = browser->getCefBrowser();
+    CefRefPtr<CefBrowser> cefBrowser = browser->GetCefBrowser();
     if (!cefBrowser || !cefBrowser->GetMainFrame()) {
         return;
     }
@@ -2621,7 +2621,7 @@ static napi_value NAPI_Global_cefExecuteJavaScript(napi_env env, napi_callback_i
     size_t codeLen = 0;
     napi_get_value_string_utf8(env, args[1], code, sizeof(code), &codeLen);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
             base::BindOnce(&executeJavaScript, browser, std::string(code))));
@@ -2644,10 +2644,10 @@ static napi_value NAPI_Global_cefSendFocusEvent(napi_env env, napi_callback_info
     bool focused = false;
     napi_get_value_bool(env, args[1], &focused);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::sendFocusEvent, browser, focused)));
+            base::BindOnce(&ArkUICefBrowser::SendFocusEvent, browser, focused)));
     }
     return nullptr;
 }
@@ -2665,10 +2665,10 @@ static napi_value NAPI_Global_cefSendCaptureLost(napi_env env, napi_callback_inf
     int64_t browserId = 0;
     napi_get_value_int64(env, args[0], &browserId);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::sendCaptureLostEvent, browser)));
+            base::BindOnce(&ArkUICefBrowser::SendCaptureLostEvent, browser)));
     }
     return nullptr;
 }
@@ -2686,7 +2686,7 @@ static napi_value NAPI_Global_cefInvalidate(napi_env env, napi_callback_info inf
     int64_t browserId = 0;
     napi_get_value_int64(env, args[0], &browserId);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
             base::BindOnce(&ArkUICefBrowser::invalidate, browser)));
@@ -2709,10 +2709,10 @@ static napi_value NAPI_Global_cefWasHidden(napi_env env, napi_callback_info info
     bool hidden = false;
     napi_get_value_bool(env, args[1], &hidden);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::wasHidden, browser, hidden)));
+            base::BindOnce(&ArkUICefBrowser::WasHidden, browser, hidden)));
     }
     return nullptr;
 }
@@ -2732,10 +2732,10 @@ static napi_value NAPI_Global_cefSetWindowlessVisibility(napi_env env, napi_call
     bool visible = false;
     napi_get_value_bool(env, args[1], &visible);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::setWindowlessVisibility, browser, visible)));
+            base::BindOnce(&ArkUICefBrowser::SetWindowlessVisibility, browser, visible)));
     }
     return nullptr;
 }
@@ -2762,10 +2762,10 @@ static napi_value NAPI_Global_cefSendTouchEvent(napi_env env, napi_callback_info
     int32_t pointerId = 0;
     napi_get_value_int32(env, args[4], &pointerId);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::sendTouchEvent, browser, x, y, touchType, pointerId)));
+            base::BindOnce(&ArkUICefBrowser::SendTouchEvent, browser, x, y, touchType, pointerId)));
     }
     return nullptr;
 }
@@ -2955,10 +2955,10 @@ static napi_value NAPI_Global_cefImeSetComposition(napi_env env, napi_callback_i
     size_t textLen;
     napi_get_value_string_utf8(env, args[1], text, sizeof(text), &textLen);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::imeSetComposition, browser, std::string(text))));
+            base::BindOnce(&ArkUICefBrowser::ImeSetComposition, browser, std::string(text))));
     }
     return nullptr;
 }
@@ -2979,10 +2979,10 @@ static napi_value NAPI_Global_cefImeCommitText(napi_env env, napi_callback_info 
     size_t textLen;
     napi_get_value_string_utf8(env, args[1], text, sizeof(text), &textLen);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::imeCommitText, browser, std::string(text))));
+            base::BindOnce(&ArkUICefBrowser::ImeCommitText, browser, std::string(text))));
     }
     return nullptr;
 }
@@ -2999,10 +2999,10 @@ static napi_value NAPI_Global_cefImeCancelComposition(napi_env env, napi_callbac
     int64_t browserId = 0;
     napi_get_value_int64(env, args[0], &browserId);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::imeCancelComposition, browser)));
+            base::BindOnce(&ArkUICefBrowser::ImeCancelComposition, browser)));
     }
     return nullptr;
 }
@@ -3083,7 +3083,7 @@ static napi_value NAPI_Global_cefImeCUpdateCursor(napi_env env, napi_callback_in
 
     bool ok = false;
     if (g_imeCApi) {
-        ok = g_imeCApi->updateCursor(left, top, width, height);
+        ok = g_imeCApi->UpdateCursor(left, top, width, height);
     }
 
     napi_value result;
@@ -3105,7 +3105,7 @@ static napi_value NAPI_Global_cefImeCDetach(napi_env env, napi_callback_info inf
 static napi_value NAPI_Global_cefImeCShowKeyboard(napi_env env, napi_callback_info info) {
     bool ok = false;
     if (g_imeCApi) {
-        ok = g_imeCApi->showKeyboard();
+        ok = g_imeCApi->ShowKeyboard();
     }
     napi_value result;
     napi_get_boolean(env, ok, &result);
@@ -3115,7 +3115,7 @@ static napi_value NAPI_Global_cefImeCShowKeyboard(napi_env env, napi_callback_in
 static napi_value NAPI_Global_cefImeCHideKeyboard(napi_env env, napi_callback_info info) {
     bool ok = false;
     if (g_imeCApi) {
-        ok = g_imeCApi->hideKeyboard();
+        ok = g_imeCApi->HideKeyboard();
     }
     napi_value result;
     napi_get_boolean(env, ok, &result);
@@ -3154,10 +3154,10 @@ static napi_value NAPI_Global_cefDragTargetDragEnter(napi_env env, napi_callback
     napi_get_value_int32(env, args[6], &y);
     napi_get_value_int32(env, args[7], &allowedOps);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::dragTargetDragEnter, browser,
+            base::BindOnce(&ArkUICefBrowser::DragTargetDragEnter, browser,
                            std::string(text), std::string(html), std::string(url),
                            std::string(filePaths), x, y, allowedOps)));
     }
@@ -3182,10 +3182,10 @@ static napi_value NAPI_Global_cefDragTargetDragOver(napi_env env, napi_callback_
     napi_get_value_int32(env, args[2], &y);
     napi_get_value_int32(env, args[3], &allowedOps);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::dragTargetDragOver, browser, x, y, allowedOps)));
+            base::BindOnce(&ArkUICefBrowser::DragTargetDragOver, browser, x, y, allowedOps)));
     }
     return nullptr;
 }
@@ -3203,10 +3203,10 @@ static napi_value NAPI_Global_cefDragTargetDragLeave(napi_env env, napi_callback
     int64_t browserId = 0;
     napi_get_value_int64(env, args[0], &browserId);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::dragTargetDragLeave, browser)));
+            base::BindOnce(&ArkUICefBrowser::DragTargetDragLeave, browser)));
     }
     return nullptr;
 }
@@ -3228,10 +3228,10 @@ static napi_value NAPI_Global_cefDragTargetDrop(napi_env env, napi_callback_info
     napi_get_value_int32(env, args[1], &x);
     napi_get_value_int32(env, args[2], &y);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::dragTargetDrop, browser, x, y)));
+            base::BindOnce(&ArkUICefBrowser::DragTargetDrop, browser, x, y)));
     }
     return nullptr;
 }
@@ -3254,10 +3254,10 @@ static napi_value NAPI_Global_cefDragSourceEndedAt(napi_env env, napi_callback_i
     napi_get_value_int32(env, args[2], &y);
     napi_get_value_int32(env, args[3], &op);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::dragSourceEndedAt, browser, x, y, op)));
+            base::BindOnce(&ArkUICefBrowser::DragSourceEndedAt, browser, x, y, op)));
     }
     return nullptr;
 }
@@ -3274,10 +3274,10 @@ static napi_value NAPI_Global_cefDragSourceSystemDragEnded(napi_env env, napi_ca
     int64_t browserId = 0;
     napi_get_value_int64(env, args[0], &browserId);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
     if (browser) {
         CefPostTask(TID_UI, CefCreateClosureTask(
-            base::BindOnce(&ArkUICefBrowser::dragSourceSystemDragEnded, browser)));
+            base::BindOnce(&ArkUICefBrowser::DragSourceSystemDragEnded, browser)));
     }
 
     return nullptr;
@@ -3540,8 +3540,8 @@ static napi_value NAPI_Global_adoptCefView(napi_env env, napi_callback_info info
         }
     };
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
-    if (!browser || !browser->isWindowed()) {
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
+    if (!browser || !browser->IsWindowed()) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
             "adoptCefView: browser not found or not windowed, browserId=%{public}ld", browserId);
         notify(false);
@@ -3767,8 +3767,8 @@ static napi_value NAPI_Global_adoptOsrCefView(napi_env env, napi_callback_info i
     int64_t browserId = 0;
     napi_get_value_int64(env, args[0], &browserId);
 
-    auto browser = arkui_cef::ArkUICefManager::getInstance().getBrowser(browserId);
-    auto handler = arkui_cef::ArkUICefManager::getInstance().getRenderHandler(browserId);
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
+    auto handler = arkui_cef::ArkUICefManager::getInstance().GetRenderHandler(browserId);
     if (!browser || !browser->IsOsr() || !handler) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
             "adoptOsrCefView: browser/render handler not found or not OSR, browserId=%{public}ld",

@@ -4,8 +4,8 @@
 // Node APIs are not fully supported. To solve the compilation error of the interface cannot be found,
 // please include "napi/native_api.h".
 
-#ifndef OPENQTCEF_NODEHANDLE_H
-#define OPENQTCEF_NODEHANDLE_H
+#ifndef ARKUI_CEF_NODE_HANDLE_H
+#define ARKUI_CEF_NODE_HANDLE_H
 
 #include <arkui/native_node.h>
 #include <arkui/native_type.h>
@@ -50,4 +50,4 @@ void hide(ArkUI_NodeHandle handle);
  */
 void release(ArkUI_NodeHandle handle);
 } // namespace arkui_cef
-#endif //OPENQTCEF_NODEHANDLE_H
+#endif //ARKUI_CEF_NODE_HANDLE_H

@@ -56,7 +56,7 @@ public:
      * @param url 初始加载 URL
      * @thread 应在 CEF UI 线程调用
      */
-    void createBrowser(CefRefPtr<ArkUICefClient>, Node* parentNode, const std::string& url);
+    void CreateBrowser(CefRefPtr<ArkUICefClient>, Node* parentNode, const std::string& url);
     
     /**
      * @brief 关闭浏览器
@@ -69,19 +69,19 @@ public:
      * @param url 目标 URL
      * @thread 应在 CEF UI 线程调用
      */
-    void loadUrl(const std::string& url);
+    void LoadUrl(const std::string& url);
     
     /**
      * @brief 后退到上一页
      * @thread 应在 CEF UI 线程调用
      */
-    void goBack();
+    void GoBack();
     
     /**
      * @brief 前进到下一页
      * @thread 应在 CEF UI 线程调用
      */
-    void goForward();
+    void GoForward();
     
     /**
      * @brief 刷新当前页面
@@ -114,7 +114,7 @@ public:
      * @param event CEF 按键事件结构体
      * @thread 应在 CEF UI 线程调用
      */
-    void sendKeyEvent(const CefKeyEvent& event);
+    void SendKeyEvent(const CefKeyEvent& event);
 
     /**
      * @brief 向浏览器发送鼠标点击事件 (OSR 模式)
@@ -125,7 +125,7 @@ public:
      * @param clickCount 点击次数
      * @thread 应在 CEF UI 线程调用
      */
-    void sendMouseClickEvent(int x, int y, int button, bool mouseUp, int clickCount, uint32_t modifiers = 0);
+    void SendMouseClickEvent(int x, int y, int button, bool mouseUp, int clickCount, uint32_t modifiers = 0);
 
     /**
      * @brief 向浏览器发送鼠标移动事件 (OSR 模式)
@@ -134,7 +134,7 @@ public:
      * @param mouseLeave true=鼠标离开视图
      * @thread 应在 CEF UI 线程调用
      */
-    void sendMouseMoveEvent(int x, int y, bool mouseLeave, uint32_t modifiers = 0);
+    void SendMouseMoveEvent(int x, int y, bool mouseLeave, uint32_t modifiers = 0);
 
     /**
      * @brief 向浏览器发送鼠标滚轮事件 (OSR 模式)
@@ -144,18 +144,18 @@ public:
      * @param deltaY 垂直滚动量
      * @thread 应在 CEF UI 线程调用
      */
-    void sendMouseWheelEvent(int x, int y, int deltaX, int deltaY, uint32_t modifiers = 0);
+    void SendMouseWheelEvent(int x, int y, int deltaX, int deltaY, uint32_t modifiers = 0);
 
     /**
      * @brief 向浏览器发送焦点事件 (OSR 模式)
      * @param focused true=获得焦点, false=失去焦点
      */
-    void sendFocusEvent(bool focused);
+    void SendFocusEvent(bool focused);
 
     /**
      * @brief 通知浏览器捕获丢失 (OSR 模式)
      */
-    void sendCaptureLostEvent();
+    void SendCaptureLostEvent();
 
     /**
      * @brief 手动触发重绘 (OSR 模式)
@@ -167,7 +167,7 @@ public:
      * @param hidden true=不可见（挂起布局与 OnPaint），false=恢复渲染
      * @thread 应在 CEF UI 线程调用
      */
-    void wasHidden(bool hidden);
+    void WasHidden(bool hidden);
 
     /**
      * @brief 设置OSR窗口可见性 (OSR 模式)
@@ -175,13 +175,13 @@ public:
      * 通过 CefBrowserHost::WasHidden 将应用侧的标签页可见状态通知 CEF：
      * 隐藏后 CEF 停止 layout 与 OnPaint/帧采集，renderer 侧
      * document.visibilityState 变为 hidden，定时器节流、rAF 停发。
-     * browser 尚未创建时仅记录状态，onBrowserCreated 时补调。
-     * GPU OSR 标签的 tabActive 通道使用本接口（内部复用 wasHidden 的
+     * browser 尚未创建时仅记录状态，OnBrowserCreated 时补调。
+     * GPU OSR 标签的 tabActive 通道使用本接口（内部复用 WasHidden 的
      * kick-start 恢复路径）。
      *
      * @param visible true=可见, false=不可见
      */
-    void setWindowlessVisibility(bool visible);
+    void SetWindowlessVisibility(bool visible);
 
     /**
      * @brief 把当前浏览器宿主窗口迁移到新的父容器（网页拖出成新主窗）。
@@ -206,32 +206,32 @@ public:
      *                 ArkTS 侧需自行映射（参考 OsrCefView.handleTouchEvent）。
      * @param pointerId 触摸点 ID
      */
-    void sendTouchEvent(int x, int y, int touchType, int pointerId);
+    void SendTouchEvent(int x, int y, int touchType, int pointerId);
 
-    void imeSetComposition(const std::string& text);
-    void imeCommitText(const std::string& text);
-    void imeCancelComposition();
+    void ImeSetComposition(const std::string& text);
+    void ImeCommitText(const std::string& text);
+    void ImeCancelComposition();
 
-    void dragTargetDragEnter(const std::string& text, const std::string& html,
+    void DragTargetDragEnter(const std::string& text, const std::string& html,
                              const std::string& url, const std::string& filePaths,
                              int x, int y, int allowedOps);
-    void dragTargetDragOver(int x, int y, int allowedOps);
-    void dragTargetDragLeave();
-    void dragTargetDrop(int x, int y);
-    void dragSourceEndedAt(int x, int y, int op);
-    void dragSourceSystemDragEnded();
+    void DragTargetDragOver(int x, int y, int allowedOps);
+    void DragTargetDragLeave();
+    void DragTargetDrop(int x, int y);
+    void DragSourceEndedAt(int x, int y, int op);
+    void DragSourceSystemDragEnded();
 
     /**
      * @brief 获取浏览器唯一 ID
      * @return 浏览器 ID
      */
-    int64_t getId() const { return id_; }
+    int64_t GetId() const { return id_; }
 
     /** @brief 获取关联的 Client（OSR 渲染链路查询用，可能为空） */
-    CefRefPtr<ArkUICefClient> getClient() const { return client_; }
+    CefRefPtr<ArkUICefClient> GetClient() const { return client_; }
 
     /** @brief 获取 CEF Browser（页面执行 JS 等用，创建前可能为空） */
-    CefRefPtr<CefBrowser> getCefBrowser() const { return browser_; }
+    CefRefPtr<CefBrowser> GetCefBrowser() const { return browser_; }
     
     /**
      * @brief 获取底层窗口句柄
@@ -271,7 +271,7 @@ public:
     /** @brief 是否使用离屏渲染模式 */
     bool IsOsr() const { return use_osr_; }
     /** @brief 是否 windowed（非 OSR）模式 */
-    bool isWindowed() const { return !use_osr_; }
+    bool IsWindowed() const { return !use_osr_; }
 
     void SetGpuPresenter(std::shared_ptr<ArkUICefGpuPresenter> presenter) {
         gpuPresenter_ = std::move(presenter);
@@ -285,29 +285,29 @@ public:
      * @param factor 设备缩放因子（如2.0表示Retina屏幕）
      * @thread 应在 CEF UI 线程调用
      */
-    void setOsrScale(float factor);
+    void SetOsrScale(float factor);
 
-    void setComponentOffset(int x, int y);
+    void SetComponentOffset(int x, int y);
 
     /**
      * @brief 设置离屏渲染最大帧率（OSR 模式）
      * @param frameRate 帧率值（fps），最小 1
      * @thread 应在 CEF UI 线程调用
      */
-    void setFrameRate(int frameRate);
+    void SetFrameRate(int frameRate);
     
     /**
      * @brief 内部回调：浏览器创建完成
      * @param browser CEF Browser 引用
      * @thread 由 ArkUICefClient 在 CEF UI 线程调用
      */
-    void onBrowserCreated(CefRefPtr<CefBrowser> browser);
+    void OnBrowserCreated(CefRefPtr<CefBrowser> browser);
     
     /**
      * @brief 内部回调：浏览器关闭完成
      * @thread 由 ArkUICefClient 在 CEF UI 线程调用
      */
-    void onBrowserClosed();
+    void OnBrowserClosed();
     
     IMPLEMENT_REFCOUNTING(ArkUICefBrowser);
 
@@ -332,7 +332,7 @@ private:
     bool use_osr_ = false;            ///< Whether off-screen rendering is enabled
 
     // Cached host window node: recorded on the CEF UI thread in
-    // onBrowserCreated and read from other threads after a reparent
+    // OnBrowserCreated and read from other threads after a reparent
     // migration. A live GetWindowHandle() call must run on the CEF UI
     // thread and may race with the migration, so a cached copy is the
     // safest source. After a successful reparent the exported function's

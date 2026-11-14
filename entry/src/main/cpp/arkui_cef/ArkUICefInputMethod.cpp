@@ -38,18 +38,18 @@ ArkUICefInputMethod::ArkUICefInputMethod() {
 }
 
 ArkUICefInputMethod::~ArkUICefInputMethod() {
-    releaseResources();
+    ReleaseResources();
     if (instance_ == this) {
         instance_ = nullptr;
     }
 }
 
-void ArkUICefInputMethod::releaseResources() {
+void ArkUICefInputMethod::ReleaseResources() {
     if (input_method_proxy_) {
         InputMethod_ErrorCode res = OH_InputMethodController_Detach(input_method_proxy_);
         if (res != IME_ERR_OK) {
             OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
-                "releaseResources: OH_InputMethodController_Detach failed: %{public}d", res);
+                "ReleaseResources: OH_InputMethodController_Detach failed: %{public}d", res);
         }
         input_method_proxy_ = nullptr;
     }
@@ -72,14 +72,14 @@ void ArkUICefInputMethod::releaseResources() {
     is_attached_ = false;
 }
 
-bool ArkUICefInputMethod::attach(bool showKeyboard, int32_t windowId,
+bool ArkUICefInputMethod::attach(bool ShowKeyboard, int32_t windowId,
                                  double cursorLeft, double cursorTop,
                                  double cursorWidth, double cursorHeight,
                                  const ImeEventCallbacks& callbacks) {
     if (is_attached_) {
         OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
             "attach: already attached, releasing first");
-        releaseResources();
+        ReleaseResources();
     }
 
     window_id_ = windowId;
@@ -100,42 +100,42 @@ bool ArkUICefInputMethod::attach(bool showKeyboard, int32_t windowId,
     err = OH_TextEditorProxy_SetGetTextConfigFunc(text_editor_proxy_, &ArkUICefInputMethod::GetTextConfigFunc);
     if (err != IME_ERR_OK) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG, "attach: SetGetTextConfigFunc failed: %{public}d", err);
-        releaseResources();
+        ReleaseResources();
         return false;
     }
 
     err = OH_TextEditorProxy_SetInsertTextFunc(text_editor_proxy_, &ArkUICefInputMethod::InsertTextFunc);
     if (err != IME_ERR_OK) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG, "attach: SetInsertTextFunc failed: %{public}d", err);
-        releaseResources();
+        ReleaseResources();
         return false;
     }
 
     err = OH_TextEditorProxy_SetDeleteBackwardFunc(text_editor_proxy_, &ArkUICefInputMethod::DeleteBackwardFunc);
     if (err != IME_ERR_OK) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG, "attach: SetDeleteBackwardFunc failed: %{public}d", err);
-        releaseResources();
+        ReleaseResources();
         return false;
     }
 
     err = OH_TextEditorProxy_SetSendEnterKeyFunc(text_editor_proxy_, &ArkUICefInputMethod::SendEnterKeyFunc);
     if (err != IME_ERR_OK) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG, "attach: SetSendEnterKeyFunc failed: %{public}d", err);
-        releaseResources();
+        ReleaseResources();
         return false;
     }
 
     err = OH_TextEditorProxy_SetSetPreviewTextFunc(text_editor_proxy_, &ArkUICefInputMethod::SetPreviewTextFunc);
     if (err != IME_ERR_OK) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG, "attach: SetSetPreviewTextFunc failed: %{public}d", err);
-        releaseResources();
+        ReleaseResources();
         return false;
     }
 
     err = OH_TextEditorProxy_SetFinishTextPreviewFunc(text_editor_proxy_, &ArkUICefInputMethod::FinishTextPreviewFunc);
     if (err != IME_ERR_OK) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG, "attach: SetFinishTextPreviewFunc failed: %{public}d", err);
-        releaseResources();
+        ReleaseResources();
         return false;
     }
 
@@ -150,10 +150,10 @@ bool ArkUICefInputMethod::attach(bool showKeyboard, int32_t windowId,
     OH_TextEditorProxy_SetGetTextIndexAtCursorFunc(text_editor_proxy_, &ArkUICefInputMethod::GetTextIndexAtCursorFunc);
     OH_TextEditorProxy_SetReceivePrivateCommandFunc(text_editor_proxy_, &ArkUICefInputMethod::ReceivePrivateCommandFunc);
 
-    attach_options_ = OH_AttachOptions_Create(showKeyboard);
+    attach_options_ = OH_AttachOptions_Create(ShowKeyboard);
     if (!attach_options_) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG, "attach: OH_AttachOptions_Create failed");
-        releaseResources();
+        ReleaseResources();
         return false;
     }
 
@@ -162,7 +162,7 @@ bool ArkUICefInputMethod::attach(bool showKeyboard, int32_t windowId,
     if (res != IME_ERR_OK) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG,
             "attach: OH_InputMethodController_Attach failed: %{public}d", res);
-        releaseResources();
+        ReleaseResources();
         return false;
     }
 
@@ -192,41 +192,41 @@ bool ArkUICefInputMethod::attach(bool showKeyboard, int32_t windowId,
 }
 
 void ArkUICefInputMethod::detach() {
-    releaseResources();
+    ReleaseResources();
 }
 
-bool ArkUICefInputMethod::showKeyboard() {
+bool ArkUICefInputMethod::ShowKeyboard() {
     if (!is_attached_ || !input_method_proxy_) {
         OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
-            "showKeyboard: not attached (is_attached_=%{public}d proxy=%{public}d)", is_attached_, input_method_proxy_ != nullptr);
+            "ShowKeyboard: not attached (is_attached_=%{public}d proxy=%{public}d)", is_attached_, input_method_proxy_ != nullptr);
         return false;
     }
     InputMethod_ErrorCode res = OH_InputMethodProxy_ShowKeyboard(input_method_proxy_);
     if (res != IME_ERR_OK) {
         OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
-            "showKeyboard: err=%{public}d", res);
+            "ShowKeyboard: err=%{public}d", res);
     }
     return res == IME_ERR_OK;
 }
 
-bool ArkUICefInputMethod::hideKeyboard() {
+bool ArkUICefInputMethod::HideKeyboard() {
     if (!is_attached_ || !input_method_proxy_) {
         OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
-            "hideKeyboard: not attached (is_attached_=%{public}d proxy=%{public}d)", is_attached_, input_method_proxy_ != nullptr);
+            "HideKeyboard: not attached (is_attached_=%{public}d proxy=%{public}d)", is_attached_, input_method_proxy_ != nullptr);
         return false;
     }
     InputMethod_ErrorCode res = OH_InputMethodProxy_HideKeyboard(input_method_proxy_);
     if (res != IME_ERR_OK) {
         OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
-            "hideKeyboard: err=%{public}d", res);
+            "HideKeyboard: err=%{public}d", res);
     }
     return res == IME_ERR_OK;
 }
 
-bool ArkUICefInputMethod::updateCursor(double left, double top, double width, double height) {
+bool ArkUICefInputMethod::UpdateCursor(double left, double top, double width, double height) {
     if (!is_attached_ || !input_method_proxy_) {
         OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
-            "updateCursor: not attached (is_attached_=%{public}d proxy=%{public}d)", is_attached_, input_method_proxy_ != nullptr);
+            "UpdateCursor: not attached (is_attached_=%{public}d proxy=%{public}d)", is_attached_, input_method_proxy_ != nullptr);
         return false;
     }
 
@@ -240,7 +240,7 @@ bool ArkUICefInputMethod::updateCursor(double left, double top, double width, do
     }
     cursor_info_ = OH_CursorInfo_Create(left, top, width, height);
     if (!cursor_info_) {
-        OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG, "updateCursor: OH_CursorInfo_Create failed");
+        OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG, "UpdateCursor: OH_CursorInfo_Create failed");
         return false;
     }
 
@@ -248,10 +248,16 @@ bool ArkUICefInputMethod::updateCursor(double left, double top, double width, do
         OH_InputMethodProxy_NotifyCursorUpdate(input_method_proxy_, cursor_info_);
     if (res != IME_ERR_OK) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG,
-            "updateCursor: NotifyCursorUpdate failed: %{public}d (left=%{public}.0f top=%{public}.0f)",
+            "UpdateCursor: NotifyCursorUpdate failed: %{public}d (left=%{public}.0f top=%{public}.0f)",
             res, left, top);
         return false;
     }
+
+    // Probe (IME-POS group): success-path coordinates, pairs with ArkTS
+    // "IME cursor:" log to separate CEF-side errors from IMF placement.
+    OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG,
+        "UpdateCursor: sent screen=(%{public}.0f, %{public}.0f) size=(%{public}.0f x %{public}.0f) ok",
+        left, top, width, height);
 
     return true;
 }

@@ -31,17 +31,17 @@ ArkUICefBrowser::~ArkUICefBrowser() {
     }
 }
 
-void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* parentNode, const std::string& url) {
+void ArkUICefBrowser::CreateBrowser(CefRefPtr<ArkUICefClient> client, Node* parentNode, const std::string& url) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser", 
-        "createBrowser: url=%{public}s", url.c_str());
+        "CreateBrowser: url=%{public}s", url.c_str());
     
     if (browserClosing_) {
-        ArkUICefManager::getInstance().onBrowserDestroyed(this);
+        ArkUICefManager::getInstance().OnBrowserDestroyed(this);
         return;
     }
     if (browserCreated_) {
         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "createBrowser: browser already created, id=%{public}ld", id_);
+            "CreateBrowser: browser already created, id=%{public}ld", id_);
         return;
     }
     
@@ -95,14 +95,14 @@ void ArkUICefBrowser::createBrowser(CefRefPtr<ArkUICefClient> client, Node* pare
     
     if (!success) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "createBrowser: CefBrowserHost::CreateBrowser failed");
+            "CreateBrowser: CefBrowserHost::CreateBrowser failed");
         StopGpuPresentation();
         client_ = nullptr;
         if (createCallback_) createCallback_(-1);
-        ArkUICefManager::getInstance().onBrowserDestroyed(this);
+        ArkUICefManager::getInstance().OnBrowserDestroyed(this);
     } else {
         OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "createBrowser: CreateBrowser called successfully");
+            "CreateBrowser: CreateBrowser called successfully");
     }
 }
 
@@ -120,17 +120,17 @@ void ArkUICefBrowser::close() {
     }
 }
 
-void ArkUICefBrowser::loadUrl(const std::string& url) {
+void ArkUICefBrowser::LoadUrl(const std::string& url) {
     if (!browser_ || !browser_->GetMainFrame()) {
         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "loadUrl: browser not ready");
+            "LoadUrl: browser not ready");
         return;
     }
     
     browser_->GetMainFrame()->LoadURL(url);
 }
 
-void ArkUICefBrowser::goBack() {
+void ArkUICefBrowser::GoBack() {
     if (!browser_ || !browser_->CanGoBack()) {
         return;
     }
@@ -138,7 +138,7 @@ void ArkUICefBrowser::goBack() {
     browser_->GoBack();
 }
 
-void ArkUICefBrowser::goForward() {
+void ArkUICefBrowser::GoForward() {
     if (!browser_ || !browser_->CanGoForward()) {
         return;
     }
@@ -182,9 +182,9 @@ void ArkUICefBrowser::resize(int width, int height) {
     }
 }
 
-void ArkUICefBrowser::setOsrScale(float factor) {
+void ArkUICefBrowser::SetOsrScale(float factor) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "setOsrScale: id=%{public}ld, factor=%{public}f", id_, factor);
+        "SetOsrScale: id=%{public}ld, factor=%{public}f", id_, factor);
 
     if (use_osr_ && client_) {
         auto handler = client_->GetArkUICefRenderHandler();
@@ -198,7 +198,7 @@ void ArkUICefBrowser::setOsrScale(float factor) {
     }
 }
 
-void ArkUICefBrowser::setComponentOffset(int x, int y) {
+void ArkUICefBrowser::SetComponentOffset(int x, int y) {
     if (use_osr_ && client_) {
         auto handler = client_->GetArkUICefRenderHandler();
         if (handler) {
@@ -207,7 +207,7 @@ void ArkUICefBrowser::setComponentOffset(int x, int y) {
     }
 }
 
-void ArkUICefBrowser::setFrameRate(int frameRate) {
+void ArkUICefBrowser::SetFrameRate(int frameRate) {
     if (!browser_ || frameRate < 1) {
         return;
     }
@@ -218,29 +218,31 @@ void ArkUICefBrowser::show() {
     // Prefer the cached handle: after a reparent migration a live
     // getWindowHandle() needs the CEF UI thread and may briefly return the
     // old, already-freed handle (dangling). The cache is maintained by
-    // onBrowserCreated / successful reparent; only fall back to a live query
+    // OnBrowserCreated / successful reparent; only fall back to a live query
     // when the cache is missing.
     Node* node = hostWindowHandle_ != nullptr ? hostWindowHandle_ : getWindowHandle();
-    if (node)
+    if (node) {
         arkui_cef::show(node->container);
+    }
 }
 
 void ArkUICefBrowser::hide() {
     // Same as show(): prefer the cached handle so a post-migration live
     // query cannot return a freed stale handle.
     Node* node = hostWindowHandle_ != nullptr ? hostWindowHandle_ : getWindowHandle();
-    if (node)
+    if (node) {
         arkui_cef::hide(node->container);
+    }
 }
 
-void ArkUICefBrowser::sendKeyEvent(const CefKeyEvent& event) {
+void ArkUICefBrowser::SendKeyEvent(const CefKeyEvent& event) {
     if (!browser_) {
         return;
     }
     browser_->GetHost()->SendKeyEvent(event);
 }
 
-void ArkUICefBrowser::sendMouseClickEvent(int x, int y, int button, bool mouseUp, int clickCount, uint32_t modifiers) {
+void ArkUICefBrowser::SendMouseClickEvent(int x, int y, int button, bool mouseUp, int clickCount, uint32_t modifiers) {
     if (!browser_) {
         return;
     }
@@ -253,7 +255,7 @@ void ArkUICefBrowser::sendMouseClickEvent(int x, int y, int button, bool mouseUp
         static_cast<cef_mouse_button_type_t>(button), mouseUp, clickCount);
 }
 
-void ArkUICefBrowser::sendMouseMoveEvent(int x, int y, bool mouseLeave, uint32_t modifiers) {
+void ArkUICefBrowser::SendMouseMoveEvent(int x, int y, bool mouseLeave, uint32_t modifiers) {
     if (!browser_) {
         return;
     }
@@ -265,7 +267,7 @@ void ArkUICefBrowser::sendMouseMoveEvent(int x, int y, bool mouseLeave, uint32_t
     browser_->GetHost()->SendMouseMoveEvent(event, mouseLeave);
 }
 
-void ArkUICefBrowser::sendMouseWheelEvent(int x, int y, int deltaX, int deltaY, uint32_t modifiers) {
+void ArkUICefBrowser::SendMouseWheelEvent(int x, int y, int deltaX, int deltaY, uint32_t modifiers) {
     if (!browser_) {
         return;
     }
@@ -276,14 +278,14 @@ void ArkUICefBrowser::sendMouseWheelEvent(int x, int y, int deltaX, int deltaY, 
     browser_->GetHost()->SendMouseWheelEvent(event, deltaX, deltaY);
 }
 
-void ArkUICefBrowser::sendFocusEvent(bool focused) {
+void ArkUICefBrowser::SendFocusEvent(bool focused) {
     if (!browser_) {
         return;
     }
     browser_->GetHost()->SetFocus(focused);
 }
 
-void ArkUICefBrowser::sendCaptureLostEvent() {
+void ArkUICefBrowser::SendCaptureLostEvent() {
     if (!browser_) {
         return;
     }
@@ -297,7 +299,7 @@ void ArkUICefBrowser::invalidate() {
     browser_->GetHost()->Invalidate(PET_VIEW);
 }
 
-void ArkUICefBrowser::wasHidden(bool hidden) {
+void ArkUICefBrowser::WasHidden(bool hidden) {
     if (!browser_) {
         return;
     }
@@ -321,13 +323,13 @@ void ArkUICefBrowser::wasHidden(bool hidden) {
     }
 }
 
-void ArkUICefBrowser::setWindowlessVisibility(bool visible) {
+void ArkUICefBrowser::SetWindowlessVisibility(bool visible) {
     // WasHidden applies only to off-screen-rendered browsers (window
     // rendering disabled); windowed browsers get visibility from platform
     // window signals, so this call is ignored for them.
     if (!use_osr_) {
         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "setWindowlessVisibility: id=%{public}ld ignored (not OSR)", id_);
+            "SetWindowlessVisibility: id=%{public}ld ignored (not OSR)", id_);
         return;
     }
 
@@ -335,25 +337,25 @@ void ArkUICefBrowser::setWindowlessVisibility(bool visible) {
 
     if (!browser_) {
         // Browser not created yet: stash the state and replay it in
-        // onBrowserCreated, so a hidden tab does not start producing frames
+        // OnBrowserCreated, so a hidden tab does not start producing frames
         // as if it were foreground-visible.
         visibilityPending_ = true;
         OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "setWindowlessVisibility: id=%{public}ld, visible=%{public}d (pending, browser not created)",
+            "SetWindowlessVisibility: id=%{public}ld, visible=%{public}d (pending, browser not created)",
             id_, visible);
         return;
     }
 
-    // Delegate to wasHidden so the un-hide path keeps its kick-start
+    // Delegate to WasHidden so the un-hide path keeps its kick-start
     // (WasResized + Invalidate): the GPU tab-active flow and the CPU
     // visibility-edge flow must both recover frame production on resume.
-    wasHidden(!visible);
+    WasHidden(!visible);
     visibilityPending_ = false;
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "setWindowlessVisibility: id=%{public}ld, visible=%{public}d (via WasHidden)", id_, visible);
+        "SetWindowlessVisibility: id=%{public}ld, visible=%{public}d (via WasHidden)", id_, visible);
 }
 
-void ArkUICefBrowser::sendTouchEvent(int x, int y, int touchType, int pointerId) {
+void ArkUICefBrowser::SendTouchEvent(int x, int y, int touchType, int pointerId) {
     if (!browser_) {
         return;
     }
@@ -411,7 +413,7 @@ size_t Utf16Length(const std::string& utf8) {
 }
 }
 
-void ArkUICefBrowser::imeSetComposition(const std::string& text) {
+void ArkUICefBrowser::ImeSetComposition(const std::string& text) {
     if (!browser_) {
         return;
     }
@@ -426,21 +428,21 @@ void ArkUICefBrowser::imeSetComposition(const std::string& text) {
                                            CefRange(UINT32_MAX, UINT32_MAX));
 }
 
-void ArkUICefBrowser::imeCommitText(const std::string& text) {
+void ArkUICefBrowser::ImeCommitText(const std::string& text) {
     if (!browser_) {
         return;
     }
     browser_->GetHost()->ImeCommitText(text, CefRange(UINT32_MAX, UINT32_MAX), 0);
 }
 
-void ArkUICefBrowser::imeCancelComposition() {
+void ArkUICefBrowser::ImeCancelComposition() {
     if (!browser_) {
         return;
     }
     browser_->GetHost()->ImeCancelComposition();
 }
 
-void ArkUICefBrowser::dragTargetDragEnter(const std::string& text, const std::string& html,
+void ArkUICefBrowser::DragTargetDragEnter(const std::string& text, const std::string& html,
                                            const std::string& url, const std::string& filePaths,
                                            int x, int y, int allowedOps) {
     if (!browser_) {
@@ -479,7 +481,7 @@ void ArkUICefBrowser::dragTargetDragEnter(const std::string& text, const std::st
         static_cast<CefBrowserHost::DragOperationsMask>(allowedOps));
 }
 
-void ArkUICefBrowser::dragTargetDragOver(int x, int y, int allowedOps) {
+void ArkUICefBrowser::DragTargetDragOver(int x, int y, int allowedOps) {
     if (!browser_) {
         return;
     }
@@ -492,14 +494,14 @@ void ArkUICefBrowser::dragTargetDragOver(int x, int y, int allowedOps) {
         static_cast<CefBrowserHost::DragOperationsMask>(allowedOps));
 }
 
-void ArkUICefBrowser::dragTargetDragLeave() {
+void ArkUICefBrowser::DragTargetDragLeave() {
     if (!browser_) {
         return;
     }
     browser_->GetHost()->DragTargetDragLeave();
 }
 
-void ArkUICefBrowser::dragTargetDrop(int x, int y) {
+void ArkUICefBrowser::DragTargetDrop(int x, int y) {
     if (!browser_) {
         return;
     }
@@ -511,7 +513,7 @@ void ArkUICefBrowser::dragTargetDrop(int x, int y) {
     browser_->GetHost()->DragTargetDrop(event);
 }
 
-void ArkUICefBrowser::dragSourceEndedAt(int x, int y, int op) {
+void ArkUICefBrowser::DragSourceEndedAt(int x, int y, int op) {
     if (!browser_) {
         return;
     }
@@ -519,7 +521,7 @@ void ArkUICefBrowser::dragSourceEndedAt(int x, int y, int op) {
         static_cast<CefBrowserHost::DragOperationsMask>(op));
 }
 
-void ArkUICefBrowser::dragSourceSystemDragEnded() {
+void ArkUICefBrowser::DragSourceSystemDragEnded() {
     if (!browser_) {
         return;
     }
@@ -545,7 +547,7 @@ int ArkUICefBrowser::reparent(Node* newParent, int width, int height) {
             id_, width, height);
         return -1;
     }
-    // Prefer the host handle cached by onBrowserCreated (safe to read
+    // Prefer the host handle cached by OnBrowserCreated (safe to read
     // cross-thread); fall back to a live query only if the cache is empty.
     Node* host = hostWindowHandle_ != nullptr ? hostWindowHandle_ : getWindowHandle();
     if (host == nullptr) {
@@ -580,9 +582,9 @@ int ArkUICefBrowser::reparent(Node* newParent, int width, int height) {
     return rc;
 }
 
-void ArkUICefBrowser::onBrowserCreated(CefRefPtr<CefBrowser> browser) {
+void ArkUICefBrowser::OnBrowserCreated(CefRefPtr<CefBrowser> browser) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "onBrowserCreated: id=%{public}ld, identifier=%{public}d", id_, browser->GetIdentifier());
+        "OnBrowserCreated: id=%{public}ld, identifier=%{public}d", id_, browser->GetIdentifier());
     browser_ = browser;
     browserCreated_ = true;
     if (browserClosing_) {
@@ -600,14 +602,14 @@ void ArkUICefBrowser::onBrowserCreated(CefRefPtr<CefBrowser> browser) {
         visibilityPending_ = false;
         browser_->GetHost()->WasHidden(wasHidden_);
         OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "onBrowserCreated: apply pending WasHidden, id=%{public}ld, hidden=%{public}d",
+            "OnBrowserCreated: apply pending WasHidden, id=%{public}ld, hidden=%{public}d",
             id_, wasHidden_);
     }
 }
 
-void ArkUICefBrowser::onBrowserClosed() {
+void ArkUICefBrowser::OnBrowserClosed() {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "onBrowserClosed: id=%{public}ld", id_);
+        "OnBrowserClosed: id=%{public}ld", id_);
     
     browser_ = nullptr;
     browserCreated_ = false;

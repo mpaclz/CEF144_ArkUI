@@ -36,8 +36,9 @@ public:
         if (context_ != EGL_NO_CONTEXT) {
             restored = eglBindAPI(api_) && eglMakeCurrent(display_, draw_, read_, context_);
         } else {
-            if (ownedDisplay_ != EGL_NO_DISPLAY)
+            if (ownedDisplay_ != EGL_NO_DISPLAY) {
                 restored = eglMakeCurrent(ownedDisplay_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+            }
             restored = eglBindAPI(api_) && restored;
         }
         if (!restored) OH_LOG_Print(LOG_APP, LOG_ERROR, kLogDomain, "GpuOsrPresenter",
@@ -87,18 +88,21 @@ bool ArkUICefGpuPresenter::MakeCurrent() {
 
 bool ArkUICefGpuPresenter::Initialize(uint64_t surfaceId, int width, int height) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (surfaceId == 0 || width <= 0 || height <= 0 || window_ || stopped_)
+    if (surfaceId == 0 || width <= 0 || height <= 0 || window_ || stopped_) {
         return Fail("surface parameters");
-    if (OH_NativeWindow_CreateNativeWindowFromSurfaceId(surfaceId, &window_) != 0 || !window_)
+    }
+    if (OH_NativeWindow_CreateNativeWindowFromSurfaceId(surfaceId, &window_) != 0 || !window_) {
         return Fail("NativeWindow from surfaceId");
+    }
     width_ = width;
     height_ = height;
     if (OH_NativeWindow_NativeWindowHandleOpt(window_, SET_BUFFER_GEOMETRY, width, height) != 0 ||
         OH_NativeWindow_NativeWindowHandleOpt(window_, SET_FORMAT, NATIVEBUFFER_PIXEL_FMT_RGBA_8888) != 0)
         return Fail("NativeWindow format/size request");
     display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    if (display_ == EGL_NO_DISPLAY || !eglInitialize(display_, nullptr, nullptr))
+    if (display_ == EGL_NO_DISPLAY || !eglInitialize(display_, nullptr, nullptr)) {
         return Fail("eglInitialize");
+    }
     CurrentBinding binding(display_);
     if (!eglBindAPI(EGL_OPENGL_ES_API)) return Fail("eglBindAPI");
     const EGLint configAttributes[] = {
@@ -106,8 +110,9 @@ bool ArkUICefGpuPresenter::Initialize(uint64_t surfaceId, int width, int height)
         EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8, EGL_NONE};
     EGLConfig config = nullptr;
     EGLint count = 0;
-    if (!eglChooseConfig(display_, configAttributes, &config, 1, &count) || count != 1)
+    if (!eglChooseConfig(display_, configAttributes, &config, 1, &count) || count != 1) {
         return Fail("ES3 EGLConfig");
+    }
     const EGLint contextAttributes[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
     context_ = eglCreateContext(display_, config, EGL_NO_CONTEXT, contextAttributes);
     if (context_ == EGL_NO_CONTEXT) return Fail("独立 EGLContext");
@@ -122,8 +127,9 @@ bool ArkUICefGpuPresenter::Initialize(uint64_t surfaceId, int width, int height)
     if (!BuildProgram()) return Fail("texture composite program build");
     glGenFramebuffers(1, &framebuffer_);
     glGenVertexArrays(1, &vertexArray_);
-    if (!framebuffer_ || !vertexArray_ || glGetError() != GL_NO_ERROR)
+    if (!framebuffer_ || !vertexArray_ || glGetError() != GL_NO_ERROR) {
         return Fail("GL resource allocation");
+    }
     OH_LOG_Print(LOG_APP, LOG_INFO, kLogDomain, "GpuOsrPresenter",
         "[OHOS_GPU_OSR] native presenter ready, surfaceId=%{public}llu size=%{public}dx%{public}d",
         static_cast<unsigned long long>(surfaceId), width, height);
@@ -247,8 +253,9 @@ bool ArkUICefGpuPresenter::Paint(cef_paint_element_type_t type, const CefAcceler
     if (!borrowed) return Fail("accelerated frame without native buffer");
     // The source texture cannot be reclaimed until its fence signals, so
     // take an extra reference of our own to hold it across callbacks.
-    if (OH_NativeWindow_NativeObjectReference(borrowed) != 0)
+    if (OH_NativeWindow_NativeObjectReference(borrowed) != 0) {
         return Fail("native buffer ref-count acquire");
+    }
     ScopedWindowBuffer native(borrowed);
     const BufferHandle* actual = OH_NativeWindow_GetBufferHandleFromNative(native.get());
     const int nativeFormat = info.format == CEF_COLOR_TYPE_BGRA_8888

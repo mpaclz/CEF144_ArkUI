@@ -1,5 +1,5 @@
-#ifndef ARKUI_CEF_CEF_OHOS_REPARENT_API_H
-#define ARKUI_CEF_CEF_OHOS_REPARENT_API_H
+#ifndef ARKUI_CEF_OHOS_REPARENT_API_H
+#define ARKUI_CEF_OHOS_REPARENT_API_H
 
 // Contract with the CEF native side (libcef.so, implemented by agent A in
 // cef-144-blue). The HAP side links against this extern "C" symbol directly.
@@ -21,7 +21,7 @@
 // new_parent_handle: the new parent container (struct Node*, container is an
 //   ArkUI STACK node) created on the napi side for the new window.
 // width/height: new host window size in px.
-// out_new_window_handle: optional out parameter (may be NULL). On success
+// out_new_window_handle: optional out parameter (may be nullptr). On success
 //   (return 0) the NEW host window handle (struct Node*) is written here —
 //   the old handle passed in browser_window_handle has been freed by CEF and
 //   MUST be replaced by this one. Never written on failure or timeout.
@@ -31,4 +31,4 @@ extern "C" int cef_ohos_reparent_browser_host(void* browser_window_handle,
                                               int width, int height,
                                               void** out_new_window_handle);
 
-#endif  // ARKUI_CEF_CEF_OHOS_REPARENT_API_H
+#endif  // ARKUI_CEF_OHOS_REPARENT_API_H

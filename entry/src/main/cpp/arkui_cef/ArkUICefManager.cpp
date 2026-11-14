@@ -52,7 +52,7 @@ ArkUICefManager::~ArkUICefManager() {
 
 void ArkUICefManager::start() {
     // Idempotent: only one CEF main thread may ever be spawned. While CEF
-    // is mid-initialization (initOk_ still false) isCefRunning() returns
+    // is mid-initialization (initOk_ still false) IsCefRunning() returns
     // false, and callers retrying start() on that basis would spawn a second
     // thread and a second CefInitialize - startCalled_ blocks that at the
     // start() entry.
@@ -70,7 +70,7 @@ void ArkUICefManager::start() {
 void ArkUICefManager::stop() {
     // Snapshot the browser list and release the lock BEFORE posting close
     // tasks and joining the CEF thread: the close chain OnBeforeClose ->
-    // onBrowserDestroyed runs ON the CEF UI thread and also acquires
+    // OnBrowserDestroyed runs ON the CEF UI thread and also acquires
     // mutex_, so holding it across join() would deadlock.
     std::vector<CefRefPtr<ArkUICefBrowser>> browsersToClose;
     bool wasRunning = false;
@@ -104,26 +104,26 @@ void ArkUICefManager::stop() {
     }
 
     // The CEF thread exits when all browsers closed (last OnBeforeClose ->
-    // onBrowserDestroyed sees shuttingDown_ && empty map -> CefQuitMessageLoop)
+    // OnBrowserDestroyed sees shuttingDown_ && empty map -> CefQuitMessageLoop)
     // or the direct quit task above ran.
     if (cefThread_.joinable()) {
         cefThread_.join();
     }
 }
 
-bool ArkUICefManager::isCefRunning() {
+bool ArkUICefManager::IsCefRunning() {
     std::lock_guard<std::mutex> lock(mutex_);
     return initOk_;
 }
 
-int64_t ArkUICefManager::createBrowser(Node* parentWindowHandle, const std::string& url,
+int64_t ArkUICefManager::CreateBrowser(Node* parentWindowHandle, const std::string& url,
                                        int width, int height, std::function<void(int64_t)> onCreated,
                                        std::function<void(const std::string&)> onTitleChange,
                                        std::function<void(bool)> onFocusTake) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initOk_) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefManager",
-            "createBrowser: CEF not initialized, url=%{public}s size=%{public}dx%{public}d", url.c_str(), width, height);
+            "CreateBrowser: CEF not initialized, url=%{public}s size=%{public}dx%{public}d", url.c_str(), width, height);
         return -1;
     }
 
@@ -133,12 +133,12 @@ int64_t ArkUICefManager::createBrowser(Node* parentWindowHandle, const std::stri
     browser->SetTitleCallback(onTitleChange);
     browser->SetFocusTakeCallback(onFocusTake);
     CefRefPtr<ArkUICefClient> client = new ArkUICefClient(id, browser, this);
-    CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::createBrowser, browser,
+    CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::CreateBrowser, browser,
                                                             client, parentWindowHandle, url)));
     return id;
 }
 
-int64_t ArkUICefManager::createOsrBrowser(const std::string& url, int width, int height,
+int64_t ArkUICefManager::CreateOsrBrowser(const std::string& url, int width, int height,
                                           PaintCallback onPaint,
                                           std::function<void(int64_t)> onCreated,
                                           std::function<void(const std::string&)> onTitleChange,
@@ -154,7 +154,7 @@ int64_t ArkUICefManager::createOsrBrowser(const std::string& url, int width, int
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initOk_) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefManager",
-            "createOsrBrowser: CEF not initialized, url=%{public}s size=%{public}dx%{public}d gpuSurfaceId=%{public}llu",
+            "CreateOsrBrowser: CEF not initialized, url=%{public}s size=%{public}dx%{public}d gpuSurfaceId=%{public}llu",
             url.c_str(), width, height, static_cast<unsigned long long>(gpuSurfaceId));
         return -1;
     }
@@ -196,12 +196,12 @@ int64_t ArkUICefManager::createOsrBrowser(const std::string& url, int width, int
     // instance whose OnAfterCreated has not fired yet.
     browsers_.emplace(id, browser);
     // OSR mode needs no parent window; pass nullptr.
-    CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::createBrowser, browser,
+    CefPostTask(TID_UI, CefCreateClosureTask(base::BindOnce(&ArkUICefBrowser::CreateBrowser, browser,
                                                             client, (Node*)nullptr, url)));
     return id;
 }
 
-void ArkUICefManager::destroyBrowser(int64_t id) {
+void ArkUICefManager::DestroyBrowser(int64_t id) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initOk_) {
         return;
@@ -221,49 +221,49 @@ void ArkUICefManager::destroyBrowser(int64_t id) {
     }
 }
 
-CefRefPtr<ArkUICefBrowser> ArkUICefManager::getBrowser(int64_t id) {
+CefRefPtr<ArkUICefBrowser> ArkUICefManager::GetBrowser(int64_t id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = browsers_.find(id);
     if (it == browsers_.end()) {
         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefManager", 
-        "getBrowser: not found id=%{public}ld.", id);
+        "GetBrowser: not found id=%{public}ld.", id);
         return nullptr;
     }
     return it->second;
 }
 
-CefRefPtr<ArkUICefRenderHandler> ArkUICefManager::getRenderHandler(int64_t id) {
+CefRefPtr<ArkUICefRenderHandler> ArkUICefManager::GetRenderHandler(int64_t id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = browsers_.find(id);
     if (it == browsers_.end()) {
         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefManager",
-            "getRenderHandler: browser not found id=%{public}ld", id);
+            "GetRenderHandler: browser not found id=%{public}ld", id);
         return nullptr;
     }
-    CefRefPtr<ArkUICefClient> client = it->second->getClient();
+    CefRefPtr<ArkUICefClient> client = it->second->GetClient();
     if (!client) {
         OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefManager",
-            "getRenderHandler: browser has no client id=%{public}ld", id);
+            "GetRenderHandler: browser has no client id=%{public}ld", id);
         return nullptr;
     }
     return client->GetArkUICefRenderHandler();
 }
 
-bool ArkUICefManager::hasBrowser(int64_t id) {
+bool ArkUICefManager::HasBrowser(int64_t id) {
     std::lock_guard<std::mutex> lock(mutex_);
     return browsers_.find(id) != browsers_.end();
 }
 
-void ArkUICefManager::onBrowserCreated(CefRefPtr<ArkUICefBrowser> browser) {
+void ArkUICefManager::OnBrowserCreated(CefRefPtr<ArkUICefBrowser> browser) {
     std::lock_guard<std::mutex> lock(mutex_);
-    browsers_.emplace(browser->getId(), browser);
+    browsers_.emplace(browser->GetId(), browser);
 }
 
-void ArkUICefManager::onBrowserDestroyed(CefRefPtr<ArkUICefBrowser> browser) {
+void ArkUICefManager::OnBrowserDestroyed(CefRefPtr<ArkUICefBrowser> browser) {
     bool shouldQuit = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        browsers_.erase(browser->getId());
+        browsers_.erase(browser->GetId());
         // Quit the message loop only during a full shutdown (stop() requested)
         // AND only after the LAST browser closed. This callback runs on the
         // CEF UI thread, which is the thread CefQuitMessageLoop must be

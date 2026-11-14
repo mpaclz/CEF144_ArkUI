@@ -56,8 +56,8 @@ void ArkUICefClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     
     if (arkui_cef_id_ < 0) {
         arkui_cef_id_ = browser->GetIdentifier();
-        browser_->onBrowserCreated(browser);
-        delegate_->onBrowserCreated(browser_);
+        browser_->OnBrowserCreated(browser);
+        delegate_->OnBrowserCreated(browser_);
     } else {
         ArkUICefManager::getInstance().NotifyPopupBrowserCreated(browser->GetIdentifier());
     }
@@ -76,8 +76,8 @@ void ArkUICefClient::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefClient", 
         "OnBeforeClose: browser_id=%{public}d", browser->GetIdentifier());
     
-    browser_->onBrowserClosed();
-    delegate_->onBrowserDestroyed(browser_);
+    browser_->OnBrowserClosed();
+    delegate_->OnBrowserDestroyed(browser_);
 }
 
 void ArkUICefClient::OnLoadError(CefRefPtr<CefBrowser> browser,

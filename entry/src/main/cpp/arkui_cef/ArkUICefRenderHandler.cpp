@@ -460,6 +460,12 @@ void ArkUICefRenderHandler::OnImeCompositionRangeChanged(
     CefRefPtr<CefBrowser> browser,
     const CefRange& selected_range,
     const RectList& character_bounds) {
+    // Probe (M8 root cause): entry log BEFORE the empty() guard, to separate
+    // "libcef never calls the handler" from "called with empty bounds".
+    OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRH",
+        "OnImeCompositionRangeChanged: bounds=%{public}zu sel=[%{public}u,%{public}u] cb=%{public}d",
+        character_bounds.size(), selected_range.from, selected_range.to,
+        imeCursorCallback_ ? 1 : 0);
     if (character_bounds.empty()) {
         return;
     }

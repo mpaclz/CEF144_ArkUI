@@ -4,8 +4,8 @@
 // Node APIs are not fully supported. To solve the compilation error of the interface cannot be found,
 // please include "napi/native_api.h".
 
-#ifndef OPENQTCEF_ARKUICEFMANAGER_H
-#define OPENQTCEF_ARKUICEFMANAGER_H
+#ifndef ARKUI_CEF_MANAGER_H
+#define ARKUI_CEF_MANAGER_H
 
 #include <atomic>
 #include <condition_variable>
@@ -41,7 +41,7 @@ public:
     
     /**
      * @brief 启动 CEF 框架，创建独立的 CEF 工作线程
-     * @note 调用后 CEF 将在后台线程初始化，完成前 isCefRunning() 返回 false
+     * @note 调用后 CEF 将在后台线程初始化，完成前 IsCefRunning() 返回 false
      */
     void start();
     
@@ -55,7 +55,7 @@ public:
      * @brief 查询 CEF 框架是否已就绪
      * @return true=CEF 已初始化完成，可以创建浏览器；false=未就绪或已停止
      */
-    bool isCefRunning();
+    bool IsCefRunning();
     
     /**
      * @brief 创建浏览器实例
@@ -67,7 +67,7 @@ public:
      * @return 浏览器 ID（>0 成功，-1 失败）
      * @note 若 CEF 未就绪返回 -1。浏览器创建是异步的，返回 ID 时浏览器可能尚未创建完成。
      */
-    int64_t createBrowser(Node* parentWindowHandle, const std::string& url,
+    int64_t CreateBrowser(Node* parentWindowHandle, const std::string& url,
                           int width, int height, std::function<void(int64_t)> onCreated,
                           std::function<void(const std::string&)> onTitleChange,
                           std::function<void(bool)> onFocusTake);
@@ -83,7 +83,7 @@ public:
      * @param onFocusTake 焦点离开回调
      * @return 浏览器 ID（>0 成功，-1 失败）
      */
-    int64_t createOsrBrowser(const std::string& url, int width, int height,
+    int64_t CreateOsrBrowser(const std::string& url, int width, int height,
                              PaintCallback onPaint,
                              std::function<void(int64_t)> onCreated,
                              std::function<void(const std::string&)> onTitleChange,
@@ -102,28 +102,28 @@ public:
      * @param id 浏览器 ID
      * @note 销毁是异步的，实际关闭在 CEF UI 线程完成
      */
-    void destroyBrowser(int64_t id);
+    void DestroyBrowser(int64_t id);
     
     /**
      * @brief 获取浏览器引用
      * @param id 浏览器 ID
      * @return 浏览器引用，若不存在返回 nullptr
      */
-    CefRefPtr<ArkUICefBrowser> getBrowser(int64_t id);
+    CefRefPtr<ArkUICefBrowser> GetBrowser(int64_t id);
 
     /**
      * @brief 获取 OSR 浲览器的渲染处理器（帧消费入口）
      * @param id 浏览器 ID
      * @return 渲染处理器，浏览器不存在或非 OSR 模式时返回 nullptr
      */
-    CefRefPtr<ArkUICefRenderHandler> getRenderHandler(int64_t id);
+    CefRefPtr<ArkUICefRenderHandler> GetRenderHandler(int64_t id);
     
     /**
      * @brief 检查浏览器是否存在
      * @param id 浏览器 ID
      * @return true=存在，false=不存在
      */
-    bool hasBrowser(int64_t id);
+    bool HasBrowser(int64_t id);
 
     /**
      * @brief 为指定弹窗浏览器注册标题变更回调
@@ -163,13 +163,13 @@ public:
      * @brief 浏览器创建完成回调
      * @param browser 新创建的浏览器
      */
-    void onBrowserCreated(CefRefPtr<ArkUICefBrowser> browser) override;
+    void OnBrowserCreated(CefRefPtr<ArkUICefBrowser> browser) override;
     
     /**
      * @brief 浏览器销毁完成回调
      * @param browser 被销毁的浏览器
      */
-    void onBrowserDestroyed(CefRefPtr<ArkUICefBrowser> browser) override;
+    void OnBrowserDestroyed(CefRefPtr<ArkUICefBrowser> browser) override;
     
 private:
     /** @brief 构造函数（私有，单例模式） */
@@ -203,4 +203,4 @@ private:
     std::function<void(int)> popupBrowserCreatedCallback_;                                ///< Popup browser creation callback
 };
 } // namespace arkui_cef
-#endif //OPENQTCEF_ARKUICEFMANAGER_H
+#endif //ARKUI_CEF_MANAGER_H

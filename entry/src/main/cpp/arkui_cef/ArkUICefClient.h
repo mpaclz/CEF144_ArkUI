@@ -25,13 +25,13 @@ public:
      * @brief 浏览器创建完成回调
      * @param browser 新创建的浏览器实例
      */
-    virtual void onBrowserCreated(CefRefPtr<ArkUICefBrowser> browser) = 0;
+    virtual void OnBrowserCreated(CefRefPtr<ArkUICefBrowser> browser) = 0;
     
     /**
      * @brief 浏览器销毁完成回调
      * @param browser 被销毁的浏览器实例
      */
-    virtual void onBrowserDestroyed(CefRefPtr<ArkUICefBrowser> browser) = 0;
+    virtual void OnBrowserDestroyed(CefRefPtr<ArkUICefBrowser> browser) = 0;
 };
 
 /**

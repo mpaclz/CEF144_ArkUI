@@ -26,7 +26,7 @@ public:
     ArkUICefInputMethod();
     ~ArkUICefInputMethod();
 
-    bool attach(bool showKeyboard, int32_t windowId,
+    bool attach(bool ShowKeyboard, int32_t windowId,
                 double cursorLeft, double cursorTop,
                 double cursorWidth, double cursorHeight,
                 const ImeEventCallbacks& callbacks);
@@ -42,12 +42,12 @@ public:
     // session + show/hide removes that race window entirely. Returns false
     // (IME_ERR_DETACHED) when the session died — the caller self-heals by
     // re-attaching.
-    bool showKeyboard();
-    bool hideKeyboard();
+    bool ShowKeyboard();
+    bool HideKeyboard();
 
-    bool updateCursor(double left, double top, double width, double height);
+    bool UpdateCursor(double left, double top, double width, double height);
 
-    bool isAttached() const { return is_attached_; }
+    bool IsAttached() const { return is_attached_; }
 
 private:
     static void GetTextConfigFunc(InputMethod_TextEditorProxy* proxy,
@@ -73,7 +73,7 @@ private:
     static int32_t GetTextIndexAtCursorFunc(InputMethod_TextEditorProxy* proxy);
     static int ReceivePrivateCommandFunc(InputMethod_TextEditorProxy* proxy, InputMethod_PrivateCommand* privateCommand[], size_t size);
 
-    void releaseResources();
+    void ReleaseResources();
 
     InputMethod_TextEditorProxy* text_editor_proxy_ = nullptr;
     InputMethod_AttachOptions* attach_options_ = nullptr;
