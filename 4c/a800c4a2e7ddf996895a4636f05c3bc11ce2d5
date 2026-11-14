@@ -1,0 +1,58 @@
+entry/src/main/cpp/CMakeLists.txt
+  h_ae917a57683699 84-87,93,116-118
+entry/src/main/cpp/arkui_cef/ArkUICefApp.cpp
+  h_ae917a57683699 3-4,21-35,59,63-68,72-83
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.cpp
+  h_ae917a57683699 6,32-38,41,65,74-85,87,96,98-102,107-111,318-347,576-579,584-592
+entry/src/main/cpp/arkui_cef/ArkUICefBrowser.h
+  h_ae917a57683699 10-11,172-185,276-282,339-343
+entry/src/main/cpp/arkui_cef/ArkUICefGpuPresenter.cpp
+  h_ae917a57683699 1-496
+entry/src/main/cpp/arkui_cef/ArkUICefGpuPresenter.h
+  h_ae917a57683699 1-110
+entry/src/main/cpp/arkui_cef/ArkUICefInputMethod.cpp
+  h_ae917a57683699 198-199,205,212-213,226-227
+entry/src/main/cpp/arkui_cef/ArkUICefManager.cpp
+  h_ae917a57683699 9-11,14,123-124,150-151,154-156,160-169,173,179-180,193-194,214-215,235-236,241-242
+entry/src/main/cpp/arkui_cef/ArkUICefManager.h
+  h_ae917a57683699 97-98
+entry/src/main/cpp/arkui_cef/ArkUICefRenderHandler.cpp
+  h_ae917a57683699 36,42,88-95,302-307,375,388-390,395,405-420
+entry/src/main/cpp/arkui_cef/ArkUICefRenderHandler.h
+  h_ae917a57683699 9-10,75-77,140
+entry/src/main/cpp/include/cef/include/internal/cef_types_linux.h
+  h_ae917a57683699 212-218
+entry/src/main/cpp/napi_init.cpp
+  h_ae917a57683699 14,251,256,370-371,514-517,522-524,526,528,530-533,927,1842-1843,1848,1850,1864-1908,2031-2040,2060-2061,2072-2076,2718-2740,3976
+entry/src/main/cpp/types/libarkui_cef/Index.d.ts
+  h_ae917a57683699 25-28,36-41,60
+entry/src/main/ets/components/OsrCefView.ets
+  h_ae917a57683699 21-23,240-246,287-288,291-309,328-337,344,346-351,356-359,383,388-392,410-412,482-490,563-565,567,671-676,1090,1102-1105,1107-1110,1218,1222,1225-1230,1237-1271,1275-1286,1289-1296,1317-1325,1334,1343-1403,2552,2664
+entry/src/main/ets/pages/BrowserTabsPage.ets
+  h_ae917a57683699 6-19,23-46,48-53,55-57,59-86,88-100,102-139,141-155,157-170,172-175,177,179-180,183-184,186,192-193
+entry/src/main/ets/pages/TearOffPage.ets
+  h_ae917a57683699 74-76
+entry/src/main/resources/resfile/ufo_fixed_test.html
+  h_ae917a57683699 1-447
+entry/src/ohosTest/ets/test/ImeTest.test.ets
+  h_ae917a57683699 1-522
+entry/src/test/ImeTypes.test.ets
+  h_ae917a57683699 1-126
+sign/OpenHarmonyApplication.pem
+  h_ae917a57683699 1-45
+sign/profile-template.json
+  h_ae917a57683699 1-36
+tools/ufo_detector_test/ufo_detector.test.mjs
+  h_ae917a57683699 1-234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "4ca800c4a2e7ddf996895a4636f05c3bc11ce2d5",
+  "prompts": {},
+  "humans": {
+    "h_ae917a57683699": {
+      "author": "zhaomangguo <zhaoyinxing221@outlook.com>"
+    }
+  }
+}
