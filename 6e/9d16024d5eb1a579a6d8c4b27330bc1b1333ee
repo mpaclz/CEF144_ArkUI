@@ -1,0 +1,14 @@
+entry/src/main/ets/pages/BrowserTabsPage.ets
+  h_7a43ad329963da 92-93,95-98,100,110-118,121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "6e9d16024d5eb1a579a6d8c4b27330bc1b1333ee",
+  "prompts": {},
+  "humans": {
+    "h_7a43ad329963da": {
+      "author": "loveacat <zhaoyinxing@huawei.com>"
+    }
+  }
+}
