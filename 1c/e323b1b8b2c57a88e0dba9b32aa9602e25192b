@@ -1,0 +1,26 @@
+entry/src/main/cpp/arkui_cef/ArkUICefApp.cpp
+  h_ae917a57683699 47-48,51,55
+entry/src/main/cpp/arkui_cef/ArkUICefGpuPresenter.cpp
+  h_ae917a57683699 72,358-359,461-462
+entry/src/main/cpp/arkui_cef/ArkUICefInputMethod.cpp
+  h_ae917a57683699 205
+entry/src/main/cpp/arkui_cef/ArkUICefManager.cpp
+  h_ae917a57683699 164
+entry/src/main/cpp/arkui_cef/ArkUICefRenderHandler.cpp
+  h_ae917a57683699 90-91,305
+entry/src/main/cpp/napi_init.cpp
+  h_ae917a57683699 251,256,370-371,923
+entry/src/main/ets/components/OsrCefView.ets
+  h_ae917a57683699 1085,2659
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "1ce323b1b8b2c57a88e0dba9b32aa9602e25192b",
+  "prompts": {},
+  "humans": {
+    "h_ae917a57683699": {
+      "author": "zhaomangguo <zhaoyinxing221@outlook.com>"
+    }
+  }
+}
