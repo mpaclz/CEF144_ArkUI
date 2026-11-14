@@ -20,3 +20,4 @@
 # (libcef md5 9bddec7d..., libadapter md5 196809db...).
 entry/libs/arm64-v8a/libcef.so
 entry/libs/arm64-v8a/libadapter.so
+ohos_tools/temp/
