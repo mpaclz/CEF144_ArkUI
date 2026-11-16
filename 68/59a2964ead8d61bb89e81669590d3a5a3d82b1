@@ -1,0 +1,28 @@
+entry/src/main/resources/resfile/ufo_fixed_test.html
+  s_4c3607e3d32101::t_fad9a1c2f2a4f0 422-434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "6859a2964ead8d61bb89e81669590d3a5a3d82b1",
+  "prompts": {},
+  "humans": {
+    "h_68854496d881b1": {
+      "author": "zhangmeiping <zhangmeiping1@huawei.com>"
+    }
+  },
+  "sessions": {
+    "s_4c3607e3d32101": {
+      "agent_id": {
+        "tool": "workbuddy",
+        "id": "ede7b2a3-dd5f-4e3f-baa1-3719cdda27a2",
+        "model": "qwen3.8-max"
+      },
+      "human_author": "zhangmeiping <zhangmeiping1@huawei.com>",
+      "custom_attributes": {
+        "stats_models": {"qwen3.8-max":{"additions":13}},
+        "stats_total_additions": 13
+      }
+    }
+  }
+}
