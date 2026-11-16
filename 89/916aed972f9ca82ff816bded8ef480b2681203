@@ -1,0 +1,24 @@
+entry/src/main/ets/common/DragOutSession.ets
+  h_ae917a57683699 3,11-20,82-103,184-205,219-244,263-268,340-387,395-396,403-408,411-443,452-481,490-491,493-501,505-508,511,513,744-754,772-779,844-855,859-916,964-972,1024-1034
+entry/src/main/ets/components/BrowserView.ets
+  h_ae917a57683699 16-20,161-165
+entry/src/main/ets/components/CefView.ets
+  h_ae917a57683699 554-630
+entry/src/main/ets/components/OsrCefView.ets
+  h_ae917a57683699 323-327,1387-1391,2478-2554,2695-2704
+entry/src/main/ets/pages/BrowserTabsPage.ets
+  h_ae917a57683699 4-14,18-25,32-46,52-59,62,65,68,71,74,80,86-113,123-448,452,460-465,469-489,493-561,563,565-573,575-576,579-588,590,595-596,600,604-629,632-657,661,665-671
+entry/src/main/ets/pages/TearOffPage.ets
+  h_ae917a57683699 5,17-26,34-37,39-45,52-61,81-202,205-230,236,256-257,267,290-292
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "89916aed972f9ca82ff816bded8ef480b2681203",
+  "prompts": {},
+  "humans": {
+    "h_ae917a57683699": {
+      "author": "zhaomangguo <zhaoyinxing221@outlook.com>"
+    }
+  }
+}
