@@ -1,0 +1,44 @@
+entry/src/main/ets/components/OsrCefView.ets
+  s_8e3bbbee3120da::t_83e7e507ad6515 1031-1036
+  s_8e3bbbee3120da::t_997172c55576b0 307
+  s_8e3bbbee3120da::t_dd6ee39f618871 335-336
+  s_8e3bbbee3120da::t_8093fcf51d5b84 973-976
+  s_8e3bbbee3120da::t_86015b1bab2449 1006-1010
+  s_8e3bbbee3120da::t_c236a30f32242f 5,931
+entry/src/main/ets/pages/BrowserTabsPage.ets
+  s_8e3bbbee3120da::t_5aa2637620644f 46
+  s_8e3bbbee3120da::t_1563075350b77d 146,158
+  s_8e3bbbee3120da::t_4488130e2722da 34,37
+entry/src/main/cpp/napi_init.cpp
+  s_8e3bbbee3120da::t_35be4083078376 609-611,854-858,1057,1158,1192,1197,2452,2460,2462-2469,2841
+entry/src/main/ets/components/CefView.ets
+  s_8e3bbbee3120da::t_7625e6741e8628 2,4
+entry/src/main/resources/base/profile/main_pages.json
+  s_8e3bbbee3120da::t_46cfc943e1720a 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "cbe8de78ffbdd10270b19e58ff536c9f62080c2b",
+  "prompts": {},
+  "humans": {
+    "h_68854496d881b1": {
+      "author": "zhangmeiping <zhangmeiping1@huawei.com>"
+    }
+  },
+  "sessions": {
+    "s_8e3bbbee3120da": {
+      "agent_id": {
+        "tool": "workbuddy",
+        "id": "f8443add-dc98-437f-af07-10cbdd805953",
+        "model": "qwen3.8-max"
+      },
+      "human_author": "zhangmeiping <zhangmeiping1@huawei.com>",
+      "custom_attributes": {
+        "stats_models": {"custom-local:qwen3.8-max":{"deletions":28,"traces":["t_01efa3bedec3f5","t_c4568f6563b2f4"]},"qwen3.8-max":{"additions":25,"deletions":438}},
+        "stats_total_additions": 25,
+        "stats_total_deletions": 466
+      }
+    }
+  }
+}
