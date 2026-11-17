@@ -147,7 +147,6 @@ int64_t ArkUICefManager::CreateOsrBrowser(const std::string& url, int width, int
                                           VirtualKeyboardCallback onVirtualKeyboard,
                                           TextSelectionCallback onTextSelection,
                                           CursorChangeCallback onCursorChange,
-                                          ImeCursorCallback onImeCursor,
                                           StartDragCallback onStartDrag,
                                           UpdateDragCursorCallback onUpdateDragCursor,
                                           uint64_t gpuSurfaceId) {
@@ -183,7 +182,6 @@ int64_t ArkUICefManager::CreateOsrBrowser(const std::string& url, int width, int
     if (onScrollOffset) renderHandler->SetScrollOffsetCallback(onScrollOffset);
     if (onVirtualKeyboard) renderHandler->SetVirtualKeyboardCallback(onVirtualKeyboard);
     if (onTextSelection) renderHandler->SetTextSelectionCallback(onTextSelection);
-    if (onImeCursor) renderHandler->SetImeCursorCallback(onImeCursor);
     if (onStartDrag) renderHandler->SetStartDragCallback(onStartDrag);
     if (onUpdateDragCursor) renderHandler->SetUpdateDragCursorCallback(onUpdateDragCursor);
     if (onCursorChange) browser->SetCursorChangeCallback(onCursorChange);

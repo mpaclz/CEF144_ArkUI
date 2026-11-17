@@ -1422,15 +1422,15 @@ static napi_value NAPI_Global_hasCef(napi_env env, napi_callback_info info) {
 }
 
 static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info info) {
-    size_t argc = 15;
-    napi_value args[15] = {};
+    size_t argc = 14;
+    napi_value args[14] = {};
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
     if (argc < 7) {
         OH_LOG_Print(LOG_APP, LOG_ERROR, LOG_PRINT_DOMAIN, "napi",
-            "createOsrCefView: expected 7-15 arguments, got %{public}zu", argc);
+            "createOsrCefView: expected 7-14 arguments, got %{public}zu", argc);
         napi_throw_error(env, nullptr,
-            "Expected 7-15 arguments: url, width, height, onPaint, onCreated, onTitleChange, onFocusTake [, onScrollOffset, onVirtualKeyboard, onTextSelection, onCursorChange, onImeCursor, onStartDrag, onUpdateDragCursor, options]");
+            "Expected 7-14 arguments: url, width, height, onPaint, onCreated, onTitleChange, onFocusTake [, onScrollOffset, onVirtualKeyboard, onTextSelection, onCursorChange, onStartDrag, onUpdateDragCursor, options]");
         return nullptr;
     }
 
@@ -1445,17 +1445,17 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
     napi_get_value_int32(env, args[2], &height);
 
     uint64_t gpuSurfaceId = 0;
-    // GPU options object is the LAST parameter (index 14), after all
-    // optional callbacks (7-13). Callers that pass options must pass every
+    // GPU options object is the LAST parameter (index 13), after all
+    // optional callbacks (7-12). Callers that pass options must pass every
     // callback slot (the GPU branch in ArkTS sends undefined placeholders).
-    if (argc >= 15) {
+    if (argc >= 14) {
         napi_value surfaceValue;
         napi_valuetype optionsType = napi_undefined;
         napi_valuetype surfaceType = napi_undefined;
         size_t length = 0;
         char surfaceId[21] = {};
-        if (napi_typeof(env, args[14], &optionsType) != napi_ok || optionsType != napi_object ||
-            napi_get_named_property(env, args[14], "surfaceId", &surfaceValue) != napi_ok ||
+        if (napi_typeof(env, args[13], &optionsType) != napi_ok || optionsType != napi_object ||
+            napi_get_named_property(env, args[13], "surfaceId", &surfaceValue) != napi_ok ||
             napi_typeof(env, surfaceValue, &surfaceType) != napi_ok || surfaceType != napi_string ||
             napi_get_value_string_utf8(env, surfaceValue, nullptr, 0, &length) != napi_ok ||
             length == 0 || length > 20 ||
@@ -1557,29 +1557,13 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
         }
     }
 
-    std::function<void(int, int, int, int)> imeCursorCb;
+    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, const std::string&, const std::vector<uint8_t>&, int, int)> startDragCb;
     if (argc >= 12) {
         napi_valuetype vt;
         napi_typeof(env, args[11], &vt);
         if (vt == napi_function) {
-            auto jsImeCursorCb = makeJsThreadSafeCallback<int32_t, int32_t, int32_t, int32_t>(
-                env, args[11], "OsrImeCursorCallback");
-            if (jsImeCursorCb) {
-                imeCursorCb = [jsImeCursorCb](int left, int top, int width, int height) {
-                    jsImeCursorCb->Call(static_cast<int32_t>(left), static_cast<int32_t>(top),
-                                        static_cast<int32_t>(width), static_cast<int32_t>(height));
-                };
-            }
-        }
-    }
-
-    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, const std::string&, const std::vector<uint8_t>&, int, int)> startDragCb;
-    if (argc >= 13) {
-        napi_valuetype vt;
-        napi_typeof(env, args[12], &vt);
-        if (vt == napi_function) {
             auto startDragTsfn = std::make_shared<OsrStartDragTsfn>();
-            if (startDragTsfn->Init(env, args[12], "OsrStartDragCallback")) {
+            if (startDragTsfn->Init(env, args[11], "OsrStartDragCallback")) {
                 startDragCb = [startDragTsfn](const std::string& text, const std::string& html,
                                                const std::string& url, const std::string& urlTitle,
                                                const std::string& fileName, const std::vector<uint8_t>& fileData,
@@ -1591,12 +1575,12 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
     }
 
     std::function<void(int)> updateDragCursorCb;
-    if (argc >= 14) {
+    if (argc >= 13) {
         napi_valuetype vt;
-        napi_typeof(env, args[13], &vt);
+        napi_typeof(env, args[12], &vt);
         if (vt == napi_function) {
             auto jsUpdateDragCursorCb = makeJsThreadSafeCallback<int32_t>(
-                env, args[13], "OsrUpdateDragCursorCallback");
+                env, args[12], "OsrUpdateDragCursorCallback");
             if (jsUpdateDragCursorCb) {
                 updateDragCursorCb = [jsUpdateDragCursorCb](int operation) {
                     jsUpdateDragCursorCb->Call(static_cast<int32_t>(operation));
@@ -1639,7 +1623,6 @@ static napi_value NAPI_Global_createOsrCefView(napi_env env, napi_callback_info 
         virtualKeyboardCb,
         textSelectionCb,
         cursorChangeCb,
-        imeCursorCb,
         startDragCb,
         updateDragCursorCb,
         gpuSurfaceId);
@@ -2643,31 +2626,6 @@ static napi_value NAPI_Global_cefImeCAttach(napi_env env, napi_callback_info inf
     return result;
 }
 
-static napi_value NAPI_Global_cefImeCUpdateCursor(napi_env env, napi_callback_info info) {
-    size_t argc = 4;
-    napi_value args[4] = { nullptr };
-    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    if (argc < 4) {
-        napi_throw_error(env, nullptr, "Expected 4 args: left, top, width, height");
-        return nullptr;
-    }
-
-    double left = 0, top = 0, width = 0, height = 0;
-    napi_get_value_double(env, args[0], &left);
-    napi_get_value_double(env, args[1], &top);
-    napi_get_value_double(env, args[2], &width);
-    napi_get_value_double(env, args[3], &height);
-
-    bool ok = false;
-    if (g_imeCApi) {
-        ok = g_imeCApi->UpdateCursor(left, top, width, height);
-    }
-
-    napi_value result;
-    napi_get_boolean(env, ok, &result);
-    return result;
-}
-
 static napi_value NAPI_Global_cefImeCDetach(napi_env env, napi_callback_info info) {
     if (g_imeCApi) {
         g_imeCApi->detach();
@@ -2906,7 +2864,6 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"registerOsrKeyFilter", nullptr, NAPI_Global_registerOsrKeyFilter, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setRenderAreaActive", nullptr, NAPI_Global_setRenderAreaActive, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefImeCAttach", nullptr, NAPI_Global_cefImeCAttach, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"cefImeCUpdateCursor", nullptr, NAPI_Global_cefImeCUpdateCursor, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefImeCDetach", nullptr, NAPI_Global_cefImeCDetach, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefImeCShowKeyboard", nullptr, NAPI_Global_cefImeCShowKeyboard, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefImeCHideKeyboard", nullptr, NAPI_Global_cefImeCHideKeyboard, nullptr, nullptr, nullptr, napi_default, nullptr},

@@ -33,10 +33,9 @@ export const createOsrCefView: (url: string, width: number, height: number,
                                  onVirtualKeyboard?: (show: boolean) => void,
                                  onTextSelection?: (selectedText: string) => void,
                                  onCursorChange?: (cursorType: number) => void,
-                                 onImeCursor?: (left: number, top: number, width: number, height: number) => void,
                                  onStartDrag?: (text: string, html: string, url: string, urlTitle: string, fileName: string, fileData: ArrayBuffer, x: number, y: number) => void,
                                  onUpdateDragCursor?: (operation: number) => void,
-                                 // GPU options (last parameter, index 14): set only
+                                 // GPU options (last parameter, index 13): set only
                                  // for gpuEnabled views.
                                  options?: { surfaceId: string }) => number;
 export const destroyOsrCefView: (browserId: number) => void;
@@ -73,7 +72,6 @@ export const cefImeCAttach: (
   onSetPreviewText: (text: string) => void,
   onFinishTextPreview: () => void
 ) => boolean;
-export const cefImeCUpdateCursor: (left: number, top: number, width: number, height: number) => boolean;
 export const cefImeCDetach: () => void;
 export const cefImeCShowKeyboard: () => boolean;
 export const cefImeCHideKeyboard: () => boolean;

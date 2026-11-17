@@ -92,7 +92,6 @@ public:
                              VirtualKeyboardCallback onVirtualKeyboard = nullptr,
                              TextSelectionCallback onTextSelection = nullptr,
                              CursorChangeCallback onCursorChange = nullptr,
-                             ImeCursorCallback onImeCursor = nullptr,
                              StartDragCallback onStartDrag = nullptr,
                              UpdateDragCursorCallback onUpdateDragCursor = nullptr,
                              uint64_t gpuSurfaceId = 0);

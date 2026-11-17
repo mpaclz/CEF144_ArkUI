@@ -168,15 +168,6 @@ export struct OsrCefView {
   // Cached window object — used to get windowRect (window's screen position)
   // via the synchronous getWindowProperties() API.
   private cachedWin: window.Window | null = null;
-  // Last caret position in window-relative px (from C++ onImeCompositionRangeChanged).
-  private lastCaretWinLeft: number = 0;
-  private lastCaretWinTop: number = 0;
-  private lastCaretWidth: number = 2;
-  private lastCaretHeight: number = 24;
-  // True after onOsrImeCursor has fired at least once.
-  private hasCaretBounds: boolean = false;
-  private lastWinRectLeft: number = 0;
-  private lastWinRectTop: number = 0;
   // Last input position (touch or mouse down) in vp, relative to the render
   // area component. Used to compute the initial IME cursor position when
   // attaching the input method.
@@ -1155,7 +1146,7 @@ export struct OsrCefView {
           // GPU mode: no CPU paint callback — frames stay on the native
           // presenter and never cross to ArkTS. Optional callback slots
           // before options are passed as undefined placeholders (the
-          // options object is the last parameter, index 14).
+          // options object is the last parameter, index 13).
           undefined,
           (newId: number) => { this.onOsrCreated(newId, generation); },
           (title: string) => { this.onOsrTitleChanged(title); },
@@ -1164,7 +1155,7 @@ export struct OsrCefView {
           (show: boolean) => { this.onOsrVirtualKeyboard(show); },
           (text: string) => { this.onOsrTextSelection(text); },
           (cursorType: number) => { this.onOsrCursorChange(cursorType); },
-          undefined, undefined, undefined,
+          undefined, undefined,
           { surfaceId: this.gpuSurfaceId })
       : arkui_cef.createOsrCefView(url, width, height,
           (regionData: ArrayBuffer | undefined, x: number, y: number, w: number, h: number,
@@ -1178,7 +1169,6 @@ export struct OsrCefView {
           (show: boolean) => { this.onOsrVirtualKeyboard(show); },
           (text: string) => { this.onOsrTextSelection(text); },
           (cursorType: number) => { this.onOsrCursorChange(cursorType); },
-          (left: number, top: number, w: number, h: number) => { this.onOsrImeCursor(left, top, w, h); },
           (text: string, html: string, durl: string, urlTitle: string, fileName: string, fileData: ArrayBuffer, x: number, y: number) => {
             this.onOsrStartDrag(text, html, durl, urlTitle, fileName, fileData, x, y);
           },
@@ -1361,15 +1351,6 @@ export struct OsrCefView {
               this.showImeKeyboardWithHeal();
             }
           }
-        }
-      });
-
-      // Refresh IME cursor when window position or size changes (e.g.,
-      // floating window drag). Using C API (synchronous NotifyCursorUpdate),
-      // no async second OnCursorUpdate issue. API 12+.
-      win.on('windowRectChange', (data: window.RectChangeOptions) => {
-        if (this.imeAttached) {
-          this.refreshImeCursor();
         }
       });
     } catch (e) {
@@ -1791,26 +1772,6 @@ export struct OsrCefView {
     }
   }
 
-  onOsrImeCursor(left: number, top: number, width: number, height: number): void {
-    this.lastCaretWinLeft = left;
-    this.lastCaretWinTop = top;
-    this.lastCaretWidth = width;
-    this.lastCaretHeight = height;
-    this.hasCaretBounds = true;
-
-    if (!this.isImeOwner()) {
-      return;
-    }
-
-    // Screen-absolute px = window-relative px + windowRect.left/top.
-    // C API OH_InputMethodProxy_NotifyCursorUpdate expects screen-absolute.
-    let winRect = this.getWindowRect();
-    let screenLeft = left + winRect.left;
-    let screenTop = top + winRect.top;
-
-    arkui_cef.cefImeCUpdateCursor(screenLeft, screenTop, width, height);
-  }
-
   private getWindowRect(): window.Rect {
     if (this.cachedWin) {
       try {
@@ -1821,10 +1782,6 @@ export struct OsrCefView {
     }
     let defaultRect: window.Rect = { left: 0, top: 0, width: 0, height: 0 };
     return defaultRect;
-  }
-
-  private applyImeCursor(left: number, top: number, width: number, height: number): void {
-    arkui_cef.cefImeCUpdateCursor(left, top, width, height);
   }
 
   // ==================== Drag & Drop ====================
@@ -2369,8 +2326,6 @@ export struct OsrCefView {
       hilog.warn(DOMAIN, MODULE, "IME show failed");
       this.detachInputMethod();
       this.attachInputMethod();
-    } else {
-      this.refreshImeCursor();
     }
   }
 
@@ -2462,8 +2417,6 @@ export struct OsrCefView {
 
     // Compute initial cursor position (screen-absolute px).
     let winRect = this.getWindowRect();
-    this.lastWinRectLeft = winRect.left;
-    this.lastWinRectTop = winRect.top;
     let cursorLeft = Math.round((this.lastInputX + this.componentGlobalX) * this.cachedDsf) + winRect.left;
     let cursorTop = Math.round((this.lastInputY + this.componentGlobalY) * this.cachedDsf) + winRect.top;
     let cursorHeight = Math.round(20 * this.cachedDsf);
@@ -2510,22 +2463,9 @@ export struct OsrCefView {
     if (ok) {
       this.imeAttached = true;
       hilog.info(DOMAIN, MODULE, "IME attached (C API) successfully");
-      this.refreshImeCursor();
     } else {
       hilog.error(DOMAIN, MODULE, "IME attach (C API) failed");
     }
-  }
-
-  private refreshImeCursor(): void {
-    if (!this.isImeOwner() || !this.hasCaretBounds) {
-      return;
-    }
-    let winRect = this.getWindowRect();
-    this.lastWinRectLeft = winRect.left;
-    this.lastWinRectTop = winRect.top;
-    let screenLeft = this.lastCaretWinLeft + winRect.left;
-    let screenTop = this.lastCaretWinTop + winRect.top;
-    this.applyImeCursor(screenLeft, screenTop, this.lastCaretWidth, this.lastCaretHeight);
   }
 
   private detachInputMethod(): void {

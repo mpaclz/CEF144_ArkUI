@@ -32,7 +32,6 @@ using ScrollOffsetCallback = std::function<void(double x, double y)>;
 using VirtualKeyboardCallback = std::function<void(bool show)>;
 using TextSelectionCallback = std::function<void(const std::string& selected_text)>;
 using CursorChangeCallback = std::function<void(int cursorType)>;
-using ImeCursorCallback = std::function<void(int left, int top, int width, int height)>;
 using StartDragCallback = std::function<void(const std::string& text, const std::string& html, const std::string& url, const std::string& urlTitle, const std::string& fileName, const std::vector<uint8_t>& fileData, int x, int y)>;
 using UpdateDragCursorCallback = std::function<void(int operation)>;
 
@@ -78,7 +77,6 @@ public:
     void SetScrollOffsetCallback(ScrollOffsetCallback cb) { scrollOffsetCallback_ = std::move(cb); }
     void SetVirtualKeyboardCallback(VirtualKeyboardCallback cb) { virtualKeyboardCallback_ = std::move(cb); }
     void SetTextSelectionCallback(TextSelectionCallback cb) { textSelectionCallback_ = std::move(cb); }
-    void SetImeCursorCallback(ImeCursorCallback cb) { imeCursorCallback_ = std::move(cb); }
     void SetStartDragCallback(StartDragCallback cb) { startDragCallback_ = std::move(cb); }
     void SetUpdateDragCursorCallback(UpdateDragCursorCallback cb) { updateDragCursorCallback_ = std::move(cb); }
 
@@ -161,7 +159,6 @@ private:
     ScrollOffsetCallback scrollOffsetCallback_;
     VirtualKeyboardCallback virtualKeyboardCallback_;
     TextSelectionCallback textSelectionCallback_;
-    ImeCursorCallback imeCursorCallback_;
     StartDragCallback startDragCallback_;
     UpdateDragCursorCallback updateDragCursorCallback_;
 };

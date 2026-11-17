@@ -223,45 +223,6 @@ bool ArkUICefInputMethod::HideKeyboard() {
     return res == IME_ERR_OK;
 }
 
-bool ArkUICefInputMethod::UpdateCursor(double left, double top, double width, double height) {
-    if (!is_attached_ || !input_method_proxy_) {
-        OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
-            "UpdateCursor: not attached (is_attached_=%{public}d proxy=%{public}d)", is_attached_, input_method_proxy_ != nullptr);
-        return false;
-    }
-
-    cursor_left_ = left;
-    cursor_top_ = top;
-    cursor_width_ = width;
-    cursor_height_ = height;
-
-    if (cursor_info_) {
-        OH_CursorInfo_Destroy(cursor_info_);
-    }
-    cursor_info_ = OH_CursorInfo_Create(left, top, width, height);
-    if (!cursor_info_) {
-        OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG, "UpdateCursor: OH_CursorInfo_Create failed");
-        return false;
-    }
-
-    InputMethod_ErrorCode res =
-        OH_InputMethodProxy_NotifyCursorUpdate(input_method_proxy_, cursor_info_);
-    if (res != IME_ERR_OK) {
-        OH_LOG_Print(LOG_APP, LOG_ERROR, IME_LOG_DOMAIN, TAG,
-            "UpdateCursor: NotifyCursorUpdate failed: %{public}d (left=%{public}.0f top=%{public}.0f)",
-            res, left, top);
-        return false;
-    }
-
-    // Probe (IME-POS group): success-path coordinates, pairs with ArkTS
-    // "IME cursor:" log to separate CEF-side errors from IMF placement.
-    OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG,
-        "UpdateCursor: sent screen=(%{public}.0f, %{public}.0f) size=(%{public}.0f x %{public}.0f) ok",
-        left, top, width, height);
-
-    return true;
-}
-
 // ==================== Static callback implementations ====================
 
 void ArkUICefInputMethod::GetTextConfigFunc(InputMethod_TextEditorProxy* proxy,

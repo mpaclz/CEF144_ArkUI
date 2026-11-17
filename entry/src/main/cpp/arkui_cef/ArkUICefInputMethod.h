@@ -45,8 +45,6 @@ public:
     bool ShowKeyboard();
     bool HideKeyboard();
 
-    bool UpdateCursor(double left, double top, double width, double height);
-
     bool IsAttached() const { return is_attached_; }
 
 private:
