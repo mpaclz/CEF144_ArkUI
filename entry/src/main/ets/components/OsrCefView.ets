@@ -803,10 +803,22 @@ export struct OsrCefView {
       if (this.keyboardVisible) {
         // CEF believed an input field was focused before the switch. The
         // focus restoration above may NOT re-fire VKR(true) (the renderer
-        // dedupes TextInputState changes), so recreate the session here —
-        // otherwise the visually focused input (blinking caret) is dead to
-        // the keyboard: no panel, no candidates, no text.
-        this.attachInputMethod();
+        // dedupes TextInputState changes), so the IMF session must be
+        // recreated here — otherwise the blinking caret sits over a dead
+        // keyboard (no panel, no candidates, no text).
+        //
+        // Defer past the Tabs switch animation: it drives a late ArkUI focus
+        // reshuffle whose ClearInputMethodProxy teardown lands ~300ms after
+        // activation and kills an immediately-attached session. Attaching at
+        // FOCUS_RETRY_DELAY_MS (> animationDuration) lands after that
+        // teardown; handleImeFocus()'s attach-or-heal self-corrects a stale
+        // imeAttached flag.
+        setTimeout(() => {
+          if (this.disposed || !this.tabActive) {
+            return;
+          }
+          this.handleImeFocus();
+        }, OsrCefView.FOCUS_RETRY_DELAY_MS);
       }
     } else {
       if (this.imeAttached && !this.urlInputFocused) {
