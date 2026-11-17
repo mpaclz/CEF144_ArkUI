@@ -1,0 +1,30 @@
+entry/src/main/ets/components/OsrCefView.ets
+  s_8e3bbbee3120da::t_db209f079e9205 806,809,816-821
+  s_8e3bbbee3120da::t_ddcfd64148755c 807-808,810-815
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "f719dde3dd68c62f09f6b7606bf6bf13718bd980",
+  "prompts": {},
+  "humans": {
+    "h_68854496d881b1": {
+      "author": "zhangmeiping <zhangmeiping1@huawei.com>"
+    }
+  },
+  "sessions": {
+    "s_8e3bbbee3120da": {
+      "agent_id": {
+        "tool": "workbuddy",
+        "id": "f8443add-dc98-437f-af07-10cbdd805953",
+        "model": "qwen3.8-max"
+      },
+      "human_author": "zhangmeiping <zhangmeiping1@huawei.com>",
+      "custom_attributes": {
+        "stats_models": {"qwen3.8-max":{"additions":28,"deletions":16}},
+        "stats_total_additions": 28,
+        "stats_total_deletions": 16
+      }
+    }
+  }
+}
