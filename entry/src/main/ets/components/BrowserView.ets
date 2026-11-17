@@ -1,6 +1,5 @@
 import { CefView } from './CefView'
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { getDragOutSession, DragOutInfo } from '../common/DragOutSession'
 
 const DOMAIN = 0xFF01;
 const MODULE = 'BrowserView'
@@ -146,12 +145,6 @@ export struct BrowserView {
             onCreatedCallback: (view) => {
             hilog.info(DOMAIN, MODULE, "CefView created, id: %{public}d", view.getBrowserId())
             this.cefView = view;
-            // Drag-out support: once triggered, the view handles
-            // capture-lost/hide/placeholder itself; the session drives the
-            // new window (adopt/follow/restore are all session-driven).
-            view.enableDragOut((info: DragOutInfo) => {
-              getDragOutSession().startDragOut(info);
-            });
           }}).width('100%').height('100%')
         }
 

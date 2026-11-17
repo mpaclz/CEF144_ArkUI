@@ -1,7 +1,6 @@
 import { BrowserView } from '../components/BrowserView'
 import { CefView } from '../components/CefView';
 import { OsrCefView } from '../components/OsrCefView';
-import { getDragOutSession, DragOutInfo } from '../common/DragOutSession';
 
 // ── Tab data source (registry + render source in one) ──────────────────
 // The TabDef array both drives TabContent rendering (ForEach index == Tabs
@@ -17,7 +16,6 @@ interface TabDef {
   label: string;
   url: string;
   uid: string;
-  dragOut?: boolean;
 }
 
 @Entry
@@ -33,10 +31,10 @@ struct MultiTabPage {
     { kind: 'cef', label: 'PDF', url: 'https://www.orimi.com/pdf-test.pdf', uid: '' },
     { kind: 'osr-cpu', label: 'OSR显示测试',
       url: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_display_test.html',
-      uid: 'osr-display', dragOut: true },
+      uid: 'osr-display' },
     { kind: 'osr-cpu', label: 'OSR输入测试',
       url: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_input_test.html',
-      uid: 'osr-input', dragOut: true },
+      uid: 'osr-input' },
     { kind: 'osr-gpu', label: 'GPU OSR测试',
       url: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_test.html',
       uid: 'osr-gpu' },
@@ -45,7 +43,7 @@ struct MultiTabPage {
       uid: 'osr-ufofix' },
     { kind: 'osr-cpu', label: 'OSR拖放测试',
       url: 'file:///data/storage/el1/bundle/entry/resources/resfile/osr_drag_test.html',
-      uid: 'osr-drag', dragOut: true },
+      uid: 'osr-drag' },
   ];
 
   // Active tab position (Tabs' own coordinate system: drives switching
@@ -145,19 +143,7 @@ struct MultiTabPage {
               }
             } else if (t.kind === 'cef') {
               Column() {
-                if (t.label === 'CefView') {
-                  CefView({
-                    viewUrl: t.url,
-                    onCreatedCallback: (view: CefView) => {
-                      // Drag-out support: same wiring as the BrowserView tab.
-                      view.enableDragOut((info: DragOutInfo) => {
-                        getDragOutSession().startDragOut(info);
-                      });
-                    }
-                  })
-                } else {
-                  CefView({ viewUrl: t.url })
-                }
+                CefView({ viewUrl: t.url })
               }
               .width('100%')
               .height('100%')
@@ -169,10 +155,7 @@ struct MultiTabPage {
                   viewUrl: t.url,
                   gpuEnabled: t.kind === 'osr-gpu',
                   viewUid: t.uid,
-                  activeUid: this.activeUid,
-                  onDragOutCallback: t.dragOut === true ? (info: DragOutInfo) => {
-                    getDragOutSession().startDragOut(info);
-                  } : undefined
+                  activeUid: this.activeUid
                 })
               }
               .width('100%')

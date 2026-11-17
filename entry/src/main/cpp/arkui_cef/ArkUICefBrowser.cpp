@@ -9,7 +9,6 @@
 #include "ArkUICefClient.h"
 #include "ArkUICefManager.h"
 #include "ArkUICefRenderHandler.h"
-#include "CefOhosReparentApi.h"
 #include "NodeHandle.h"
 
 namespace {
@@ -215,21 +214,14 @@ void ArkUICefBrowser::SetFrameRate(int frameRate) {
 }
 
 void ArkUICefBrowser::show() {
-    // Prefer the cached handle: after a reparent migration a live
-    // getWindowHandle() needs the CEF UI thread and may briefly return the
-    // old, already-freed handle (dangling). The cache is maintained by
-    // OnBrowserCreated / successful reparent; only fall back to a live query
-    // when the cache is missing.
-    Node* node = hostWindowHandle_ != nullptr ? hostWindowHandle_ : getWindowHandle();
+    Node* node = getWindowHandle();
     if (node) {
         arkui_cef::show(node->container);
     }
 }
 
 void ArkUICefBrowser::hide() {
-    // Same as show(): prefer the cached handle so a post-migration live
-    // query cannot return a freed stale handle.
-    Node* node = hostWindowHandle_ != nullptr ? hostWindowHandle_ : getWindowHandle();
+    Node* node = getWindowHandle();
     if (node) {
         arkui_cef::hide(node->container);
     }
@@ -535,53 +527,6 @@ ArkUICefBrowser::Node* ArkUICefBrowser::getWindowHandle() const {
     return reinterpret_cast<Node*>(browser_->GetHost()->GetWindowHandle());
 }
 
-int ArkUICefBrowser::reparent(Node* newParent, int width, int height) {
-    if (!browser_ || !browserCreated_ || browserClosing_) {
-        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "reparent: browser not ready, id=%{public}ld", id_);
-        return -2;
-    }
-    if (!newParent || width <= 0 || height <= 0) {
-        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "reparent: invalid args, id=%{public}ld, size=%{public}dx%{public}d",
-            id_, width, height);
-        return -1;
-    }
-    // Prefer the host handle cached by OnBrowserCreated (safe to read
-    // cross-thread); fall back to a live query only if the cache is empty.
-    Node* host = hostWindowHandle_ != nullptr ? hostWindowHandle_ : getWindowHandle();
-    if (host == nullptr) {
-        OH_LOG_Print(LOG_APP, LOG_WARN, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-            "reparent: no host window handle, id=%{public}ld", id_);
-        return -1;
-    }
-    // Out-param: on rc==0 the CEF side writes the new host handle (the old
-    // one is destroyed there).
-    void* newHandle = nullptr;
-    int rc = cef_ohos_reparent_browser_host(reinterpret_cast<void*>(host),
-                                            reinterpret_cast<void*>(newParent),
-                                            width, height, &newHandle);
-    OH_LOG_Print(LOG_APP, rc == 0 ? LOG_INFO : LOG_ERROR, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
-        "reparent: id=%{public}ld rc=%{public}d size=%{public}dx%{public}d",
-        id_, rc, width, height);
-    if (rc == 0) {
-        // Migration succeeded: refresh the cache to the new host handle (the
-        // old host node was destroyed on the CEF side, and a live
-        // GetWindowHandle() would need the CEF UI thread and could observe
-        // the mid-swap old value; later show/hide/reparent use this cache).
-        if (newHandle != nullptr) {
-            hostWindowHandle_ = reinterpret_cast<Node*>(newHandle);
-        } else {
-            // Theoretically unreachable (success implies the out-param was
-            // written); defensively clear it to fall back to a live query.
-            hostWindowHandle_ = nullptr;
-        }
-    }
-    // rc != 0 (including -3 unknown outcome): keep the cache as-is - no
-    // handle swap was observed.
-    return rc;
-}
-
 void ArkUICefBrowser::OnBrowserCreated(CefRefPtr<CefBrowser> browser) {
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefBrowser",
         "OnBrowserCreated: id=%{public}ld, identifier=%{public}d", id_, browser->GetIdentifier());
@@ -591,7 +536,6 @@ void ArkUICefBrowser::OnBrowserCreated(CefRefPtr<CefBrowser> browser) {
         browser_->GetHost()->CloseBrowser(true);
         return;
     }
-    hostWindowHandle_ = reinterpret_cast<Node*>(browser->GetHost()->GetWindowHandle());
     if (createCallback_) {
         createCallback_(id_);
     }

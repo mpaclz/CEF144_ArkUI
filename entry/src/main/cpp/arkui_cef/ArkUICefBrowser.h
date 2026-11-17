@@ -184,19 +184,6 @@ public:
     void SetWindowlessVisibility(bool visible);
 
     /**
-     * @brief 把当前浏览器宿主窗口迁移到新的父容器（网页拖出成新主窗）。
-     *        windowed 模式专用；转发给 cef_ohos_reparent_browser_host（CEF 侧
-     *        重建 Widget/宿主节点，同一 WebContents/页面状态保留）。
-     * @param newParent 新的父容器节点（napi 侧创建的 STACK 节点）
-     * @param width 新宿主窗口宽度（px）
-     * @param height 新宿主窗口高度（px）
-     * @return 转发 cef_ohos_reparent_browser_host 返回码（0 成功；-3 为结果
-     *         未知——迁移任务可能晚到并成功；其余负数为失败）
-     * @thread 任意线程可调（内部同步阻塞等待 CEF UI 线程，勿在 CEF UI 线程调用）
-     */
-    int reparent(Node* newParent, int width, int height);
-
-    /**
      * @brief 向浏览器发送触摸事件 (OSR 模式)
      * @param x 触摸 X 坐标
      * @param y 触摸 Y 坐标
@@ -330,16 +317,6 @@ private:
     CursorChangeCallback cursorChangeCallback_; ///< Cursor change callback
 
     bool use_osr_ = false;            ///< Whether off-screen rendering is enabled
-
-    // Cached host window node: recorded on the CEF UI thread in
-    // OnBrowserCreated and read from other threads after a reparent
-    // migration. A live GetWindowHandle() call must run on the CEF UI
-    // thread and may race with the migration, so a cached copy is the
-    // safest source. After a successful reparent the exported function's
-    // out-param refreshes the cache to the new host handle (the old host is
-    // destroyed on the CEF side); on failure/timeout it stays unchanged.
-    // show()/hide() prefer this cache.
-    Node* hostWindowHandle_ = nullptr;
 
     std::shared_ptr<ArkUICefGpuPresenter> gpuPresenter_;
 
