@@ -2130,6 +2130,33 @@ static napi_value NAPI_Global_cefSetComponentOffset(napi_env env, napi_callback_
     return nullptr;
 }
 
+static napi_value NAPI_Global_cefSetWindowOrigin(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 3) {
+        napi_throw_error(env, nullptr, "Expected 3 arguments: browserId, originX, originY");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    int32_t originX = 0;
+    napi_get_value_int32(env, args[1], &originX);
+
+    int32_t originY = 0;
+    napi_get_value_int32(env, args[2], &originY);
+
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
+    if (browser) {
+        CefPostTask(TID_UI, CefCreateClosureTask(
+            base::BindOnce(&ArkUICefBrowser::SetWindowOrigin, browser, originX, originY)));
+    }
+    return nullptr;
+}
+
 static napi_value NAPI_Global_cefSetFrameRate(napi_env env, napi_callback_info info) {
     size_t argc = 2;
     napi_value args[2] = { nullptr };
@@ -2847,6 +2874,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"cefOsrResize", nullptr, NAPI_Global_cefOsrResize, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefOsrSetScale", nullptr, NAPI_Global_cefOsrSetScale, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSetComponentOffset", nullptr, NAPI_Global_cefSetComponentOffset, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefSetWindowOrigin", nullptr, NAPI_Global_cefSetWindowOrigin, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSetFrameRate", nullptr, NAPI_Global_cefSetFrameRate, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefExecuteJavaScript", nullptr, NAPI_Global_cefExecuteJavaScript, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSendMouseClick", nullptr, NAPI_Global_cefSendMouseClick, nullptr, nullptr, nullptr, napi_default, nullptr},

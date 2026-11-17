@@ -635,6 +635,7 @@ export struct OsrCefView {
             arkui_cef.cefSetComponentOffset(this.browserId,
               Math.round(newValue.globalPosition.x as number),
               Math.round(newValue.globalPosition.y as number));
+            this.syncWindowOrigin();
           }
         }
       })
@@ -1330,6 +1331,15 @@ export struct OsrCefView {
       this.cachedWin = win;
       let windowId: number = win.getWindowProperties().id;
       this.cachedWindowId = windowId;
+      // onAreaChange may have run before the window handle was cached;
+      // deliver the origin now that both sides can be available.
+      this.syncWindowOrigin();
+      // Keep the native origin cache fresh when the window moves (floating
+      // window drag). Cache update only — no IME call, so nothing races the
+      // session lifecycle here.
+      win.on('windowRectChange', (_data: window.RectChangeOptions) => {
+        this.syncWindowOrigin();
+      });
       hilog.info(DOMAIN, MODULE, "registerKeyFilter: windowId=%{public}d, browserId=%{public}d",
         windowId, this.browserId);
       arkui_cef.registerOsrKeyFilter(windowId, this.browserId);
@@ -1794,6 +1804,17 @@ export struct OsrCefView {
     }
     let defaultRect: window.Rect = { left: 0, top: 0, width: 0, height: 0 };
     return defaultRect;
+  }
+
+  // Pushes the window's screen origin (physical px) to the native handler so
+  // caret reports can be converted to screen-absolute coordinates without a
+  // per-move round-trip through ArkTS. Safe to call before the browser exists.
+  private syncWindowOrigin(): void {
+    if (!this.isCreated() || !this.cachedWin) {
+      return;
+    }
+    let winRect = this.getWindowRect();
+    arkui_cef.cefSetWindowOrigin(this.browserId, winRect.left, winRect.top);
   }
 
   // ==================== Drag & Drop ====================

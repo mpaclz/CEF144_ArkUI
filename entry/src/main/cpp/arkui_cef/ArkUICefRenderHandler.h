@@ -54,6 +54,8 @@ public:
     void OnImeCompositionRangeChanged(CefRefPtr<CefBrowser> browser,
                                        const CefRange& selected_range,
                                        const RectList& character_bounds) override;
+    void OnCaretBoundsChanged(CefRefPtr<CefBrowser> browser,
+                              const CefRect& caret_bounds) override;
     void OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
                             const RectList& dirtyRects,
                             const CefAcceleratedPaintInfo& info) override;
@@ -70,6 +72,11 @@ public:
     void SetSize(int width, int height);
     void SetDeviceScaleFactor(float factor);
     void SetComponentOffset(int x, int y);
+    // Window origin in screen-absolute physical px. Component offsets are
+    // window-relative, so the IME caret report needs this to reach screen
+    // coordinates. Cached here so caret moves never have to round-trip
+    // through ArkTS (getWindowProperties() is only available there).
+    void SetWindowOrigin(int x, int y);
     void SetPaintCallback(PaintCallback callback) { paintCallback_ = std::move(callback); }
     void SetGpuPresenter(std::shared_ptr<ArkUICefGpuPresenter> presenter) {
         gpuPresenter_ = std::move(presenter);
@@ -134,6 +141,11 @@ private:
     float deviceScaleFactor_ = 1.0f;
     int componentOffsetX_ = 0;
     int componentOffsetY_ = 0;
+    int windowOriginX_ = 0;
+    int windowOriginY_ = 0;
+    // The caret report is dropped until the first SetWindowOrigin arrives, so
+    // we never send a window-relative rect as if it were screen-absolute.
+    bool windowOriginValid_ = false;
     PaintCallback paintCallback_;
     std::shared_ptr<ArkUICefGpuPresenter> gpuPresenter_;
     std::mutex mutex_;

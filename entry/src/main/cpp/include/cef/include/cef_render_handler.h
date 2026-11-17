@@ -241,6 +241,19 @@ class CefRenderHandler : public virtual CefBaseRefCounted {
                                             const RectList& character_bounds) {}
 
   ///
+  /// Called when the bounds of the text insertion caret have changed.
+  /// |caret_bounds| is the caret rectangle in view coordinates. Unlike
+  /// OnImeCompositionRangeChanged, which only reports during an active IME
+  /// composition, this callback reports the caret position whenever it moves
+  /// inside an editable region. Off-screen rendering hosts use it to place
+  /// the platform input method UI (e.g. the IME candidate window), which has
+  /// no window of its own to derive the position from.
+  ///
+  /*--cef()--*/
+  virtual void OnCaretBoundsChanged(CefRefPtr<CefBrowser> browser,
+                                    const CefRect& caret_bounds) {}
+
+  ///
   /// Called when text selection has changed for the specified |browser|.
   /// |selected_text| is the currently selected text and |selected_range| is
   /// the character range.

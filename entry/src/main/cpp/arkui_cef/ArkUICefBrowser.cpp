@@ -206,6 +206,15 @@ void ArkUICefBrowser::SetComponentOffset(int x, int y) {
     }
 }
 
+void ArkUICefBrowser::SetWindowOrigin(int x, int y) {
+    if (use_osr_ && client_) {
+        auto handler = client_->GetArkUICefRenderHandler();
+        if (handler) {
+            handler->SetWindowOrigin(x, y);
+        }
+    }
+}
+
 void ArkUICefBrowser::SetFrameRate(int frameRate) {
     if (!browser_ || frameRate < 1) {
         return;

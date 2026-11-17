@@ -276,6 +276,8 @@ public:
 
     void SetComponentOffset(int x, int y);
 
+    void SetWindowOrigin(int x, int y);
+
     /**
      * @brief 设置离屏渲染最大帧率（OSR 模式）
      * @param frameRate 帧率值（fps），最小 1

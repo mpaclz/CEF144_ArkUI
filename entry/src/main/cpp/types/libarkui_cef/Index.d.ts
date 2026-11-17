@@ -47,6 +47,7 @@ export const detachOsrSurface: (browserId: number) => void;
 export const cefOsrResize: (browserId: number, width: number, height: number) => void;
 export const cefOsrSetScale: (browserId: number, scaleFactor: number) => void;
 export const cefSetComponentOffset: (browserId: number, offsetX: number, offsetY: number) => void;
+export const cefSetWindowOrigin: (browserId: number, originX: number, originY: number) => void;
 export const cefSetFrameRate: (browserId: number, frameRate: number) => void;
 export const cefExecuteJavaScript: (browserId: number, code: string) => void;
 export const cefSendMouseClick: (browserId: number, x: number, y: number, button: number, mouseUp: boolean, clickCount?: number, modifiers?: number) => void;

@@ -91,6 +91,7 @@ add_library(arkui_cef_core SHARED
     arkui_cef/ArkUICefBrowser.cpp
     arkui_cef/ArkUICefRenderHandler.cpp
     arkui_cef/ArkUICefGpuPresenter.cpp
+    arkui_cef/ArkUICefInputMethod.cpp
     arkui_cef/NodeHandle.cpp
     arkui_cef/ArkUICefManager.cpp)
 target_include_directories(arkui_cef_core PUBLIC
@@ -119,9 +120,10 @@ target_link_libraries(arkui_cef_core PUBLIC
     ${hilog-lib}
     ${libace-lib}
     ${libnapi-lib}
+    ${inputmethod-lib}
 )
 
-add_library(arkui_cef SHARED napi_init.cpp JsThreadSafeCallback.cpp arkui_cef/ArkUICefInputMethod.cpp)
+add_library(arkui_cef SHARED napi_init.cpp JsThreadSafeCallback.cpp)
 target_include_directories(arkui_cef PUBLIC
     ${NATIVERENDER_ROOT_PATH}
     arkui_cef

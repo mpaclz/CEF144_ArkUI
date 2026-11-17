@@ -1,5 +1,6 @@
 #include "ArkUICefRenderHandler.h"
 #include <hilog/log.h>
+#include "ArkUICefInputMethod.h"
 #include "include/cef_stream.h"
 
 namespace {
@@ -46,6 +47,13 @@ void ArkUICefRenderHandler::SetComponentOffset(int x, int y) {
     std::lock_guard<std::mutex> lock(mutex_);
     componentOffsetX_ = x;
     componentOffsetY_ = y;
+}
+
+void ArkUICefRenderHandler::SetWindowOrigin(int x, int y) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    windowOriginX_ = x;
+    windowOriginY_ = y;
+    windowOriginValid_ = true;
 }
 
 void ArkUICefRenderHandler::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) {
@@ -463,6 +471,41 @@ void ArkUICefRenderHandler::OnImeCompositionRangeChanged(
     OH_LOG_Print(LOG_APP, LOG_INFO, LOG_PRINT_DOMAIN, "ArkUICefRenderHandler",
         "OnImeCompositionRangeChanged: from=%{public}d, to=%{public}d, bounds_count=%{public}zu",
         selected_range.from, selected_range.to, character_bounds.size());
+}
+
+void ArkUICefRenderHandler::OnCaretBoundsChanged(
+    CefRefPtr<CefBrowser> browser,
+    const CefRect& caret_bounds) {
+    int screenLeft = 0, screenTop = 0, caretW = 0, caretH = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!windowOriginValid_) {
+            return;
+        }
+        // caret_bounds is in view CSS px (same system as GetViewRect). The
+        // IME wants screen-absolute physical px:
+        //   (view_css + component_offset_vp) * dsf + window_origin_px
+        // — the same conversion the ArkTS attach path uses for the initial
+        // cursor, verified on device.
+        screenLeft = static_cast<int>(
+            (caret_bounds.x + componentOffsetX_) * deviceScaleFactor_) +
+            windowOriginX_;
+        screenTop = static_cast<int>(
+            (caret_bounds.y + componentOffsetY_) * deviceScaleFactor_) +
+            windowOriginY_;
+        caretW = static_cast<int>(caret_bounds.width * deviceScaleFactor_);
+        caretH = static_cast<int>(caret_bounds.height * deviceScaleFactor_);
+    }
+    // The caret rect can be zero-width in some pages; the IME needs a
+    // visible anchor, so fall back to a thin full-height bar.
+    if (caretW <= 0) {
+        caretW = 2;
+    }
+    if (caretH <= 0) {
+        caretH = 24;
+    }
+    arkui_cef::ArkUICefInputMethod::NotifyCaretBounds(screenLeft, screenTop,
+                                                      caretW, caretH);
 }
 
 bool ArkUICefRenderHandler::StartDragging(CefRefPtr<CefBrowser> browser,

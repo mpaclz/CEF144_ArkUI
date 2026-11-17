@@ -33,7 +33,7 @@
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=dc7ec3b13cc21a4b15675ed1139834b076e97dde$
+// $hash=1e8481011ab24511015de6e02914fa28d92134ad$
 //
 
 #ifndef CEF_INCLUDE_CAPI_CEF_RENDER_HANDLER_CAPI_H_
@@ -195,6 +195,17 @@ typedef struct _cef_render_handler_t {
   /// bounds of each character in view coordinates.
   ///
   void (CEF_CALLBACK *on_ime_composition_range_changed)(struct _cef_render_handler_t* self, struct _cef_browser_t* browser, const cef_range_t* selected_range, size_t character_boundsCount, cef_rect_t const* character_bounds);
+
+  ///
+  /// Called when the bounds of the text insertion caret have changed.
+  /// |caret_bounds| is the caret rectangle in view coordinates. Unlike
+  /// OnImeCompositionRangeChanged, which only reports during an active IME
+  /// composition, this callback reports the caret position whenever it moves
+  /// inside an editable region. Off-screen rendering hosts use it to place the
+  /// platform input function UI (e.g. the IME candidate window), which has no
+  /// window of its own to derive the position from.
+  ///
+  void (CEF_CALLBACK *on_caret_bounds_changed)(struct _cef_render_handler_t* self, struct _cef_browser_t* browser, const cef_rect_t* caret_bounds);
 
   ///
   /// Called when text selection has changed for the specified |browser|.

@@ -8,7 +8,7 @@
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=9656a3b75f0cd8856e4a32537fcc50d164eb4e05$
+// $hash=d55b622a7d6100d0dc171ff2d9cd74913868812a$
 //
 
 #ifndef CEF_INCLUDE_CAPI_CEF_RENDER_HANDLER_CAPI_VERSIONS_H_
@@ -45,6 +45,7 @@ typedef struct _cef_render_handler_0_t {
   void (CEF_CALLBACK *update_drag_cursor)(struct _cef_render_handler_0_t* self, struct _cef_browser_0_t* browser, cef_drag_operations_mask_t operation);
   void (CEF_CALLBACK *on_scroll_offset_changed)(struct _cef_render_handler_0_t* self, struct _cef_browser_0_t* browser, double x, double y);
   void (CEF_CALLBACK *on_ime_composition_range_changed)(struct _cef_render_handler_0_t* self, struct _cef_browser_0_t* browser, const cef_range_t* selected_range, size_t character_boundsCount, cef_rect_t const* character_bounds);
+  void (CEF_CALLBACK *on_caret_bounds_changed)(struct _cef_render_handler_0_t* self, struct _cef_browser_0_t* browser, const cef_rect_t* caret_bounds);
   void (CEF_CALLBACK *on_text_selection_changed)(struct _cef_render_handler_0_t* self, struct _cef_browser_0_t* browser, const cef_string_t* selected_text, const cef_range_t* selected_range);
   void (CEF_CALLBACK *on_virtual_keyboard_requested)(struct _cef_render_handler_0_t* self, struct _cef_browser_0_t* browser, cef_text_input_mode_t input_mode);
 } cef_render_handler_0_t;
