@@ -1,0 +1,37 @@
+entry/src/main/cpp/types/libarkui_cef/Index.d.ts
+  s_8e3bbbee3120da::t_913a76a093d578 38
+entry/src/main/cpp/napi_init.cpp
+  s_8e3bbbee3120da::t_0dbbd320a19723 1448-1449,1451,1457-1458
+  s_8e3bbbee3120da::t_937846082596bb 1560,1566,1578,1580,1583
+  s_8e3bbbee3120da::t_6881c3e5239dc1 1425-1426,1431,1433
+entry/src/main/ets/components/OsrCefView.ets
+  s_8e3bbbee3120da::t_675b06660a11f0 1149,1158
+entry/src/main/cpp/arkui_cef/ArkUICefRenderHandler.cpp
+  s_8e3bbbee3120da::t_6cd3e65abfaa15 463-465
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "74214f69c875ed2c8485502fc3c8294eb63bcac9",
+  "prompts": {},
+  "humans": {
+    "h_68854496d881b1": {
+      "author": "zhangmeiping <zhangmeiping1@huawei.com>"
+    }
+  },
+  "sessions": {
+    "s_8e3bbbee3120da": {
+      "agent_id": {
+        "tool": "workbuddy",
+        "id": "f8443add-dc98-437f-af07-10cbdd805953",
+        "model": "qwen3.8-max"
+      },
+      "human_author": "zhangmeiping <zhangmeiping1@huawei.com>",
+      "custom_attributes": {
+        "stats_models": {"custom-local:qwen3.8-max":{"deletions":39,"traces":["t_ceaedbaab5d8b5"]},"qwen3.8-max":{"additions":20,"deletions":162}},
+        "stats_total_additions": 20,
+        "stats_total_deletions": 201
+      }
+    }
+  }
+}
