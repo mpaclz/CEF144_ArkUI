@@ -1,0 +1,18 @@
+entry/src/main/ets/common/DragOutSession.ets
+  h_ae917a57683699 417-421,423,596-604,947-950
+entry/src/main/ets/pages/BrowserTabsPage.ets
+  h_ae917a57683699 238-246,414-416
+entry/src/main/ets/pages/TearOffPage.ets
+  h_ae917a57683699 5,18-27,35,39-46,60-61,72-89,100-102,104-111,113-124,126-128,130-131,142,163,173,197-224
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "5.30.9",
+  "base_commit_sha": "2563dfa4a54c8717b00ac4621a41250ce46fe63f",
+  "prompts": {},
+  "humans": {
+    "h_ae917a57683699": {
+      "author": "zhaomangguo <zhaoyinxing221@outlook.com>"
+    }
+  }
+}
