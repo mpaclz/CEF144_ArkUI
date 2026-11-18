@@ -2644,8 +2644,8 @@ static napi_value NAPI_Global_cefImeCancelComposition(napi_env env, napi_callbac
 static std::unique_ptr<arkui_cef::ArkUICefInputMethod> g_imeCApi;
 
 static napi_value NAPI_Global_cefImeCAttach(napi_env env, napi_callback_info info) {
-    size_t argc = 11;
-    napi_value args[11] = { nullptr };
+    size_t argc = 10;
+    napi_value args[10] = { nullptr };
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     if (argc < 10) {
         napi_throw_error(env, nullptr,
@@ -2661,19 +2661,6 @@ static napi_value NAPI_Global_cefImeCAttach(napi_env env, napi_callback_info inf
     napi_get_value_double(env, args[2], &cursorTop);
     napi_get_value_double(env, args[3], &cursorWidth);
     napi_get_value_double(env, args[4], &cursorHeight);
-
-    // Optional 11th arg: whether attach should also show the panel. Defaults
-    // to true; the window-reactivation path passes false so it can show the
-    // panel itself after the system transition hide lands. Appended last so
-    // the existing 10 positional args keep their indices.
-    bool showKeyboard = true;
-    if (argc >= 11) {
-        napi_valuetype type = napi_undefined;
-        napi_typeof(env, args[10], &type);
-        if (type == napi_boolean) {
-            napi_get_value_bool(env, args[10], &showKeyboard);
-        }
-    }
 
     auto jsInsertText = makeJsThreadSafeCallback<std::string>(env, args[5], "ImeInsertText");
     auto jsDeleteLeft = makeJsThreadSafeCallback<int32_t>(env, args[6], "ImeDeleteLeft");
@@ -2704,7 +2691,7 @@ static napi_value NAPI_Global_cefImeCAttach(napi_env env, napi_callback_info inf
     };
 
     g_imeCApi = std::make_unique<arkui_cef::ArkUICefInputMethod>();
-    bool ok = g_imeCApi->attach(showKeyboard, windowId, cursorLeft, cursorTop, cursorWidth, cursorHeight, callbacks);
+    bool ok = g_imeCApi->attach(true, windowId, cursorLeft, cursorTop, cursorWidth, cursorHeight, callbacks);
 
     napi_value result;
     napi_get_boolean(env, ok, &result);

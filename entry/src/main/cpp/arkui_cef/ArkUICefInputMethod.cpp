@@ -185,16 +185,11 @@ bool ArkUICefInputMethod::attach(bool ShowKeyboard, int32_t windowId,
     }
 
     // Explicitly show keyboard — don't rely on proxy TextInput focus which
-    // would create a competing ArkTS IMF client. Skipped when the caller
-    // asked for a panel-less attach (window reactivation: the caller shows
-    // the panel itself once the system's transition hide has landed).
-    if (ShowKeyboard) {
-        InputMethod_ErrorCode showRes =
-            OH_InputMethodProxy_ShowKeyboard(input_method_proxy_);
-        if (showRes != IME_ERR_OK) {
-            OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
-                "attach: ShowKeyboard failed: %{public}d", showRes);
-        }
+    // would create a competing ArkTS IMF client.
+    InputMethod_ErrorCode showRes = OH_InputMethodProxy_ShowKeyboard(input_method_proxy_);
+    if (showRes != IME_ERR_OK) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, IME_LOG_DOMAIN, TAG,
+            "attach: ShowKeyboard failed: %{public}d", showRes);
     }
 
     is_attached_ = true;

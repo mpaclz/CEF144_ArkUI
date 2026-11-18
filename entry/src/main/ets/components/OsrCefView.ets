@@ -132,6 +132,14 @@ export struct OsrCefView {
   private renderAreaActive: boolean = false;
   // Set by WINDOW_INACTIVE — when true, WINDOW_ACTIVE should restore CEF focus.
   private focusLostFlag: boolean = false;
+  // Timestamp of the last WINDOW_ACTIVE. A click that lands inside
+  // IME_PANEL_SHOW_DELAY_MS of it both brings the window back to life and
+  // happens while sceneboard's transition hide is still pending, so the
+  // click path must not drive the IME — its keyboardVisible is also stale
+  // (the click has not been forwarded to CEF yet). The deferred
+  // WINDOW_ACTIVE handler decides instead, by which time CEF's
+  // OnVirtualKeyboardRequested has reported the truth.
+  private lastWindowActiveTime: number = 0;
   // True while the toolbar URL TextInput holds ArkTS focus. Drives the
   // conditional stopEditing in stopUrlEditing().
   private urlInputFocused: boolean = false;
@@ -1378,6 +1386,7 @@ export struct OsrCefView {
           // component-level invisibility (onVisibleAreaChange, e.g. tab
           // switches) pauses the render pipeline.
         } else if (event === window.WindowEventType.WINDOW_ACTIVE) {
+          this.lastWindowActiveTime = Date.now();
           if (this.focusLostFlag) {
             this.focusLostFlag = false;
             hilog.info(DOMAIN, MODULE, "WINDOW_ACTIVE: restoring focus, kbVisible=%{public}s",
@@ -1385,20 +1394,21 @@ export struct OsrCefView {
             if (this.isCreated() && this.renderAreaActive) {
               arkui_cef.cefSendFocusEvent(this.browserId, true);
             }
-            // The session was ended at deactivation. Rebuild it immediately
-            // WITHOUT showing the panel (keys route as soon as attach lands),
-            // then show the panel once sceneboard's transition RequestHideInput
-            // has passed — showing during the transition gets killed (status
-            // bar flicker). handleImeFocus gates on keyboardVisible.
-            this.handleImeFocus(false);
-            if (this.keyboardVisible) {
-              setTimeout(() => {
-                if (this.disposed || !this.tabActive || !this.isImeOwner()) {
-                  return;
-                }
-                this.showImeKeyboardWithHeal();
-              }, OsrCefView.IME_PANEL_SHOW_DELAY_MS);
-            }
+            // This handler is the single decision point for the reactivation:
+            // by IME_PANEL_SHOW_DELAY_MS, CEF's OnVirtualKeyboardRequested has
+            // reported whether the click actually landed on an input field
+            // (measured ~100ms), so keyboardVisible is truthful here — while
+            // at activation time it still holds the pre-deactivation value.
+            // Deferring also keeps the panel show clear of sceneboard's
+            // transition RequestHideInput, which lands ~22ms after activation
+            // and kills any panel shown before it (status bar flicker).
+            setTimeout(() => {
+              if (this.disposed || !this.tabActive ||
+                  (OsrCefView.imeOwnerView !== null && OsrCefView.imeOwnerView !== this)) {
+                return;
+              }
+              this.handleImeFocus();
+            }, OsrCefView.IME_PANEL_SHOW_DELAY_MS);
           }
         }
       });
@@ -2150,7 +2160,7 @@ export struct OsrCefView {
       this.lastInputY = touch0.y;
       this.setRenderAreaActive(true);
       this.stopUrlEditing();
-      this.handleImeFocus();
+      this.handleImeFocusFromClick();
       arkui_cef.cefSendFocusEvent(this.browserId, true);
     }
   }
@@ -2246,7 +2256,7 @@ export struct OsrCefView {
         this.lastInputY = event.y;
         this.setRenderAreaActive(true);
         this.stopUrlEditing();
-        this.handleImeFocus();
+        this.handleImeFocusFromClick();
         arkui_cef.cefSendFocusEvent(this.browserId, true);
 
         // Click count (LEFT only): double-click selects a word, triple-click
@@ -2360,7 +2370,7 @@ export struct OsrCefView {
 
   // ==================== Input Method Framework (IME) ====================
 
-  private handleImeFocus(showPanel: boolean = true): void {
+  private handleImeFocus(): void {
     // Only drive the panel when CEF has a focused input field
     // (keyboardVisible=true). Attach on first need; afterwards restore the
     // panel (e.g. after a URL-bar interlude hid it) with self-heal.
@@ -2368,10 +2378,27 @@ export struct OsrCefView {
       return;
     }
     if (!this.imeAttached) {
-      this.attachInputMethod(showPanel);
-    } else if (showPanel) {
+      this.attachInputMethod();
+    } else {
       this.showImeKeyboardWithHeal();
     }
+  }
+
+  // Click/touch-driven IME focus with a window-activation guard. A click
+  // that reactivates the window is processed BEFORE the WINDOW_ACTIVE event
+  // arrives (measured ~9ms earlier, so focusLostFlag is still set), and it
+  // carries a stale keyboardVisible — the click has not been forwarded to
+  // CEF yet. Acting on it shows the panel inside sceneboard's transition
+  // hide window (flicker) and can build a session for a click that missed
+  // every input field. Skip: the deferred WINDOW_ACTIVE handler decides
+  // with truthful state, and CEF's OnVirtualKeyboardRequested (~100ms
+  // later, past the danger window) is the backstop for the skipped cases.
+  private handleImeFocusFromClick(): void {
+    if (this.focusLostFlag ||
+        Date.now() - this.lastWindowActiveTime < OsrCefView.IME_PANEL_SHOW_DELAY_MS) {
+      return;
+    }
+    this.handleImeFocus();
   }
 
   // Shows the IME panel on the persistent session. If the show fails
@@ -2454,7 +2481,7 @@ export struct OsrCefView {
     return OsrCefView.imeOwnerView === this && this.imeAttached;
   }
 
-  private attachInputMethod(showPanel: boolean = true): void {
+  private attachInputMethod(): void {
     if (this.imeAttached || this.imeAttaching) {
       return;
     }
@@ -2522,8 +2549,7 @@ export struct OsrCefView {
         if (this.isCreated() && this.renderAreaActive) {
           arkui_cef.cefImeCancelComposition(this.browserId);
         }
-      },
-      showPanel
+      }
     );
 
     this.imeAttaching = false;

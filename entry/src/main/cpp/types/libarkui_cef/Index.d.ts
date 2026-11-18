@@ -79,8 +79,7 @@ export const cefImeCAttach: (
   onDeleteLeft: (length: number) => void,
   onSendEnterKey: () => void,
   onSetPreviewText: (text: string) => void,
-  onFinishTextPreview: () => void,
-  showKeyboard?: boolean
+  onFinishTextPreview: () => void
 ) => boolean;
 export const cefImeCDetach: () => void;
 export const cefImeCShowKeyboard: () => boolean;
