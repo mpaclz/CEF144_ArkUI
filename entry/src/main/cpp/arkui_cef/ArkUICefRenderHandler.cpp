@@ -38,19 +38,24 @@ void ArkUICefRenderHandler::SetSize(int width, int height) {
 }
 
 void ArkUICefRenderHandler::SetDeviceScaleFactor(float factor) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    deviceScaleFactor_ = factor;
-    if (gpuPresenter_) gpuPresenter_->SetScale(factor);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        deviceScaleFactor_ = factor;
+        if (gpuPresenter_) gpuPresenter_->SetScale(factor);
+    }
+    // A density change (window dragged to a display with a different scale,
+    // system display-scale change) rescales the caret's screen position even
+    // when its view CSS px rect stays the same, and blink then dedupes the
+    // event — reconvert and re-report like the other geometry setters.
+    RepushCachedCaret();
 }
 
-void ArkUICefRenderHandler::SetComponentOffset(int x, int y) {
+void ArkUICefRenderHandler::RepushCachedCaret() {
     int screenLeft = 0, screenTop = 0, caretW = 0, caretH = 0;
     bool repush = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        componentOffsetX_ = x;
-        componentOffsetY_ = y;
-        repush = lastCaretValid_;
+        repush = lastCaretValid_ && windowOriginValid_;
         if (repush) {
             ViewRectToScreenCaret(lastCaretView_, screenLeft, screenTop,
                                   caretW, caretH);
@@ -61,23 +66,23 @@ void ArkUICefRenderHandler::SetComponentOffset(int x, int y) {
     }
 }
 
+void ArkUICefRenderHandler::SetComponentOffset(int x, int y) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        componentOffsetX_ = x;
+        componentOffsetY_ = y;
+    }
+    RepushCachedCaret();
+}
+
 void ArkUICefRenderHandler::SetWindowOrigin(int x, int y) {
-    int screenLeft = 0, screenTop = 0, caretW = 0, caretH = 0;
-    bool repush = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         windowOriginX_ = x;
         windowOriginY_ = y;
         windowOriginValid_ = true;
-        repush = lastCaretValid_;
-        if (repush) {
-            ViewRectToScreenCaret(lastCaretView_, screenLeft, screenTop,
-                                  caretW, caretH);
-        }
     }
-    if (repush) {
-        RepushCaretToIme(screenLeft, screenTop, caretW, caretH);
-    }
+    RepushCachedCaret();
 }
 
 void ArkUICefRenderHandler::RepushCaretToIme(int left, int top, int width,
