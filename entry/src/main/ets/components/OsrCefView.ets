@@ -1347,10 +1347,19 @@ export struct OsrCefView {
       win.on('windowEvent', (event: window.WindowEventType) => {
         if (event === window.WindowEventType.WINDOW_INACTIVE) {
           this.focusLostFlag = true;
-          // Hide the panel but KEEP the session attached (Attach → Show →
-          // Hide → Detach lifecycle; re-attaching on every window cycle
-          // raced the ArkTS editor at the input method service).
-          this.hideImeKeyboard();
+          // End the session, mirroring the input method service: it removes
+          // the client on window deactivation (StopClientInput/
+          // RemoveClientInfo, isStopInactiveClient), so keeping the session
+          // "attached" locally is an illusion — the next ShowKeyboard fails
+          // with 12800016 and the heal path re-attaches anyway. Detaching
+          // here instead keeps both ledgers in sync and moves the teardown
+          // echo (the service-side cleanup that lands ~20ms later) into the
+          // inactive period, where the panel is already hidden. Re-attaching
+          // back-to-back with a detach at activation time raced that echo:
+          // the late HidePanel killed the fresh session's panel (status bar
+          // flicker). No-op while the URL TextInput owns the panel
+          // (imeAttached already cleared by the ownership handoff).
+          this.detachInputMethod();
           if (this.isCreated() && this.renderAreaActive) {
             arkui_cef.cefSendFocusEvent(this.browserId, false);
           }
@@ -1369,9 +1378,20 @@ export struct OsrCefView {
             if (this.isCreated() && this.renderAreaActive) {
               arkui_cef.cefSendFocusEvent(this.browserId, true);
             }
-            if (this.keyboardVisible) {
-              this.showImeKeyboardWithHeal();
-            }
+            // The session was ended at deactivation, so this rebuilds it in
+            // one clean attach (no adjacent detach). Defer it past the
+            // window-switch transition: sceneboard issues a system-level
+            // RequestHideInput (HIDE_INPUT_METHOD_ANIMATION) ~15ms after
+            // activation, and an immediate ShowPanel races it — the late
+            // hide kills the fresh panel (status bar flicker). Same pattern
+            // as the Tabs-animation race (FOCUS_RETRY_DELAY_MS); handleImeFocus
+            // gates on keyboardVisible and keeps the heal path as fallback.
+            setTimeout(() => {
+              if (this.disposed || !this.tabActive) {
+                return;
+              }
+              this.handleImeFocus();
+            }, OsrCefView.FOCUS_RETRY_DELAY_MS);
           }
         }
       });
@@ -2360,15 +2380,6 @@ export struct OsrCefView {
       this.detachInputMethod();
       this.attachInputMethod();
     }
-  }
-
-  // Hides the IME panel WITHOUT detaching the session (the documented
-  // Attach → Show → Hide → Detach lifecycle).
-  private hideImeKeyboard(): void {
-    if (!this.imeAttached || OsrCefView.imeOwnerView !== this) {
-      return;
-    }
-    arkui_cef.cefImeCHideKeyboard();
   }
 
   // Called when the user clicks the web render area: exit the URL
