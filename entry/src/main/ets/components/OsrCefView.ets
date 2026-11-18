@@ -17,6 +17,18 @@ interface DragDataInfo {
   filePaths: string;
 }
 
+// Which editor is entitled to own the input method right now. The IMF C API
+// session is process-global and there is exactly one input method client per
+// process, so our session and an ArkTS TextInput's editor are mutually
+// exclusive: whichever attached last receives the keys. Mirrors the framework
+// windowed path, where ui::TextInputClient focus is inherently exclusive and
+// InputMethodOHOS derives everything from a single text_input_type_.
+enum ImeSubject {
+  None = 0,      // nothing may own the input method
+  UrlBar = 1,    // the toolbar TextInput owns it (ArkTS editor, not ours)
+  WebInput = 2,  // a web input field owns it (our IMF C session)
+}
+
 // Each GPU OSR instance needs a unique XComponent id so multiple
 // instances on one page do not collide.
 let g_gpuComponentSeq = 0;
@@ -117,29 +129,32 @@ export struct OsrCefView {
   // ArkTS inputMethodController was replaced because its async updateCursor()
   // triggered a second internal OnCursorUpdate that caused candidate window jumps.
   //
-  // Design (reference QCefView):
-  // - keyboardVisible: set by CEF OnVirtualKeyboardRequested — tracks whether
-  //   the web page has a focused input field (like Qt's WA_InputMethodEnabled).
-  // - IMF attach/detach: driven by window focus and keyboardVisible together:
-  //   WINDOW_INACTIVE → detach (hide keyboard, preserve keyboardVisible)
-  //   WINDOW_ACTIVE → if keyboardVisible, attach (show keyboard)
-  //   OnVKR(true) → keyboardVisible=true, attach if window active
-  //   OnVKR(false) → keyboardVisible=false, detach
+  // Design: a single declarative arbiter (see expectedImeSubject/reconcileIme
+  // in the IME section) derives who should own the input method from the
+  // observables below, mirroring the framework windowed path
+  // (ui/base/ime/ohos/input_method_ohos.cc: UpdateContextFocusState).
+  // Event handlers write these observables and request a reconcile; they never
+  // attach/detach/show directly.
+  // - keyboardVisible: web page has a focused input field (CEF VKR, ~100ms late)
+  // - urlInputFocused: toolbar TextInput holds ArkTS focus (synchronous)
+  // - windowActive / tabActive: session may only exist while both hold
   private imeAttached: boolean = false;
   private imeAttaching: boolean = false;
   // When true, key events are forwarded to CEF (user clicked on render area).
   // When false, key events go to the URL bar TextInput normally.
   private renderAreaActive: boolean = false;
-  // Set by WINDOW_INACTIVE — when true, WINDOW_ACTIVE should restore CEF focus.
-  private focusLostFlag: boolean = false;
-  // Timestamp of the last WINDOW_ACTIVE. A click that lands inside
-  // IME_PANEL_SHOW_DELAY_MS of it both brings the window back to life and
-  // happens while sceneboard's transition hide is still pending, so the
-  // click path must not drive the IME — its keyboardVisible is also stale
-  // (the click has not been forwarded to CEF yet). The deferred
-  // WINDOW_ACTIVE handler decides instead, by which time CEF's
-  // OnVirtualKeyboardRequested has reported the truth.
-  private lastWindowActiveTime: number = 0;
+  // Observable: whether our window currently holds OS focus. Driven by
+  // WINDOW_ACTIVE/WINDOW_INACTIVE. A session can only live while the window
+  // is active — the input method service removes the client on deactivation
+  // (StopClientInput/RemoveClientInfo), so this is an input to the arbiter's
+  // expected-subject computation, not a hand-managed flag.
+  private windowActive: boolean = true;
+  // Single debounce timer for the IME arbiter, mirroring the framework's
+  // base::OneShotTimer delayed_attach_timer_: every state change Stop()s and
+  // Start()s this one timer, so a burst of events collapses into a single
+  // reconcile that runs against the freshest observables. Replaces the
+  // several ad-hoc setTimeout delays that used to race each other.
+  private imeArbiterTimer: number = -1;
   // True while the toolbar URL TextInput holds ArkTS focus. Drives the
   // conditional stopEditing in stopUrlEditing().
   private urlInputFocused: boolean = false;
@@ -403,8 +418,21 @@ export struct OsrCefView {
           .enabled(this.isCreated())
           .onChange((val: string) => { this.urlInput = val; })
           .onSubmit(() => this.loadUrl(this.urlInput))
-          .onFocus(() => { this.urlInputFocused = true; })
-          .onBlur(() => { this.urlInputFocused = false; })
+          .onFocus(() => {
+            this.urlInputFocused = true;
+            // The ArkTS editor takes over the input method; the arbiter's
+            // UrlBar verdict keeps our session from stealing the keys.
+            this.reevaluateIme(0, "url-focus");
+          })
+          .onBlur(() => {
+            this.urlInputFocused = false;
+            // The ArkTS editor released the panel. Defer the reconcile: while
+            // the URL bar held focus CEF reported no VKR change, so
+            // keyboardVisible may be stale — wait for the authoritative report
+            // triggered by the click that caused this blur (~100ms) before
+            // deciding whether our session is owed.
+            this.reevaluateIme(OsrCefView.IME_ARBITER_WINDOW_MS, "url-blur");
+          })
           .onClick(() => {
             this.setRenderAreaActive(false);
           })
@@ -781,19 +809,29 @@ export struct OsrCefView {
   // binding keeps synthesizing candidates at stale cursor positions and
   // commits text into the previously focused field of an invisible browser.
   // Edge-triggered via the tabActive guard.
-  // Retry delay for the post-activation focus request. A request issued
-  // mid-switch-animation can be overridden by the Tabs/TabBar focus
-  // management when the animation completes, so focus is re-requested after
-  // it. MUST exceed BrowserTabsPage's Tabs animationDuration (currently
-  // 300ms) — keep the two in sync when changing either.
+  // Debounce windows for the IME arbiter. Each value covers a measured
+  // system behaviour that would otherwise undo an immediate reconcile; both
+  // are fed to the SAME single-shot timer, so overlapping triggers collapse
+  // instead of stacking.
+  //
+  // TAB_SWITCH: a Tabs switch animation (BrowserTabsPage animationDuration,
+  // currently 300ms) ends with an ArkUI focus reshuffle whose
+  // ClearInputMethodProxy teardown lands ~300ms after activation and kills an
+  // immediately-created session. MUST exceed that duration.
+  private static readonly IME_ARBITER_TAB_SWITCH_MS: number = 400;
+  // WINDOW_REACTIVATE: sceneboard issues a system-level RequestHideInput
+  // (HIDE_INPUT_METHOD_ANIMATION) ~16ms into the window-switch transition,
+  // landing ~22ms in; a panel shown before that gets killed (status bar
+  // flicker). CEF's OnVirtualKeyboardRequested also takes ~100ms to report
+  // what the activating click actually focused, so reconciling immediately
+  // would act on a stale keyboardVisible. 150ms clears both.
+  private static readonly IME_ARBITER_WINDOW_MS: number = 150;
+  // Retry delay for the post-activation ArkUI focus re-anchor (NOT the IME
+  // arbiter). A requestFocus issued mid-switch-animation can be overridden by
+  // the Tabs/TabBar focus management when the animation completes, so focus is
+  // re-requested after it. MUST exceed BrowserTabsPage's Tabs animationDuration
+  // (currently 300ms) — keep the two in sync when changing either.
   private static readonly FOCUS_RETRY_DELAY_MS: number = 400;
-  // Delay before showing the IME panel after WINDOW_ACTIVE. Sceneboard
-  // issues a system-level RequestHideInput (HIDE_INPUT_METHOD_ANIMATION)
-  // ~5ms into the window-switch transition and it lands ~80ms in; a panel
-  // shown before that gets killed (status bar flicker). The session itself
-  // attaches immediately — only the panel show waits. Measured hide lands
-  // by ~85ms; 150ms keeps a safety margin while staying imperceptible.
-  private static readonly IME_PANEL_SHOW_DELAY_MS: number = 150;
 
   private setTabActive(active: boolean): void {
     if (!this.isCreated() || this.tabActive === active) {
@@ -816,31 +854,15 @@ export struct OsrCefView {
       setTimeout(() => {
         this.requestFocusToRenderArea();
       }, OsrCefView.FOCUS_RETRY_DELAY_MS);
-      if (this.keyboardVisible) {
-        // CEF believed an input field was focused before the switch. The
-        // focus restoration above may NOT re-fire VKR(true) (the renderer
-        // dedupes TextInputState changes), so the IMF session must be
-        // recreated here — otherwise the blinking caret sits over a dead
-        // keyboard (no panel, no candidates, no text).
-        //
-        // Defer past the Tabs switch animation: it drives a late ArkUI focus
-        // reshuffle whose ClearInputMethodProxy teardown lands ~300ms after
-        // activation and kills an immediately-attached session. Attaching at
-        // FOCUS_RETRY_DELAY_MS (> animationDuration) lands after that
-        // teardown; handleImeFocus()'s attach-or-heal self-corrects a stale
-        // imeAttached flag.
-        setTimeout(() => {
-          if (this.disposed || !this.tabActive) {
-            return;
-          }
-          this.handleImeFocus();
-        }, OsrCefView.FOCUS_RETRY_DELAY_MS);
-      }
+      // tabActive just flipped true: let the arbiter decide whether a session
+      // is owed. Deferred past the switch animation, whose trailing focus
+      // reshuffle would otherwise tear down an immediately-created session.
+      this.reevaluateIme(OsrCefView.IME_ARBITER_TAB_SWITCH_MS, "tab-active");
     } else {
-      if (this.imeAttached && !this.urlInputFocused) {
-        this.detachInputMethod();
-      }
       this.setRenderAreaActive(false);
+      // tabActive just flipped false: the arbiter releases the session (or
+      // leaves it to the URL bar owner). No animation danger on this edge.
+      this.reevaluateIme(0, "tab-inactive");
     }
   }
 
@@ -1068,6 +1090,10 @@ export struct OsrCefView {
     // component.
     this.disposed = true;
     this.creationGeneration++;
+    if (this.imeArbiterTimer >= 0) {
+      clearTimeout(this.imeArbiterTimer);
+      this.imeArbiterTimer = -1;
+    }
     this.detachInputMethod();
     if (this.pendingBrowserId > 0) {
       arkui_cef.destroyOsrCefView(this.pendingBrowserId);
@@ -1361,20 +1387,18 @@ export struct OsrCefView {
 
       win.on('windowEvent', (event: window.WindowEventType) => {
         if (event === window.WindowEventType.WINDOW_INACTIVE) {
-          this.focusLostFlag = true;
-          // End the session, mirroring the input method service: it removes
-          // the client on window deactivation (StopClientInput/
-          // RemoveClientInfo, isStopInactiveClient), so keeping the session
-          // "attached" locally is an illusion — the next ShowKeyboard fails
-          // with 12800016 and the heal path re-attaches anyway. Detaching
-          // here instead keeps both ledgers in sync and moves the teardown
-          // echo (the service-side cleanup that lands ~20ms later) into the
-          // inactive period, where the panel is already hidden. Re-attaching
-          // back-to-back with a detach at activation time raced that echo:
-          // the late HidePanel killed the fresh session's panel (status bar
-          // flicker). No-op while the URL TextInput owns the panel
-          // (imeAttached already cleared by the ownership handoff).
-          this.detachInputMethod();
+          const wasActive = this.windowActive;
+          this.windowActive = false;
+          if (wasActive) {
+            hilog.info(DOMAIN, MODULE, "WINDOW_INACTIVE: releasing focus, kbVisible=%{public}s",
+              this.keyboardVisible ? "true" : "false");
+          }
+          // The input method service removes the client on deactivation
+          // (StopClientInput/RemoveClientInfo), so windowActive=false makes
+          // the arbiter release our ledger entry to match. Immediate (0ms):
+          // the teardown echo lands while the window is inactive, where the
+          // panel is hidden anyway.
+          this.reevaluateIme(0, "window-inactive");
           if (this.isCreated() && this.renderAreaActive) {
             arkui_cef.cefSendFocusEvent(this.browserId, false);
           }
@@ -1386,29 +1410,19 @@ export struct OsrCefView {
           // component-level invisibility (onVisibleAreaChange, e.g. tab
           // switches) pauses the render pipeline.
         } else if (event === window.WindowEventType.WINDOW_ACTIVE) {
-          this.lastWindowActiveTime = Date.now();
-          if (this.focusLostFlag) {
-            this.focusLostFlag = false;
+          const wasInactive = !this.windowActive;
+          this.windowActive = true;
+          if (wasInactive) {
             hilog.info(DOMAIN, MODULE, "WINDOW_ACTIVE: restoring focus, kbVisible=%{public}s",
               this.keyboardVisible ? "true" : "false");
             if (this.isCreated() && this.renderAreaActive) {
               arkui_cef.cefSendFocusEvent(this.browserId, true);
             }
-            // This handler is the single decision point for the reactivation:
-            // by IME_PANEL_SHOW_DELAY_MS, CEF's OnVirtualKeyboardRequested has
-            // reported whether the click actually landed on an input field
-            // (measured ~100ms), so keyboardVisible is truthful here — while
-            // at activation time it still holds the pre-deactivation value.
-            // Deferring also keeps the panel show clear of sceneboard's
-            // transition RequestHideInput, which lands ~22ms after activation
-            // and kills any panel shown before it (status bar flicker).
-            setTimeout(() => {
-              if (this.disposed || !this.tabActive ||
-                  (OsrCefView.imeOwnerView !== null && OsrCefView.imeOwnerView !== this)) {
-                return;
-              }
-              this.handleImeFocus();
-            }, OsrCefView.IME_PANEL_SHOW_DELAY_MS);
+            // Reconcile after the reactivation danger window: sceneboard's
+            // transition RequestHideInput lands ~22ms in, and CEF's VKR
+            // report on what the activating click focused arrives ~100ms in.
+            // At 150ms the arbiter sees truthful observables and acts once.
+            this.reevaluateIme(OsrCefView.IME_ARBITER_WINDOW_MS, "window-active");
           }
         }
       });
@@ -1737,33 +1751,17 @@ export struct OsrCefView {
 
   onOsrVirtualKeyboard(show: boolean): void {
     hilog.info(DOMAIN, MODULE, "OSR virtual keyboard: %{public}s", show ? "show" : "hide");
-    this.keyboardVisible = show;
-    if (show) {
-      // Web input gained focus: (re)create the session and show the panel.
-      // If the show fails (session killed by an external race) the heal
-      // path in showImeKeyboardWithHeal re-attaches.
-      if (!this.imeAttached) {
-        this.attachInputMethod();
-      } else {
-        this.showImeKeyboardWithHeal();
-      }
-    } else {
-      // Web input lost focus (focus moved to a link/button, a blank area,
-      // or the browser blurred). End the session — NOT just hide the panel:
-      // the document lifecycle is Attach → Show → Hide → Detach, and a
-      // lingering session keeps the IMS binding alive, so physical keys
-      // would keep pulling up candidates at a stale cursor and committing
-      // text into the previously focused field.
-      if (this.urlInputFocused) {
-        // The URL TextInput is taking over: ArkUI owns the panel now. Our
-        // teardown could race its attach at the input method service (a
-        // late teardown kills the fresh ArkTS attach) — keep the session;
-        // its callbacks are inert while renderAreaActive is false.
-        hilog.info(DOMAIN, MODULE, "OSR virtual keyboard hide skipped — URL input owns the panel");
-      } else {
-        this.detachInputMethod();
-      }
+    if (this.keyboardVisible === show) {
+      // CEF re-reports the state we already hold (e.g. a focus restore that
+      // did not change the focused node). Nothing to reconcile.
+      return;
     }
+    this.keyboardVisible = show;
+    // This is the authoritative report on what the web page has focused, and
+    // it arrives ~100ms after the click that caused it — by then any
+    // reactivation danger window has passed, so reconcile promptly (next
+    // tick, to coalesce with other writes from the same event burst).
+    this.reevaluateIme(0, show ? "vkr-show" : "vkr-hide");
   }
 
   onOsrTextSelection(text: string): void {
@@ -2160,7 +2158,6 @@ export struct OsrCefView {
       this.lastInputY = touch0.y;
       this.setRenderAreaActive(true);
       this.stopUrlEditing();
-      this.handleImeFocusFromClick();
       arkui_cef.cefSendFocusEvent(this.browserId, true);
     }
   }
@@ -2256,7 +2253,6 @@ export struct OsrCefView {
         this.lastInputY = event.y;
         this.setRenderAreaActive(true);
         this.stopUrlEditing();
-        this.handleImeFocusFromClick();
         arkui_cef.cefSendFocusEvent(this.browserId, true);
 
         // Click count (LEFT only): double-click selects a word, triple-click
@@ -2369,36 +2365,98 @@ export struct OsrCefView {
   }
 
   // ==================== Input Method Framework (IME) ====================
+  //
+  // The IMF C session is process-global and there is one input method client
+  // per process, so our session and an ArkTS TextInput's editor are mutually
+  // exclusive — whoever attached last receives the keys. Every path that can
+  // change that ownership therefore goes through ONE arbiter, mirroring the
+  // framework windowed path (ui/base/ime/ohos/input_method_ohos.cc:
+  // UpdateContextFocusState + delayed_attach_timer_):
+  //
+  //   event → write observables → reevaluateIme(delay) → reconcileIme()
+  //
+  // reconcile derives the expected subject from the CURRENT observables and
+  // applies only the difference, so event order cannot change the outcome and
+  // a burst of events collapses into a single action (the debounce timer is a
+  // single instance, restarted on every trigger). attach/detach/show below are
+  // private primitives — no event path may call them directly.
 
-  private handleImeFocus(): void {
-    // Only drive the panel when CEF has a focused input field
-    // (keyboardVisible=true). Attach on first need; afterwards restore the
-    // panel (e.g. after a URL-bar interlude hid it) with self-heal.
-    if (!this.keyboardVisible) {
-      return;
+  // Which editor should own the input method, given the observables. Pure
+  // function of state, checked in priority order:
+  //   windowActive  — the service removes the client on deactivation, so a
+  //                   session cannot outlive window focus; release it.
+  //   urlInputFocused — synchronous ArkUI truth. Wins over keyboardVisible,
+  //                   which is CEF's report and lags ~100ms: while both are
+  //                   true the user's latest intent is the URL bar. We must
+  //                   neither attach (it would steal the keys — the reported
+  //                   bug) nor detach (a teardown can race the ArkTS editor's
+  //                   own attach at the service), so UrlBar is a no-op and the
+  //                   superseded session stays inert while renderAreaActive is
+  //                   false.
+  //   tabActive     — an invisible tab must not hold the session.
+  //   keyboardVisible — a web input field is focused: we own the session.
+  private expectedImeSubject(): ImeSubject {
+    if (this.disposed || !this.windowActive) {
+      return ImeSubject.None;
     }
-    if (!this.imeAttached) {
-      this.attachInputMethod();
-    } else {
-      this.showImeKeyboardWithHeal();
+    if (this.urlInputFocused) {
+      return ImeSubject.UrlBar;
     }
+    if (!this.tabActive) {
+      return ImeSubject.None;
+    }
+    return this.keyboardVisible ? ImeSubject.WebInput : ImeSubject.None;
   }
 
-  // Click/touch-driven IME focus with a window-activation guard. A click
-  // that reactivates the window is processed BEFORE the WINDOW_ACTIVE event
-  // arrives (measured ~9ms earlier, so focusLostFlag is still set), and it
-  // carries a stale keyboardVisible — the click has not been forwarded to
-  // CEF yet. Acting on it shows the panel inside sceneboard's transition
-  // hide window (flicker) and can build a session for a click that missed
-  // every input field. Skip: the deferred WINDOW_ACTIVE handler decides
-  // with truthful state, and CEF's OnVirtualKeyboardRequested (~100ms
-  // later, past the danger window) is the backstop for the skipped cases.
-  private handleImeFocusFromClick(): void {
-    if (this.focusLostFlag ||
-        Date.now() - this.lastWindowActiveTime < OsrCefView.IME_PANEL_SHOW_DELAY_MS) {
+  // Requests a reconcile. delayMs defers past a measured danger window (see
+  // IME_ARBITER_* constants); 0 defers to the next tick so that a burst of
+  // synchronous state writes still collapses into one reconcile.
+  private reevaluateIme(delayMs: number, reason: string): void {
+    if (this.disposed) {
       return;
     }
-    this.handleImeFocus();
+    if (this.imeArbiterTimer >= 0) {
+      clearTimeout(this.imeArbiterTimer);
+      this.imeArbiterTimer = -1;
+    }
+    this.imeArbiterTimer = setTimeout(() => {
+      this.imeArbiterTimer = -1;
+      this.reconcileIme(reason);
+    }, delayMs);
+  }
+
+  // Applies the difference between the expected subject and the session we
+  // actually hold. Idempotent: equal states produce no session churn.
+  private reconcileIme(reason: string): void {
+    if (this.disposed) {
+      return;
+    }
+    // Only the owning view drives the process-global session; a background
+    // view must not tear down or replace what another view is typing into.
+    if (OsrCefView.imeOwnerView !== null && OsrCefView.imeOwnerView !== this) {
+      return;
+    }
+    const want = this.expectedImeSubject();
+    if (want === ImeSubject.UrlBar) {
+      // ArkTS owns the panel — nothing for us to do either way.
+      return;
+    }
+    if (want === ImeSubject.WebInput) {
+      if (!this.imeAttached) {
+        hilog.info(DOMAIN, MODULE, "IME arbiter[%{public}s]: attach", reason);
+        this.attachInputMethod();
+      } else {
+        // Session already ours; the panel may be hidden (window reactivation,
+        // URL-bar interlude), so restore it.
+        this.showImeKeyboardWithHeal();
+      }
+      return;
+    }
+    // ImeSubject.None
+    if (this.imeAttached) {
+      hilog.info(DOMAIN, MODULE, "IME arbiter[%{public}s]: detach", reason);
+      this.detachInputMethod();
+    }
   }
 
   // Shows the IME panel on the persistent session. If the show fails
@@ -2457,6 +2515,11 @@ export struct OsrCefView {
         arkui_cef.cefImeCDetach();
         this.imeAttached = false;
         OsrCefView.imeOwnerView = this;
+        // The global session was just destroyed by this takeover, so nothing
+        // exists for us even if this view's web input is focused. Reconcile
+        // now: the arbiter re-creates the session when WebInput is expected,
+        // and stays down otherwise.
+        this.reevaluateIme(0, "ownership-takeover");
       }
       // Already the owner (ordinary click inside our own render area while
       // typing): leave the live session alone.
