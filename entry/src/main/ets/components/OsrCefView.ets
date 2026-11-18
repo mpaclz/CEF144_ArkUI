@@ -779,6 +779,13 @@ export struct OsrCefView {
   // it. MUST exceed BrowserTabsPage's Tabs animationDuration (currently
   // 300ms) — keep the two in sync when changing either.
   private static readonly FOCUS_RETRY_DELAY_MS: number = 400;
+  // Delay before showing the IME panel after WINDOW_ACTIVE. Sceneboard
+  // issues a system-level RequestHideInput (HIDE_INPUT_METHOD_ANIMATION)
+  // ~5ms into the window-switch transition and it lands ~80ms in; a panel
+  // shown before that gets killed (status bar flicker). The session itself
+  // attaches immediately — only the panel show waits. Measured hide lands
+  // by ~85ms; 150ms keeps a safety margin while staying imperceptible.
+  private static readonly IME_PANEL_SHOW_DELAY_MS: number = 150;
 
   private setTabActive(active: boolean): void {
     if (!this.isCreated() || this.tabActive === active) {
@@ -1378,20 +1385,20 @@ export struct OsrCefView {
             if (this.isCreated() && this.renderAreaActive) {
               arkui_cef.cefSendFocusEvent(this.browserId, true);
             }
-            // The session was ended at deactivation, so this rebuilds it in
-            // one clean attach (no adjacent detach). Defer it past the
-            // window-switch transition: sceneboard issues a system-level
-            // RequestHideInput (HIDE_INPUT_METHOD_ANIMATION) ~15ms after
-            // activation, and an immediate ShowPanel races it — the late
-            // hide kills the fresh panel (status bar flicker). Same pattern
-            // as the Tabs-animation race (FOCUS_RETRY_DELAY_MS); handleImeFocus
-            // gates on keyboardVisible and keeps the heal path as fallback.
-            setTimeout(() => {
-              if (this.disposed || !this.tabActive) {
-                return;
-              }
-              this.handleImeFocus();
-            }, OsrCefView.FOCUS_RETRY_DELAY_MS);
+            // The session was ended at deactivation. Rebuild it immediately
+            // WITHOUT showing the panel (keys route as soon as attach lands),
+            // then show the panel once sceneboard's transition RequestHideInput
+            // has passed — showing during the transition gets killed (status
+            // bar flicker). handleImeFocus gates on keyboardVisible.
+            this.handleImeFocus(false);
+            if (this.keyboardVisible) {
+              setTimeout(() => {
+                if (this.disposed || !this.tabActive || !this.isImeOwner()) {
+                  return;
+                }
+                this.showImeKeyboardWithHeal();
+              }, OsrCefView.IME_PANEL_SHOW_DELAY_MS);
+            }
           }
         }
       });
@@ -2353,7 +2360,7 @@ export struct OsrCefView {
 
   // ==================== Input Method Framework (IME) ====================
 
-  private handleImeFocus(): void {
+  private handleImeFocus(showPanel: boolean = true): void {
     // Only drive the panel when CEF has a focused input field
     // (keyboardVisible=true). Attach on first need; afterwards restore the
     // panel (e.g. after a URL-bar interlude hid it) with self-heal.
@@ -2361,8 +2368,8 @@ export struct OsrCefView {
       return;
     }
     if (!this.imeAttached) {
-      this.attachInputMethod();
-    } else {
+      this.attachInputMethod(showPanel);
+    } else if (showPanel) {
       this.showImeKeyboardWithHeal();
     }
   }
@@ -2447,7 +2454,7 @@ export struct OsrCefView {
     return OsrCefView.imeOwnerView === this && this.imeAttached;
   }
 
-  private attachInputMethod(): void {
+  private attachInputMethod(showPanel: boolean = true): void {
     if (this.imeAttached || this.imeAttaching) {
       return;
     }
@@ -2515,7 +2522,8 @@ export struct OsrCefView {
         if (this.isCreated() && this.renderAreaActive) {
           arkui_cef.cefImeCancelComposition(this.browserId);
         }
-      }
+      },
+      showPanel
     );
 
     this.imeAttaching = false;
