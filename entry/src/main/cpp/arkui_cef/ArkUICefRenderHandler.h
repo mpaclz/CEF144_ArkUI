@@ -144,6 +144,10 @@ private:
     // Must be called with mutex_ held.
     void ViewRectToScreenCaret(const CefRect& viewRect, int& left, int& top,
                               int& width, int& height) const;
+    // Re-reports the cached caret after geometry (window origin / component
+    // offset) changed. Called WITHOUT mutex_ held — the IME session mutex may
+    // block briefly during an attach IPC.
+    void RepushCaretToIme(int left, int top, int width, int height);
 
     int width_;
     int height_;

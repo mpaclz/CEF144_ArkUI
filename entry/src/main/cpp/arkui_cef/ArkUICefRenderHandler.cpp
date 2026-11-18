@@ -44,16 +44,51 @@ void ArkUICefRenderHandler::SetDeviceScaleFactor(float factor) {
 }
 
 void ArkUICefRenderHandler::SetComponentOffset(int x, int y) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    componentOffsetX_ = x;
-    componentOffsetY_ = y;
+    int screenLeft = 0, screenTop = 0, caretW = 0, caretH = 0;
+    bool repush = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        componentOffsetX_ = x;
+        componentOffsetY_ = y;
+        repush = lastCaretValid_;
+        if (repush) {
+            ViewRectToScreenCaret(lastCaretView_, screenLeft, screenTop,
+                                  caretW, caretH);
+        }
+    }
+    if (repush) {
+        RepushCaretToIme(screenLeft, screenTop, caretW, caretH);
+    }
 }
 
 void ArkUICefRenderHandler::SetWindowOrigin(int x, int y) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    windowOriginX_ = x;
-    windowOriginY_ = y;
-    windowOriginValid_ = true;
+    int screenLeft = 0, screenTop = 0, caretW = 0, caretH = 0;
+    bool repush = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        windowOriginX_ = x;
+        windowOriginY_ = y;
+        windowOriginValid_ = true;
+        repush = lastCaretValid_;
+        if (repush) {
+            ViewRectToScreenCaret(lastCaretView_, screenLeft, screenTop,
+                                  caretW, caretH);
+        }
+    }
+    if (repush) {
+        RepushCaretToIme(screenLeft, screenTop, caretW, caretH);
+    }
+}
+
+void ArkUICefRenderHandler::RepushCaretToIme(int left, int top, int width,
+                                             int height) {
+    // The window (or this component inside it) moved while the page caret
+    // stayed put, so blink sends no SelectionBoundsChanged and the push path
+    // is silent — without this, the IME keeps anchoring the candidate window
+    // at the stale screen position. Windowed platform views re-report the
+    // caret on window move for the same reason. UpdateCursor dedupes
+    // unchanged positions and no-ops while no session is attached.
+    arkui_cef::ArkUICefInputMethod::NotifyCaretBounds(left, top, width, height);
 }
 
 void ArkUICefRenderHandler::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) {
