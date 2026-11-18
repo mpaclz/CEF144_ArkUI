@@ -2157,6 +2157,51 @@ static napi_value NAPI_Global_cefSetWindowOrigin(napi_env env, napi_callback_inf
     return nullptr;
 }
 
+static napi_value NAPI_Global_cefGetLastCaretScreen(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "Expected 1 argument: browserId");
+        return nullptr;
+    }
+
+    int64_t browserId = 0;
+    napi_get_value_int64(env, args[0], &browserId);
+
+    napi_value result;
+    napi_create_object(env, &result);
+
+    napi_value validVal;
+    napi_get_boolean(env, false, &validVal);
+
+    int left = 0, top = 0, width = 0, height = 0;
+    auto browser = arkui_cef::ArkUICefManager::getInstance().GetBrowser(browserId);
+    if (browser) {
+        auto client = browser->GetClient();
+        if (client) {
+            auto handler = client->GetArkUICefRenderHandler();
+            // Synchronous read under the handler mutex; the cached view rect
+            // is converted with the current geometry.
+            if (handler && handler->GetLastCaretScreen(left, top, width, height)) {
+                napi_get_boolean(env, true, &validVal);
+                napi_value leftVal, topVal, widthVal, heightVal;
+                napi_create_int32(env, left, &leftVal);
+                napi_create_int32(env, top, &topVal);
+                napi_create_int32(env, width, &widthVal);
+                napi_create_int32(env, height, &heightVal);
+                napi_set_named_property(env, result, "left", leftVal);
+                napi_set_named_property(env, result, "top", topVal);
+                napi_set_named_property(env, result, "width", widthVal);
+                napi_set_named_property(env, result, "height", heightVal);
+            }
+        }
+    }
+    napi_set_named_property(env, result, "valid", validVal);
+    return result;
+}
+
 static napi_value NAPI_Global_cefSetFrameRate(napi_env env, napi_callback_info info) {
     size_t argc = 2;
     napi_value args[2] = { nullptr };
@@ -2875,6 +2920,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"cefOsrSetScale", nullptr, NAPI_Global_cefOsrSetScale, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSetComponentOffset", nullptr, NAPI_Global_cefSetComponentOffset, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSetWindowOrigin", nullptr, NAPI_Global_cefSetWindowOrigin, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cefGetLastCaretScreen", nullptr, NAPI_Global_cefGetLastCaretScreen, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSetFrameRate", nullptr, NAPI_Global_cefSetFrameRate, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefExecuteJavaScript", nullptr, NAPI_Global_cefExecuteJavaScript, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cefSendMouseClick", nullptr, NAPI_Global_cefSendMouseClick, nullptr, nullptr, nullptr, napi_default, nullptr},

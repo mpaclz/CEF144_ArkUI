@@ -473,39 +473,60 @@ void ArkUICefRenderHandler::OnImeCompositionRangeChanged(
         selected_range.from, selected_range.to, character_bounds.size());
 }
 
+void ArkUICefRenderHandler::ViewRectToScreenCaret(const CefRect& viewRect,
+                                                  int& left, int& top,
+                                                  int& width, int& height) const {
+    // viewRect is in view CSS px (same system as GetViewRect). The IME wants
+    // screen-absolute physical px:
+    //   (view_css + component_offset_vp) * dsf + window_origin_px
+    // — the same conversion the ArkTS attach path uses for the initial
+    // cursor, verified on device.
+    left = static_cast<int>((viewRect.x + componentOffsetX_) *
+                            deviceScaleFactor_) + windowOriginX_;
+    top = static_cast<int>((viewRect.y + componentOffsetY_) *
+                           deviceScaleFactor_) + windowOriginY_;
+    width = static_cast<int>(viewRect.width * deviceScaleFactor_);
+    height = static_cast<int>(viewRect.height * deviceScaleFactor_);
+    // A collapsed insertion caret is zero-width in most pages; the IME needs
+    // a visible anchor, so fall back to a thin full-height bar.
+    if (width <= 0) {
+        width = 2;
+    }
+    if (height <= 0) {
+        height = 24;
+    }
+}
+
 void ArkUICefRenderHandler::OnCaretBoundsChanged(
     CefRefPtr<CefBrowser> browser,
     const CefRect& caret_bounds) {
     int screenLeft = 0, screenTop = 0, caretW = 0, caretH = 0;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        // Remember the raw view rect regardless of window-origin readiness:
+        // blink dedupes SelectionBoundsChanged against the last reported
+        // state, so this value IS the current caret truth, and a later
+        // GetLastCaretScreen() converts it with fresh geometry.
+        lastCaretView_ = caret_bounds;
+        lastCaretValid_ = true;
         if (!windowOriginValid_) {
             return;
         }
-        // caret_bounds is in view CSS px (same system as GetViewRect). The
-        // IME wants screen-absolute physical px:
-        //   (view_css + component_offset_vp) * dsf + window_origin_px
-        // — the same conversion the ArkTS attach path uses for the initial
-        // cursor, verified on device.
-        screenLeft = static_cast<int>(
-            (caret_bounds.x + componentOffsetX_) * deviceScaleFactor_) +
-            windowOriginX_;
-        screenTop = static_cast<int>(
-            (caret_bounds.y + componentOffsetY_) * deviceScaleFactor_) +
-            windowOriginY_;
-        caretW = static_cast<int>(caret_bounds.width * deviceScaleFactor_);
-        caretH = static_cast<int>(caret_bounds.height * deviceScaleFactor_);
-    }
-    // The caret rect can be zero-width in some pages; the IME needs a
-    // visible anchor, so fall back to a thin full-height bar.
-    if (caretW <= 0) {
-        caretW = 2;
-    }
-    if (caretH <= 0) {
-        caretH = 24;
+        ViewRectToScreenCaret(caret_bounds, screenLeft, screenTop, caretW,
+                              caretH);
     }
     arkui_cef::ArkUICefInputMethod::NotifyCaretBounds(screenLeft, screenTop,
                                                       caretW, caretH);
+}
+
+bool ArkUICefRenderHandler::GetLastCaretScreen(int& left, int& top,
+                                               int& width, int& height) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!lastCaretValid_ || !windowOriginValid_) {
+        return false;
+    }
+    ViewRectToScreenCaret(lastCaretView_, left, top, width, height);
+    return true;
 }
 
 bool ArkUICefRenderHandler::StartDragging(CefRefPtr<CefBrowser> browser,

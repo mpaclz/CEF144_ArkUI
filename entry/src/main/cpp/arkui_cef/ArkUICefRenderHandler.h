@@ -77,6 +77,11 @@ public:
     // coordinates. Cached here so caret moves never have to round-trip
     // through ArkTS (getWindowProperties() is only available there).
     void SetWindowOrigin(int x, int y);
+    // Last known caret in screen-absolute physical px, for the IME attach
+    // path to pull when the renderer dedupes SelectionBoundsChanged (e.g.
+    // re-entering a tab whose caret never moved). Returns false when this
+    // view has not reported a caret yet. Safe to call from the JS thread.
+    bool GetLastCaretScreen(int& left, int& top, int& width, int& height);
     void SetPaintCallback(PaintCallback callback) { paintCallback_ = std::move(callback); }
     void SetGpuPresenter(std::shared_ptr<ArkUICefGpuPresenter> presenter) {
         gpuPresenter_ = std::move(presenter);
@@ -135,6 +140,10 @@ private:
     // Mirrors cefclient's GetPopupRectInWebView.
     CefRect GetPopupRectInWebView(const CefRect& original);
     void ClearPopupRects();
+    // Converts a view CSS px rect to screen-absolute physical px for the IME.
+    // Must be called with mutex_ held.
+    void ViewRectToScreenCaret(const CefRect& viewRect, int& left, int& top,
+                              int& width, int& height) const;
 
     int width_;
     int height_;
@@ -146,6 +155,12 @@ private:
     // The caret report is dropped until the first SetWindowOrigin arrives, so
     // we never send a window-relative rect as if it were screen-absolute.
     bool windowOriginValid_ = false;
+    // Last caret rect in view CSS px (the coordinate OnCaretBoundsChanged
+    // reports). Kept so a later attach can pull the real caret when the
+    // renderer dedupes the change event. Converted to screen px on read with
+    // the then-current dsf/offset/origin, so a window move never stales it.
+    CefRect lastCaretView_;
+    bool lastCaretValid_ = false;
     PaintCallback paintCallback_;
     std::shared_ptr<ArkUICefGpuPresenter> gpuPresenter_;
     std::mutex mutex_;

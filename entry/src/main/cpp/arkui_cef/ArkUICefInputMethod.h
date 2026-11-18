@@ -98,18 +98,6 @@ private:
     ImeEventCallbacks callbacks_;
 
     static ArkUICefInputMethod* instance_;
-    // Latest caret reported by the render handler (screen-absolute px), kept
-    // even while no session exists. Clicking an input field fires
-    // SelectionBoundsChanged a few ms BEFORE the ArkTS attach() call, so the
-    // first caret would otherwise be dropped by the is_attached_ gate — leaving
-    // attach() with only the tap-point estimate, which is far off in an empty
-    // field (tap in the middle vs caret pinned at the left edge). attach()
-    // consumes this cache for its initial CursorInfo. Guarded by session_mutex_.
-    static double cached_caret_left_;
-    static double cached_caret_top_;
-    static double cached_caret_width_;
-    static double cached_caret_height_;
-    static int64_t cached_caret_time_ms_;
     // Guards instance_ and the session handles across the JS thread
     // (attach/detach) and the CEF UI thread (caret reports). attach() holds it
     // across the blocking Attach IPC, so a caret report arriving in that

@@ -1,6 +1,5 @@
 #include "ArkUICefInputMethod.h"
 
-#include <chrono>
 #include <cstring>
 
 #include <hilog/log.h>
@@ -8,17 +7,6 @@
 namespace {
 constexpr unsigned int IME_LOG_DOMAIN = 0xFF00;
 const char* TAG = "ArkUICefIM";
-
-// A cached caret is only worth trusting for the attach() that immediately
-// follows the click that produced it. Beyond this window it is stale (e.g. a
-// leftover from a previous field) and the tap-point estimate is the safer seed.
-constexpr int64_t kCaretCacheTtlMs = 500;
-
-int64_t NowMs() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
 
 std::string utf16ToUtf8(const char16_t* text, size_t length) {
     if (!text || length == 0) return "";
@@ -45,11 +33,6 @@ namespace arkui_cef {
 
 ArkUICefInputMethod* ArkUICefInputMethod::instance_ = nullptr;
 std::mutex ArkUICefInputMethod::session_mutex_;
-double ArkUICefInputMethod::cached_caret_left_ = 0;
-double ArkUICefInputMethod::cached_caret_top_ = 0;
-double ArkUICefInputMethod::cached_caret_width_ = 0;
-double ArkUICefInputMethod::cached_caret_height_ = 0;
-int64_t ArkUICefInputMethod::cached_caret_time_ms_ = 0;
 
 ArkUICefInputMethod::ArkUICefInputMethod() {
     std::lock_guard<std::mutex> lock(session_mutex_);
@@ -109,24 +92,6 @@ bool ArkUICefInputMethod::attach(bool ShowKeyboard, int32_t windowId,
     cursor_width_ = cursorWidth;
     cursor_height_ = cursorHeight;
     callbacks_ = callbacks;
-
-    // Prefer the caret reported by the renderer over the ArkTS tap-point
-    // estimate. The tap estimate can be far off (e.g. tapping the middle of an
-    // empty field while the caret sits at its left edge); the renderer caret is
-    // authoritative. Only trust it when fresh — the click that triggers this
-    // attach fires SelectionBoundsChanged just before, so a valid caret is
-    // normally within the TTL window.
-    if (cached_caret_width_ > 0 && cached_caret_height_ > 0 &&
-        NowMs() - cached_caret_time_ms_ <= kCaretCacheTtlMs) {
-        OH_LOG_Print(LOG_APP, LOG_INFO, IME_LOG_DOMAIN, TAG,
-            "attach: using cached caret screen=(%{public}.0f, %{public}.0f) "
-            "over tap estimate screen=(%{public}.0f, %{public}.0f)",
-            cached_caret_left_, cached_caret_top_, cursorLeft, cursorTop);
-        cursor_left_ = cached_caret_left_;
-        cursor_top_ = cached_caret_top_;
-        cursor_width_ = cached_caret_width_;
-        cursor_height_ = cached_caret_height_;
-    }
 
     text_editor_proxy_ = OH_TextEditorProxy_Create();
     if (!text_editor_proxy_) {
@@ -208,8 +173,6 @@ bool ArkUICefInputMethod::attach(bool ShowKeyboard, int32_t windowId,
     if (cursor_info_) {
         OH_CursorInfo_Destroy(cursor_info_);
     }
-    // Use the member fields, which the cached-caret block above may have
-    // overridden with the renderer's authoritative caret.
     cursor_info_ = OH_CursorInfo_Create(cursor_left_, cursor_top_,
                                         cursor_width_, cursor_height_);
     if (cursor_info_) {
@@ -236,13 +199,6 @@ bool ArkUICefInputMethod::attach(bool ShowKeyboard, int32_t windowId,
 void ArkUICefInputMethod::detach() {
     std::lock_guard<std::mutex> lock(session_mutex_);
     ReleaseResources();
-    // Drop the caret cache so a later attach on a different field/tab cannot
-    // reuse this session's caret. A fresh click repopulates it before its own
-    // attach. (Not cleared in ReleaseResources: attach()'s re-attach branch
-    // calls that before reading the cache.)
-    cached_caret_width_ = 0;
-    cached_caret_height_ = 0;
-    cached_caret_time_ms_ = 0;
 }
 
 bool ArkUICefInputMethod::ShowKeyboard() {
@@ -331,16 +287,6 @@ bool ArkUICefInputMethod::UpdateCursor(double left, double top,
 void ArkUICefInputMethod::NotifyCaretBounds(double left, double top,
                                             double width, double height) {
     std::lock_guard<std::mutex> lock(session_mutex_);
-    // Always remember the latest caret, even before any session exists: the
-    // click that focuses a field fires this a few ms before ArkTS calls
-    // attach(), and that first caret is the accurate seed for the session's
-    // initial CursorInfo. The cache is static so it survives the gap between
-    // the (not-yet-constructed) instance and attach().
-    cached_caret_left_ = left;
-    cached_caret_top_ = top;
-    cached_caret_width_ = width;
-    cached_caret_height_ = height;
-    cached_caret_time_ms_ = NowMs();
     if (instance_) {
         instance_->UpdateCursor(left, top, width, height);
     }

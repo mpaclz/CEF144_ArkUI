@@ -2448,18 +2448,33 @@ export struct OsrCefView {
     OsrCefView.imeOwnerView = this;
     this.imeAttaching = true;
 
-    // Compute initial cursor position (screen-absolute px).
+    // Compute initial cursor position (screen-absolute px). Prefer the
+    // renderer's last known caret for THIS view: re-entering a tab whose
+    // caret never moved produces no SelectionBoundsChanged event (upstream
+    // dedupe), so without this pull the candidate window would sit at the
+    // tap point, which can be far from the caret in an empty field.
     let winRect = this.getWindowRect();
     let cursorLeft = Math.round((this.lastInputX + this.componentGlobalX) * this.cachedDsf) + winRect.left;
     let cursorTop = Math.round((this.lastInputY + this.componentGlobalY) * this.cachedDsf) + winRect.top;
+    let cursorWidth = 2;
     let cursorHeight = Math.round(20 * this.cachedDsf);
+    let caret = arkui_cef.cefGetLastCaretScreen(this.browserId);
+    if (caret.valid) {
+      cursorLeft = caret.left;
+      cursorTop = caret.top;
+      cursorWidth = caret.width > 0 ? caret.width : 2;
+      cursorHeight = caret.height > 0 ? caret.height : cursorHeight;
+      hilog.info(DOMAIN, MODULE,
+        "attachInputMethod: using renderer caret screen=(%{public}d, %{public}d) over tap estimate",
+        cursorLeft, cursorTop);
+    }
     hilog.info(DOMAIN, MODULE,
       "attachInputMethod: screen_px left=%{public}d top=%{public}d winRect=%{public}d,%{public}d",
       cursorLeft, cursorTop, winRect.left, winRect.top);
 
     let ok = arkui_cef.cefImeCAttach(
       this.cachedWindowId,
-      cursorLeft, cursorTop, 2, cursorHeight,
+      cursorLeft, cursorTop, cursorWidth, cursorHeight,
       (text: string) => {
         if (this.isCreated() && this.renderAreaActive) {
           arkui_cef.cefImeCommitText(this.browserId, text);
