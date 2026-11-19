@@ -2385,21 +2385,34 @@ export struct OsrCefView {
   // function of state, checked in priority order:
   //   windowActive  — the service removes the client on deactivation, so a
   //                   session cannot outlive window focus; release it.
-  //   urlInputFocused — synchronous ArkUI truth. Wins over keyboardVisible,
-  //                   which is CEF's report and lags ~100ms: while both are
-  //                   true the user's latest intent is the URL bar. We must
-  //                   neither attach (it would steal the keys — the reported
-  //                   bug) nor detach (a teardown can race the ArkTS editor's
-  //                   own attach at the service), so UrlBar is a no-op and the
-  //                   superseded session stays inert while renderAreaActive is
-  //                   false.
+  //   urlInputFocused — synchronous ArkUI truth, but ONLY while the user has
+  //                   not clicked into the web page. Two measured facts make
+  //                   this qualification necessary:
+  //                   (a) Clicking a native control does NOT blur the web
+  //                       input at the DOM level — activeElement stays on it
+  //                       and CEF therefore never reports VKR(false), so
+  //                       keyboardVisible remains true long after the user
+  //                       moved to the URL bar. It means "a web field holds
+  //                       DOM focus", not "the user wants to type in the
+  //                       page"; renderAreaActive is what carries the intent.
+  //                   (b) On window reactivation the system restores ArkUI
+  //                       focus to whichever TextInput held it before
+  //                       deactivation (secure_field reshuffle, +9ms), which
+  //                       re-fires TextInput.onFocus. That makes
+  //                       urlInputFocused true even when the reactivating
+  //                       click landed on the web page, and stopEditing()
+  //                       ends the edit state without moving focus, so no
+  //                       onBlur follows to clear the flag.
+  //                   UrlBar stays a no-op for us: attaching would steal the
+  //                   keys, and detaching can race the ArkTS editor's own
+  //                   attach at the service.
   //   tabActive     — an invisible tab must not hold the session.
-  //   keyboardVisible — a web input field is focused: we own the session.
+  //   keyboardVisible — a web input field has DOM focus: we own the session.
   private expectedImeSubject(): ImeSubject {
     if (this.disposed || !this.windowActive) {
       return ImeSubject.None;
     }
-    if (this.urlInputFocused) {
+    if (this.urlInputFocused && !this.renderAreaActive) {
       return ImeSubject.UrlBar;
     }
     if (!this.tabActive) {
@@ -2425,6 +2438,29 @@ export struct OsrCefView {
     }, delayMs);
   }
 
+  // Moves the ArkUI focus token off the URL TextInput and onto the
+  // render-area anchor when the user's last click was into the web page.
+  // The session primitives below cannot do this: whoever holds ArkUI focus
+  // owns the panel, so a stale TextInput focus keeps the status bar up and
+  // keeps routing physical keys to the address bar no matter what our C
+  // session does. stopEditing() alone is not enough — it ends the edit state
+  // without moving focus, so no onBlur follows and urlInputFocused stays
+  // stale. requestFocus is what fires the blur (observed on the tab-switch
+  // path, which already re-anchors focus here). Skipped while a web→native
+  // Tab exit is settling (webExitArmed guard inside the callee), so this
+  // never fights the focus traversal.
+  private homeFocusToWeb(): void {
+    if (!this.renderAreaActive || !this.urlInputFocused) {
+      return;
+    }
+    if (!this.isCreated() || !this.tabActive) {
+      return;
+    }
+    hilog.info(DOMAIN, MODULE, "IME arbiter: homing ArkUI focus to the render area");
+    this.stopUrlEditing();
+    this.requestFocusToRenderArea();
+  }
+
   // Applies the difference between the expected subject and the session we
   // actually hold. Idempotent: equal states produce no session churn.
   private reconcileIme(reason: string): void {
@@ -2441,6 +2477,10 @@ export struct OsrCefView {
       // ArkTS owns the panel — nothing for us to do either way.
       return;
     }
+    // ArkUI focus must agree with the verdict before the session acts, or the
+    // ArkTS editor keeps the panel and the keys. Runs first so its blur
+    // releases the address bar ahead of our attach instead of racing it.
+    this.homeFocusToWeb();
     if (want === ImeSubject.WebInput) {
       if (!this.imeAttached) {
         hilog.info(DOMAIN, MODULE, "IME arbiter[%{public}s]: attach", reason);
