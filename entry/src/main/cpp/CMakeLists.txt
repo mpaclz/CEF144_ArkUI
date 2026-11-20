@@ -105,7 +105,7 @@ target_include_directories(arkui_cef_core PUBLIC
 )
 # CEF 144: libcef_dll_wrapper.a is built in Release mode (NDEBUG), so DCHECK_IS_ON()=false.
 # Our code must match to avoid undefined symbol errors (e.g. RefCountedThreadSafeBase::~RefCountedThreadSafeBase).
-target_compile_definitions(arkui_cef_core PUBLIC NDEBUG)
+target_compile_definitions(arkui_cef_core PUBLIC NDEBUG OSOHOS)
 target_link_directories(arkui_cef_core PUBLIC ${HAP_LIB_DIR})
 
 target_link_libraries(arkui_cef_core PUBLIC
@@ -133,7 +133,7 @@ target_include_directories(arkui_cef PUBLIC
     ${CEF_INCLUDE_DIR}/include
     ${CEF_INCLUDE_DIR}/include/wrapper
 )
-target_compile_definitions(arkui_cef PUBLIC NDEBUG)
+target_compile_definitions(arkui_cef PUBLIC NDEBUG OSOHOS)
 target_link_libraries(arkui_cef PUBLIC
     arkui_cef_core
     libace_napi.z.so
@@ -148,7 +148,7 @@ target_link_libraries(arkui_cef PUBLIC
 # cefsimple 共享库：OHOS 子进程入口
 add_library(cefsimple SHARED CefProcessEntry.cpp)
 
-target_compile_definitions(cefsimple PRIVATE NDEBUG)
+target_compile_definitions(cefsimple PRIVATE NDEBUG OSOHOS)
 
 target_include_directories(cefsimple
     PUBLIC
